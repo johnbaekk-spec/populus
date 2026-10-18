@@ -134,8 +134,16 @@ for (const [file, route] of references) {
       }
       if (route === '/signals/') {
         /* signals-v3 M2 (R10–R13, LD7): the triage page — the head, the lead
-           cards, then Filings to read │ Hit rate by family above the slim hits */
-        for (const title of ['Lead cards', 'Filings to read', 'Hit rate by family', 'Hits']) {
+           cards, then Filings to read │ Hit rate by family above the slim hits.
+           signals-v4 M1 (R7, LD7): where the band stacks (≤1080px) the pane
+           switch shows Filings first; the hits are one tap away. */
+        for (const title of ['Lead cards', 'Filings to read']) {
+          await expect(page.getByRole('heading', {name:title, exact:true})).toBeVisible();
+        }
+        const paneSwitch = page.locator('[data-pane-switch]');
+        expect(await paneSwitch.isVisible(), 'the pane switch shows exactly where the band stacks').toBe(width <= 1080);
+        if (width <= 1080) await paneSwitch.locator('button[aria-controls="signals-side"]').click();
+        for (const title of ['Hit rate by family', 'Hits']) {
           await expect(page.getByRole('heading', {name:title, exact:true})).toBeVisible();
         }
         // the rule book and the lag distribution moved to Methodology; the watch band left in M1
@@ -150,6 +158,7 @@ for (const [file, route] of references) {
         for (const c of await cards.all()) await expect(c).toBeVisible();
         // the tiers: Stands out and Worth a look open, Routine a CLOSED disclosure
         expect(await page.locator('#triage > #stands, #triage > #look').count()).toBe(2);
+        if (width <= 1080) await paneSwitch.locator('button[aria-controls="triage"]').click();
         expect(await page.locator('#routine').evaluate((d) => d.tagName === 'DETAILS' && !(d as HTMLDetailsElement).open), 'Routine is closed').toBe(true);
         // every triage row shows its four meters, both dates and its receipt
         const rows = page.locator('#stands article.si-row, #look article.si-row');
@@ -160,20 +169,28 @@ for (const [file, route] of references) {
           await expect(r.locator('.si-row-filed time')).toBeVisible();
           await expect(r.locator('.si-row-src a')).toBeVisible();
         }
-        // the slim hits: six columns, Kind first; at most ten server lines, each with its receipt
+        if (width <= 1080) await paneSwitch.locator('button[aria-controls="signals-side"]').click();
+        /* the slim hits: six columns, Kind first; the server holds at most
+           SIGNAL_HITS_DOM_ROWS (40) lines, each with its receipt, and the fit
+           (signals-v4 LD6) shows at least ten of them — exactly ten where the
+           band stacks */
         await expect(page.locator('#hits thead th')).toHaveCount(6);
         await expect(page.locator('#hits thead th').first()).toHaveText(/^\s*kind\s*$/i);
         const all = await page.locator('#signal-hits-body tr.si-hit').count();
-        expect(all).toBeLessThanOrEqual(10);
+        expect(all).toBeLessThanOrEqual(40);
         expect(await page.locator('#signal-hits-body tr.si-hit td.c-src a').count()).toBe(all);
-        // "Show 10 more" grows the view from the complete artifact, in the range grammar
+        const VIS = '#signal-hits-body tr.si-hit:not([hidden])';
         const lines = Number(await page.locator('#hits').getAttribute('data-lines'));
+        const shown = await page.locator(VIS).count();
+        expect(shown).toBeGreaterThanOrEqual(Math.min(10, lines));
+        if (width <= 1080) expect(shown, 'stacked: the minimum').toBe(Math.min(10, lines));
+        // "Show 10 more" grows the view by ten, in the range grammar
         const L = lines.toLocaleString('en-US');
-        await expect(page.locator('#signal-hits-range')).toHaveText(new RegExp(`^1–${Math.min(10, lines)} of ${L} lines? · \\d[\\d,]* hits?$`));
-        if (lines > 10) {
+        await expect(page.locator('#signal-hits-range')).toHaveText(new RegExp(`^1–${shown} of ${L} lines? · \\d[\\d,]* hits?$`));
+        if (lines > shown) {
           await page.locator('#signal-hits-more').click();
-          await expect(page.locator('#signal-hits-body tr.si-hit')).toHaveCount(Math.min(20, lines));
-          await expect(page.locator('#signal-hits-range')).toHaveText(new RegExp(`^1–${Math.min(20, lines)} of ${L} lines · \\d[\\d,]* hits$`));
+          await expect(page.locator(VIS)).toHaveCount(Math.min(shown + 10, lines));
+          await expect(page.locator('#signal-hits-range')).toHaveText(new RegExp(`^1–${Math.min(shown + 10, lines)} of ${L} lines · \\d[\\d,]* hits$`));
         }
         // a family row filters the hits and shows the removable pill; the pill clears it
         const fam = page.locator('#families button[data-family="BEHAVIOUR"]');
@@ -574,10 +591,13 @@ test('Signals lead cards (R11): the Own record │ Absolute $ control works with
 });
 
 /* signals-v3 M2 (R23): at 390 and 360 px /signals/ never scrolls sideways, a
-   triage row's meters name themselves inline, and its dates, owner, LATE tags
-   and receipt stay rendered; each lead card keeps both dates. */
+   triage row's meters name themselves, and its dates, owner, LATE tags and
+   receipt stay rendered; each lead card keeps both dates. signals-v4 M1 (R3,
+   LD4): the meter's short name (Size, Patt, Oth, Cmte — the desktop column
+   head's) sits over its bars on a phone, so four labelled meters share the
+   row's second line with the filer. */
 for (const width of [390, 360]) {
-  test(`Signals at ${width}px (R23): no sideways scroll; the meter labels inline; dates, owner and receipts kept`, async ({ page }) => {
+  test(`Signals at ${width}px (R23): no sideways scroll; each meter labelled over its bars; dates, owner and receipts kept`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     expect((await page.goto('/signals/'))?.status()).toBe(200);
     const m = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, vw: innerWidth }));
@@ -590,7 +610,7 @@ for (const width of [390, 360]) {
         const label = meter.querySelector<HTMLElement>('.si-meter-label')!;
         const bars = meter.querySelector<HTMLElement>('.si-meter-bars')!;
         const lr = label.getBoundingClientRect(), br = bars.getBoundingClientRect();
-        return { w: lr.width, inline: Math.abs((lr.top + lr.bottom) / 2 - (br.top + br.bottom) / 2) < br.height, before: lr.right <= br.left + 1, text: label.textContent };
+        return { w: lr.width, over: lr.bottom <= br.top + 1, centred: Math.abs((lr.left + lr.right) / 2 - (br.left + br.right) / 2) <= 1.5, text: label.textContent };
       });
       const right = a.getBoundingClientRect().right;
       return {
@@ -599,13 +619,14 @@ for (const width of [390, 360]) {
         traded: vis('.si-row-traded').length,
         owner: vis('.owner-note').length,
         receipt: vis('.si-row-src a').length,
-        overflow: Array.from(a.querySelectorAll('*')).filter((e) => e.getBoundingClientRect().right > right + 1).map((e) => e.className).slice(0, 3),
+        /* text clipped to 1px for assistive technology (`.visually-hidden`) runs nowhere on screen */
+        overflow: Array.from(a.querySelectorAll('*')).filter((e) => !e.closest('.visually-hidden') && e.getBoundingClientRect().right > right + 1).map((e) => e.className).slice(0, 3),
       };
     });
-    expect(facts.labels.map((l) => l.text)).toEqual(['Size', 'Pattern', 'Others', 'Cmte']);
+    expect(facts.labels.map((l) => l.text)).toEqual(['Size', 'Patt', 'Oth', 'Cmte']);
     for (const l of facts.labels) {
       expect(l.w, `the ${l.text} label is rendered at ${width}`).toBeGreaterThan(8);
-      expect(l.inline && l.before, `the ${l.text} label sits inline, before its bars`).toBe(true);
+      expect(l.over && l.centred, `the ${l.text} label sits over its bars, centred`).toBe(true);
     }
     expect([facts.filed, facts.traded, facts.owner, facts.receipt], 'filed, traded, owner and receipt are rendered').toEqual([1, 1, 1, 1]);
     expect(facts.overflow, 'nothing in the row runs past it').toEqual([]);

@@ -175,7 +175,11 @@ const ROUTES: Route[] = [
   { id: "member", path: "/congress/members/M001193/", minTables: 3, minColumns: 12, pairs: 2, g10Min: { colours: 1 } },
   { id: "institutional", path: "/institutional/", minTables: 2, minColumns: 8, pairs: 1 },
   { id: "filer", path: "/institutional/filers/1135730/", minTables: 3, minColumns: 12, pairs: 1, g10Min: { colours: 1 } },
-  { id: "signals", path: "/signals/", minTables: 1, minColumns: 6, pairs: 1, g10Min: { colours: 1, "centring@1440": 1 } },
+  /* signals-v4 M1: the hits table is the page's one table; where the band
+     stacks (≤1080px) it sits in the Hits pane, which the hash selects (LD7),
+     and every band-head meta became a tip (LD19), so there is no meta to
+     truncate */
+  { id: "signals", path: "/signals/#hits", minTables: 1, minColumns: 6, pairs: 1, g10Min: { colours: 1, "centring@1440": 1 }, allowZero: { metaTruncation: "signals-v4 LD19: every band-head meta on /signals/ is a tip now; the page carries no .panel-note" } },
   { id: "ticker", path: "/tickers/AAPL/#congress", minTables: 2, minColumns: 10, allowZero: NO_CONTROLS_ZERO, g10Min: { colours: 1 } },
   { id: "ticker-inst", path: "/tickers/AAPL/#institutional", minTables: 1, minColumns: 4, allowZero: NO_CONTROLS_ZERO },
   { id: "congress-ticker", path: "/congress/tickers/NVDA/", minTables: 2, minColumns: 8, g10Min: { colours: 1 } },
@@ -1542,23 +1546,27 @@ test.describe("M2: route properties", () => {
     }
   });
 
-  /* signals-v3 M2 (R13): "Show 10 more" adds exactly the next ten lines from
-     the artifact and restates the range in the server's grammar; a family row
-     filters, presses itself and shows the removable pill. (Review R2-2's held
-     evidence cannot recur: no hit row and no evidence row is held back in the
-     DOM any more.) */
+  /* signals-v3 M2 (R13): "Show 10 more" adds exactly the next ten lines and
+     restates the range in the server's grammar; a family row filters, presses
+     itself and shows the removable pill. (Review R2-2's held evidence cannot
+     recur: no evidence row exists.) signals-v4 M1 (R5, LD6): the server holds
+     SIGNAL_HITS_DOM_ROWS lines, the ones past the visible count `hidden`, and
+     the column fit sets the visible count — so the visible lines are counted,
+     and "Show 10 more" extends whatever the fit showed by ten. */
   test("R13 (signals-v3 M2): Show 10 more and the family filter repaint the slim hits, and no evidence row exists @1440", async ({ browser }, testInfo) => {
     const { ctx, page } = await open(browser, testInfo, 1440, "/signals/");
     try {
-      expect(await page.locator("#signal-hits-body > tr.si-evidence-row, #signal-hits-body > tr[data-compact-extra]").count(), "no held or evidence row").toBe(0);
+      expect(await page.locator("#signal-hits-body > tr.si-evidence-row, #signal-hits-body > tr[data-compact-extra]").count(), "no evidence row, no compact-disclosure row").toBe(0);
       const lines = Number(await page.locator("#hits").getAttribute("data-lines"));
-      const first = await page.locator("#signal-hits-body > tr.si-hit").evaluateAll((rs) => rs.map((r) => r.getAttribute("data-signal-id")));
-      expect(first.length).toBe(Math.min(10, lines));
-      if (lines > 10) {
+      const VIS = "#signal-hits-body > tr.si-hit:not([hidden])";
+      const first = await page.locator(VIS).evaluateAll((rs) => rs.map((r) => r.getAttribute("data-signal-id")));
+      expect(first.length, "the fit shows at least the server's ten").toBeGreaterThanOrEqual(Math.min(10, lines));
+      expect(Number(await page.locator("#hits").getAttribute("data-shown"))).toBe(first.length);
+      if (lines > first.length) {
         await page.locator("#signal-hits-more").click();
-        await expect(page.locator("#signal-hits-body > tr.si-hit")).toHaveCount(Math.min(20, lines));
-        const grown = await page.locator("#signal-hits-body > tr.si-hit").evaluateAll((rs) => rs.map((r) => r.getAttribute("data-signal-id")));
-        expect(grown.slice(0, first.length), "the first ten lines are kept, the next ten appended").toEqual(first);
+        await expect(page.locator(VIS)).toHaveCount(Math.min(first.length + 10, lines));
+        const grown = await page.locator(VIS).evaluateAll((rs) => rs.map((r) => r.getAttribute("data-signal-id")));
+        expect(grown.slice(0, first.length), "the lines shown are kept, the next ten appended").toEqual(first);
         expect((await slimHitProblems(page)).problems).toEqual([]);
       } else testInfo.annotations.push({ type: "R13", description: `${lines} lines: nothing more to show on this build` });
       const fam = page.locator('#families button[data-family="COMPLIANCE"]');
@@ -1568,7 +1576,8 @@ test.describe("M2: route properties", () => {
       await expect(page.locator('#signal-hits-body > tr.si-hit:not([data-family="COMPLIANCE"])')).toHaveCount(0);
       await page.locator("#signal-family-pill").click();
       await expect(page.locator("#signal-family-pill-row")).toBeHidden();
-      await expect(page.locator("#signal-hits-body > tr.si-hit")).toHaveCount(Math.min(10, lines));
+      // the filter change dropped the extension: the fit's base again
+      await expect(page.locator("#signal-hits-body > tr.si-hit:not([hidden])")).toHaveCount(first.length);
     } finally {
       await ctx.close();
     }

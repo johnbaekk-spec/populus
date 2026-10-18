@@ -386,6 +386,14 @@ const HONESTY_SELECTORS = [
   ".si-card-context",
   ".si-cmte-context",
   ".si-meter-label",
+  /* signals-v4 M1 (LD4): the row's reason sentence — one line on the collapsed
+     row, cut by an ellipsis, never removed; whole in the opened row. */
+  ".si-row-why",
+  /* signals-v4 M1 (R3, R24; codex M1 round 1, F3): the statutory range on a
+     collapsed row and on a lead card — the only size a reader is shown, so
+     it may never vanish at a breakpoint either. */
+  ".si-row-amt",
+  ".si-card-amt",
   /* signals-v3 M3 (R17, R19, R21, R23, LD9): the ticker page's "each section
      keeps its own clock" line (moved from the lede into the provenance strip),
      a pinned row's "On Signals" marker, and the "Show all N holders"
@@ -539,8 +547,69 @@ test("signals-v3 M2 (R23): the triage row's dates, LATE tag and receipt, the car
   // R23: on phones the meter names itself inline — the fold SHOWS the label it clips at desktop
   const fold = narrowMediaBlocks(css).map((b) => b.body).join("\n");
   assert.match(fold, /\.si-meter-label \{ position: static; width: auto; height: auto;[^}]*clip: auto;/);
-  // and the decorative meter head is clipped, never display:none
-  assert.match(fold, /\.si-meter-head \{ position: absolute; width: 1px; height: 1px;[^}]*clip: rect\(0 0 0 0\)/);
+  // and the decorative column head's labels are clipped, never display:none (signals-v4 LD4: the "What the bars mean" tip stays)
+  assert.match(fold, /\.si-row-head > \.si-row-hc, \.si-meter-cols \{ position: absolute; width: 1px; height: 1px;[^}]*clip: rect\(0 0 0 0\)/);
+  assert.doesNotMatch(fold, /\.si-row-htip[^{]*\{[^}]*(?:display\s*:\s*none|clip:)/, "the bars tip is never folded away");
+});
+
+/* signals-v4 M1 (T1.2, T1.4, T1.6, T1.7): the sheet, the row fold, the
+   band's no-stretch rule and the pane switch, read from the stylesheet. */
+test("signals-v4 T1.2: at ≤720px an open note is a bottom sheet — fixed, inset by the gutters, a scrim — through top-layer and placement rules only; the Close button shows only there", () => {
+  const sheet = splitAtRules(css).blocks.filter((b) => b.name === "media" && /screen and \(max-width: 720px\)/.test(b.condition));
+  assert.equal(sheet.length, 1, "one screen-only sheet block");
+  const rules = rulesOf(sheet[0]!.body);
+  const open = rules.find((r) => r.selector === ".note-pop:popover-open")!;
+  for (const decl of [/position: fixed/, /inset: auto 10px 10px 10px/, /width: auto/, /max-width: none/, /max-height: 70vh/, /overflow: auto/, /translate: none/]) assert.match(open.decls, decl);
+  assert.match(rules.find((r) => r.selector === ".note-pop::backdrop")!.decls, /background: rgb\(0 0 0 \/ 55%\)/, "the scrim");
+  for (const r of rules) for (const bad of PROHIBITED) assert.ok(!bad.test(r.decls), `${r.selector} never hides a panel`);
+  assert.deepEqual(foldViolations(css), [], "the fold sweep (which covers this block) is clean");
+  // the Close button: drawn at the fold, hidden above it (a block floored above the fold) and on paper
+  const above = splitAtRules(css).blocks.filter((b) => b.name === "media" && /\(min-width: 721px\)/.test(b.condition)).map((b) => b.body).join("\n");
+  assert.match(above, /\.note-close \{ display: none; \}/);
+  assert.equal(narrowMediaBlocks("@media (min-width: 721px) { .note-close { display: none; } }").length, 0, "control: that block does not govern the fold");
+  assert.match(css, /\.note-close \{\s*display: flex;/);
+});
+
+test("signals-v4 T1.4: the row is two lines above the fold and three at it — grid areas, then a broken flex row; nothing honesty-bearing is hidden at any width", () => {
+  assert.match(css, /\.si-row-sum \{\s*grid-template-areas: "tk who amt met fil src" "sd why why trd trd chv";/);
+  const fold = narrowMediaBlocks(css).map((b) => b.body).join("\n");
+  assert.match(fold, /\.si-row-sum \{ display: flex; flex-wrap: wrap;/);
+  assert.match(fold, /\.si-row-sum::before, \.si-row-sum::after \{ content: ""; flex: 0 0 100%; height: 0; \}/, "the two line breaks");
+  for (const sel of [".si-row-filed", ".si-row-traded", ".si-row-src", ".owner-note", ".si-late-tag", ".si-meter-label", ".si-cmte-context", ".si-row-why"]) {
+    assert.ok(HONESTY_SELECTORS.includes(sel), `${sel} is swept`);
+    const planted = `${css}\n@media (max-width: 720px) { .si-row ${sel} { display: none; } }`;
+    assert.deepEqual(foldViolations(planted), [`.si-row ${sel}`], `control: ${sel} hidden at the fold is caught`);
+  }
+  assert.deepEqual(foldViolations(css), []);
+});
+
+test("signals-v4 M1 (codex round 1, F3): the row's and the card's range are swept — a planted hide at 320px, the sweep's narrowest phone, is caught", () => {
+  assert.deepEqual(foldViolations(css), [], "the shipped stylesheet is clean");
+  for (const sel of [".si-row-amt", ".si-card-amt"]) {
+    assert.ok(HONESTY_SELECTORS.includes(sel), `${sel} is swept`);
+    for (const decl of ["display:none", "visibility:hidden", "content-visibility:hidden"]) {
+      const planted = `${css}\n@media (max-width:320px){ ${sel} { ${decl} } }`;
+      assert.deepEqual(foldViolations(planted), [sel], `control: ${sel} { ${decl} } at 320px`);
+    }
+  }
+  // and /signals emits both
+  const corpus = renderCorpus();
+  for (const sel of [".si-row-amt", ".si-card-amt"]) assert.ok(new RegExp(`class="(?:[^"]*\\s)?${sel.slice(1)}(?:\\s[^"]*)?"`).test(corpus), `${sel} is emitted`);
+});
+
+test("signals-v4 T1.6 / T1.7: the band's cells do not stretch; no media rule hides a pane (the pane switch moves only the hidden attribute)", () => {
+  assert.match(css, /\.design-signals-band \{ align-items: start; \}/);
+  const PANES = /#triage|\.si-triage|\.si-side|#signals-side|\.design-signals-band\s*>/;
+  for (const b of splitAtRules(css).blocks.filter((x) => x.name === "media")) {
+    for (const r of rulesOf(b.body)) {
+      if (!PANES.test(r.selector)) continue;
+      for (const bad of PROHIBITED) assert.ok(!bad.test(r.decls), `@media ${b.condition}: "${r.selector}" hides a pane`);
+    }
+  }
+  // control: a planted CSS-only pane hide is caught by the same reading
+  const planted = splitAtRules("@media (max-width: 1080px) { #signals-side { display: none; } }").blocks.flatMap((b) => rulesOf(b.body));
+  assert.ok(planted.some((r) => PANES.test(r.selector) && PROHIBITED.some((bad) => bad.test(r.decls))));
+  assert.match(css, /\.pane-switch \{ display: flex; width: 100%;/);
 });
 
 test("signals-v3 M3 (R17, R19, R21, R23): the ticker's clock line, a pinned row's marker and the holders disclosure are swept at the fold; the ticker page emits each, and its On Signals block emits the row's dates, receipt and committee caveat", () => {
@@ -976,6 +1045,16 @@ function renderCorpus(): string {
        filter), the member panel's WHAT sentence, and Methodology's four
        signal sections */
     signalsBody(goldenTriage().artifact, CTX, { rowsEvaluated: 2051, triage: goldenTriage().triage }),
+    /* signals-v4 M1: a withheld kind with an earlier signal carried forward
+       unevaluated — its one visible line and its count */
+    signalsBody(
+      {
+        ...goldenTriage().artifact,
+        withheld: [{ kind: "s5-jurisdiction", reason: "inputs-not-in-build", detail: "committee data absent" }],
+        signals: [...goldenTriage().artifact.signals.filter((x) => x.kind !== "s5-jurisdiction"), { ...goldenTriage().artifact.signals.find((x) => x.kind === "s5-jurisdiction")!, status: "unevaluated" }],
+      } as SignalArtifact,
+      CTX,
+    ),
     memberSignalsPanel(goldenTriage().artifact, "S000168", CTX),
     ruleBookHtml(goldenTriage().artifact),
     lagBandHtml({ latestBatch: [{ name: "M", bioguide: "M1", party: "D", traded: "2026-01-01", filed: "2026-05-01", lag: 120, late: 1 }], latestBatchFiled: "2026-05-01" }),
@@ -1026,12 +1105,24 @@ const NEW_RENDERER_CLASSES = [
      family filter rows and pill, and Methodology's signal sections. */
   "si-lead", "si-rank-input", "si-lead-head", "si-rank-seg", "si-cards", "si-card", "si-card-tag", "si-card-h",
   "si-card-amt", "si-card-who", "si-card-dates", "si-card-fact", "si-card-src", "si-card-context", "si-variant",
-  "si-legend", "si-legend-levels", "si-legend-h", "si-legend-level", "si-legend-word", "si-legend-meters", "si-cmte-context",
-  "si-tier", "si-tier-h", "si-tier-n", "si-row", "si-meter-head", "si-meter-col", "si-row-main", "si-row-h", "si-row-link",
-  "si-row-member", "si-row-what", "si-row-why", "si-row-amt", "si-side-buy", "si-side-sell", "si-chip", "si-group-tag",
-  "si-late-tag", "si-row-when", "si-row-filed", "si-row-traded", "si-row-src", "si-meters", "si-meter", "si-meter-label",
+  "si-cmte-context",
+  "si-tier", "si-tier-h", "si-tier-n", "si-row", "si-meter-col",
+  "si-row-member", "si-row-why", "si-row-amt", "si-side-buy", "si-side-sell", "si-chip", "si-group-tag",
+  "si-late-tag", "si-row-filed", "si-row-traded", "si-row-src", "si-meters", "si-meter", "si-meter-label",
   "si-meter-bars", "si-mbar", "si-family-list", "si-rate-row", "si-pill-row", "si-pill", "si-family-name",
   "si-method", "si-method-list", "si-direct-table", "si-direct-ranges",
+  /* signals-v4 M1 (R1–R8, LD3–LD7, LD19): the h1's tip row and the tips'
+     paragraphs; a card's open-the-row link; the two-line row — its
+     <details>, summary, column head (labels, meter labels, the bars tip),
+     ticker, filer cell and filing count, the receipt's reserved cell, the
+     chevron — and the opened row (reason, facts, meter words, links); the
+     tier tips and Routine's wrapper; the pane switch and its counts; the
+     foot's link row and the one-line withheld kinds. */
+  "page-title-row", "si-tip-p", "si-card-open",
+  "si-row-d", "si-row-sum", "si-row-head", "si-row-hc", "si-row-hc-amt", "si-row-hc-fil", "si-meter-cols", "si-row-htip",
+  "si-row-tk", "si-row-who", "si-row-n", "si-row-slot", "si-row-chv",
+  "si-row-det", "si-row-reason", "si-row-facts", "si-row-mw", "si-mw-word", "si-mw-def", "si-row-links",
+  "si-tier-wrap", "si-tier-tip", "pane-switch", "pane-n", "si-foot", "si-withheld-line", "si-withheld-carried",
   /* signals-v3 M3 (R16–R21): the sticky tab bar, its tabs and counts, the two
      tab panels, the provenance strip's clock line, the "On Signals" block and
      its tier, a pinned row's marker, the holders disclosure, and the
@@ -1056,6 +1147,9 @@ const NEW_HOOK_CLASSES = [
      styled `.on-signals-mark`) and the block's way back to /signals/ (styled
      as the `.section-link` beside it) */
   "on-signals", "tk-onsig-back",
+  /* signals-v4 M1: a grouped row's latest filing in the opened row's grouping
+     (D21's label, read by tests; it takes the grouping's own type) */
+  "si-row-latest",
 ];
 
 /* Classes a milestone RETIRED: neither styled nor emitted — by a renderer OR
@@ -1090,6 +1184,11 @@ const RETIRED_CLASSES = [
      timeline's mid line the dollar gridlines replaced. */
   "section-index", "si-active", "si-soon", "badge-soon", "si-n", "si-asof",
   "planned-grid", "planned-card", "design-ticker-signals", "si-evidence", "tl-mid",
+  /* signals-v4 M1 (LD4, LD19): the v3 row's stretched heading link and its
+     blocks (the row is a <details> now), the per-tier meter head (one column
+     head now), and the meter legend (the "What the bars mean" tip). */
+  "si-row-main", "si-row-h", "si-row-link", "si-row-what", "si-row-when", "si-meter-head",
+  "si-legend", "si-legend-levels", "si-legend-h", "si-legend-level", "si-legend-word", "si-legend-meters",
 ];
 
 const ASTRO_ONLY_CLASSES = [

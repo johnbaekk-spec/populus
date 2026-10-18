@@ -13,7 +13,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { signalsBody, triageRowHtml, lagBandHtml, groupHits, hitMatches, hitsView, hitsHiddenText, signalSentence, memberSignalsPanel, signalsTileHtml, hitsBodyHtml, sortHits, type HitFilter } from "../src/lib/ui/index.ts";
-import { COMMITTEE_CAVEAT, DEFAULT_HIT_FILTER, leadCardsHtml, memberLastName, SIGNAL_HITS_COMPACT_ROWS, SIGNAL_HITS_PAGE_SIZE } from "../src/lib/ui/signals.ts";
+import { COMMITTEE_CAVEAT, DEFAULT_HIT_FILTER, leadCardsHtml, memberLastName, SIGNAL_HITS_COMPACT_ROWS, SIGNAL_HITS_DOM_ROWS, SIGNAL_HITS_PAGE_SIZE, triageRowId } from "../src/lib/ui/signals.ts";
 import type { Signal, SignalArtifact } from "../src/lib/signals.ts";
 import type { TxnRow } from "../src/lib/format.ts";
 import { buildTriage, daysBetween, type TriageResult } from "../src/lib/signal-triage.ts";
@@ -158,28 +158,110 @@ test("R10: exactly three figures — Hits (with listed stocks), Stand out (of N 
 
 /* ================================================================ LD9: every caveat lands */
 
-test("LD9: every caveat that left the visible page is in its new home", () => {
-  const { html, art } = goldenPage();
+/** The text of the note panel a trigger named `name` opens (exact accessible name). */
+function tipText(root: MiniElement, name: string): string {
+  const btn = root.querySelectorAll(".note-btn.note-mark").find((b) => b.getAttribute("aria-label") === `${name}, explain`);
+  assert.ok(btn, `a "${name}" tip`);
+  const pop = root.querySelector(`.note-pop[id="${btn!.getAttribute("popovertarget")}"]`);
+  assert.ok(pop, `the "${name}" panel`);
+  return pop!.textContent.replace(/\s+/g, " ");
+}
+
+test("LD9 / signals-v4 LD19 (T1.8): every caveat that left the visible page is in its new home, by exact text", () => {
+  const { html, art, t } = goldenPage();
   const root = domOf(html);
-  const how = root.querySelector(".page-head .note-pop")!;
-  assert.ok(how, "the head's How signals work note");
+  // v3's nine "How signals work" sentences: the head tip, unchanged — an ⓘ beside the h1
+  const how = root.querySelector(".page-head .page-title-row .note-pop")!;
+  assert.ok(how, "the head's How signals work tip");
   const howText = how.textContent;
   for (const needle of [
     "A signal is a fact about a filing, not a forecast: no returns are computed.",
     "Never used: prices, returns, intent.",
     "Recomputed every build from the same rows you can audit; zero hits is a computed answer, not missing coverage.",
+    `The coverage window is ${art.coverageFrom} → ${art.coverageTo} (${art.retentionDays} days by filed date).`,
     art.lagCaveat,
+    `Lifecycle: ${art.lifecycleNote}`,
     "No kind was withheld this build.",
     "date-anomaly rows were excluded before any rule ran",
+    "Filings to read ranks each filing against the filer's own record as it stood on the filing's date; the tiers, meters and cards are defined on Methodology.",
   ]) assert.ok(howText.includes(needle), `How signals work carries: ${needle}`);
   assert.match(howText, /\d+ signals? from an earlier build left the window; \d+ (?:is|are) carried forward unevaluated\./);
   assert.match(how.querySelector('a[href="/methodology/#signals-ranking"]')!.textContent, /How rows are ranked/);
-  // the trigger is the label "How signals work", inside the lede
-  assert.equal(root.querySelector(".page-lede .note-btn")!.getAttribute("aria-label"), "How signals work, explain");
-  // the coverage window → the Window figure (asserted above); the committee caveat → card foot and legend
+  const trigger = root.querySelector(".page-head .page-title-row .note-btn")!;
+  assert.equal(trigger.getAttribute("aria-label"), "How signals work, explain");
+  assert.ok(trigger.classList.contains("note-mark"), "an ⓘ (mark) trigger");
+  assert.equal(ownText(root.querySelector(".page-lede")!).trim(), "What stands out in Congress trades, each against the filer's own record.", "the M1 lede (LD9)");
+  // the lead cards' panel note → "About lead cards"
+  assert.match(tipText(root, "About lead cards"), /Listed-stock lines of the Filings to read.*Both dates and the receipt on every card\./);
+  // the triage panel note → "About filings to read"; the window also stays in the ledger
+  assert.ok(tipText(root, "About filings to read").includes(`${t.rows.length} rows ranked · filed ${art.coverageFrom} → ${art.coverageTo} · each against the filer's own record, as of its filing.`));
+  // the meter legend → "What the bars mean": the levels, the four definitions, the Cmte caveat
+  const bars = tipText(root, "What the bars mean");
+  assert.ok(bars.includes("Levels: strong (three amber bars) · medium (two) · low (one) · none (empty) · unknown (hatched)."));
+  for (const d of [
+    "Size — the lower bound against the filer's prior disclosures.",
+    "Patt (Pattern) — the gap since the filer's previous trade.",
+    "Oth (Others) — members disclosing the same ticker and side in one co-occurrence window.",
+    "Cmte — the issuer inside a committee the member sat on at the trade date — context, never an allegation.",
+    COMMITTEE_CAVEAT,
+  ]) assert.ok(bars.includes(d), `What the bars mean carries: ${d}`);
+  /* codex M1 round 1, F2 (R8, R24, LD19): the tip carries v3's FULL meter
+     definitions — every level rule and qualification — one paragraph per
+     meter, pinned by exact text inside the tip's own .note-pop. Replacing
+     `.full` with `.short`, or deleting any one clause, fails this. */
+  const barsBtn = root.querySelectorAll(".note-btn.note-mark").find((b) => b.getAttribute("aria-label") === "What the bars mean, explain")!;
+  const barsPop = root.querySelector(`.note-pop[id="${barsBtn.getAttribute("popovertarget")}"]`)!;
+  const paras = barsPop.querySelectorAll(".si-tip-p").map((p) => p.textContent.replace(/\s+/g, " ").trim());
+  const FULL: [string, string[]][] = [
+    ["Size — the lower bound against the filer's prior disclosures.", [
+      "Strong: at least one bracket above the largest of the filer's prior disclosures and a lower bound of $50,001 or more.",
+      "Medium: a bracket above, or the same bracket at $50,001 or more.",
+      "Low: at least $15,001 and above 90% of the prior lower bounds.",
+      "Unknown with fewer than 5 prior disclosures that state one.",
+      "Prior means traded earlier, in another filing, and filed by this row's cutoff.",
+    ]],
+    ["Patt (Pattern) — the gap since the filer's previous trade.", [
+      "Strong: the first filing on record, or 730 days or more since the previous trade.",
+      "Medium: 365 days or more.",
+      "Low: 180 days or more.",
+      "Measured from the filing's earliest trade date over rows filed by the cutoff.",
+    ]],
+    ["Oth (Others) — members disclosing the same ticker and side in one co-occurrence window.", [
+      "Strong: 5 or more distinct members in the active co-occurrence window that holds the trade; medium: 4.",
+      "Only filings filed by the cutoff are counted, so a member who filed later never raises an earlier filing.",
+    ]],
+    ["Cmte — the issuer inside a committee the member sat on at the trade date — context, never an allegation.", [
+      "Medium: a direct match — the issuer's 4-digit SIC inside a direct range of a committee that matched (table v1 on Methodology).",
+      "Low: a sector match only.",
+      "None: no mapped committee matched.",
+      "Unknown: the sector or the membership on that date is not on record, or the committee inputs are not in this build.",
+      COMMITTEE_CAVEAT,
+    ]],
+  ];
+  assert.equal(paras[0], "Each meter is three bars. Levels: strong (three amber bars) · medium (two) · low (one) · none (empty) · unknown (hatched).", "the levels key opens the tip");
+  for (const [i, [head, clauses]] of FULL.entries()) {
+    assert.equal(paras[i + 1], `${head} ${clauses.join(" ")}`, `the ${head.split(" ")[0]} paragraph is the meter's full definition, every clause`);
+  }
+  assert.equal(paras.length, FULL.length + 2, "the levels key, one paragraph per meter, the Methodology link");
+  assert.equal(barsPop.querySelectorAll(".si-tip-p").at(-1)!.querySelector("a")!.getAttribute("href"), "/methodology/#signals-ranking");
+  assert.equal(barsPop.querySelectorAll(".si-cmte-context").length, 2, "the Cmte paragraph keeps its context word and the committee caveat as .si-cmte-context");
+  // the tier definitions → one tip per tier heading
+  assert.match(tipText(root, "About stands out"), /^Any meter at strong/);
+  assert.match(tipText(root, "About worth a look"), /^No meter at strong; any meter at medium, or a sum of 3 or more/);
+  assert.match(tipText(root, "About routine"), /a row led by an exchange is always Routine/);
+  // the family rate definition and the date-anomaly count → "About hit rates"
+  const rates = tipText(root, "About hit rates");
+  assert.ok(rates.includes("Hits per 1,000 rows filed in the window, over all asset types."));
+  assert.ok(rates.includes(`2,051 rows filed inside the window · ${art.dateAnomaliesExcluded} date-anomaly rows excluded before any rule ran.`));
+  assert.ok(rates.includes('A rule that fires on 5% of rows is a filter; one that fires on 0.1% is a signal. Rates are published so "unusual" can be calibrated.'));
+  // the hits panel note and key → "About hits"
+  const hitsTip = tipText(root, "About hits");
+  for (const d of ["Every rule hit, newest filed first; every hit carries its receipt.", "Sizes are the row's statutory range, never narrowed.", "Each kind word opens its exact rule."]) assert.ok(hitsTip.includes(d), d);
+  // the committee caveat → card foot, the bars tip, and every opened row's Cmte line
   assert.equal(ownText(root.querySelector("#lead-cards .si-card-context")!).trim(), COMMITTEE_CAVEAT);
-  assert.ok(ownText(root.querySelector("#triage .si-legend")!).includes("context, never an allegation"), "the Cmte legend");
-  assert.ok(root.querySelector('#triage .si-legend .note-pop[id="n-signals-legend-cmte"]')!.textContent.includes(COMMITTEE_CAVEAT));
+  for (const a of root.querySelectorAll("#triage article.si-row")) {
+    assert.ok(ownText(a.querySelector(".si-row-mw")!).includes("context, never an allegation"), "each opened row's Cmte line");
+  }
   // the per-kind exact rule → each hit's kind word
   const kindNote = root.querySelector("#hits tbody td.c-kind .note-pop")!;
   assert.ok(art.signals.some((s) => s.rule === kindNote.textContent), "the hit's kind opens its exact rule");
@@ -187,10 +269,34 @@ test("LD9: every caveat that left the visible page is in its new home", () => {
   const when = root.querySelector("#hits tbody td.si-when")!;
   assert.equal(when.querySelectorAll("time").length, 2);
   assert.match(ownText(when), /\+\d+d/);
-  // a withheld kind states itself in the note and in its panel
+  // the Methodology links paragraph and the superseded foot → the foot's link row
+  const foot = root.querySelector("#signal-method-links")!;
+  assert.deepEqual(foot.querySelectorAll("a").map((x) => x.getAttribute("href")), [
+    "/methodology/#signal-rules", "/methodology/#signals-ranking", "/methodology/#signal-lag", "/methodology/#committee-direct", "/signals/data/signals.v1.json",
+  ].concat(art.signals.some((s) => s.status === "superseded") ? ["/signals/data/signals.v1.json"] : []));
+  // a withheld kind states itself in the head tip and on its own visible line
   const w = withheldPage().html;
   assert.match(w, /1 kind was withheld this build: S-5 · Committee-jurisdiction overlap \(inputs-not-in-build\)\./);
   assert.match(w, /WITHHELD · inputs-not-in-build/);
+});
+
+test("signals-v4 LD19 (T1.8): live state stays visible OUTSIDE every tip — the hidden count, Cmte unknown, the withheld lines", () => {
+  /** text outside every note panel */
+  const outside = (el: MiniElement): string => ownText(el);
+  const { html } = withheldPage();
+  const root = domOf(html);
+  assert.match(outside(root.querySelector("#signal-hidden-count")!), /^\d[\d,]* hits? on other asset types hidden$/);
+  assert.equal(root.querySelector("#signal-hidden-count")!.closest(".note-pop"), null);
+  assert.match(outside(root.querySelector("#triage")!), /Cmte reads unknown on every row: committee data is not in this build/);
+  const line = root.querySelector('p.si-withheld-line[data-withheld="s5-jurisdiction"]')!;
+  assert.ok(line, "the withheld kind's own line");
+  assert.match(outside(line), /^S-5 · Committee-jurisdiction overlap WITHHELD · inputs-not-in-build/);
+  assert.match(line.querySelector(".note-pop")!.textContent, /committee membership and\/or issuer-sector data are not in this build/, "its tip holds the reason's detail");
+  // a carried-forward count stays visible on the line
+  const carried = signalsBody({ ...ART, signals: [...ART.signals, sig({ kind: "s5-jurisdiction", status: "unevaluated" })] }, CTX);
+  assert.match(ownText(domOf(carried).querySelector('p.si-withheld-line[data-withheld="s5-jurisdiction"]')!), /1 earlier signal carried forward unevaluated/);
+  // no new title= anywhere on the page (the survivor gate counts src/lib)
+  assert.doesNotMatch(goldenPage().html.replace(/<td class="c-member c-flex si-subject">.*?<\/td>/g, ""), /\stitle="/, "no title= outside the v3 hit Who cell");
 });
 
 test("signals-v3 M1: the page embeds no watch band and no data island; hostile names escape; the whole page passes the wording scan", () => {
@@ -205,26 +311,27 @@ test("signals-v3 M1: the page embeds no watch band and no data island; hostile n
 
 /* ================================================================ R12: the triage rows */
 
-test("R12: every triage row is an <article> with a ticker link to #on-signals, a separate receipt, owner, both dates and four labelled meters", () => {
+test("R12 / signals-v4 R2 (LD4): every triage row is an article holding a <details> — the two-line summary, the receipt OUTSIDE it, the opened row; owner, both dates and four labelled meters", () => {
   const { html, t } = goldenPage();
   const rows = domOf(html).querySelectorAll("#triage article.si-row");
-  assert.equal(rows.length, t.rows.length);
+  assert.equal(rows.length, t.rows.length, "every getTriage() row renders exactly once");
+  assert.equal(new Set(rows.map((a) => a.getAttribute("id"))).size, rows.length, "row ids are unique");
   for (const a of rows) {
     const key = a.getAttribute("data-row-key")!;
     const row = t.rows.find((r) => r.key === key)!;
-    const link = a.querySelector("h4 a.si-row-link");
-    if (row.lead.txn.ticker) {
-      assert.ok(link, `${key}: the heading is the link`);
-      assert.match(link!.getAttribute("href")!, new RegExp(`^/tickers/[^/]+/#on-signals$|^/e/\\?k=t:`));
-    } else assert.equal(link, null, `${key}: no ticker, no link`);
-    const receipt = a.querySelector(".si-row-src a");
-    assert.ok(receipt, `${key}: a receipt link of its own`);
-    assert.notEqual(receipt!.parent, link, "the receipt is not inside the heading link");
-    assert.equal(receipt!.getAttribute("href"), row.lead.doc);
-    assert.ok(a.querySelector(".owner-note"), `${key}: the owner`);
-    assert.ok(a.querySelector(".si-row-filed time"), `${key}: filed`);
-    assert.ok(a.querySelector(".si-row-traded time") || /trade date not disclosed/.test(a.textContent), `${key}: traded`);
-    const meters = a.querySelectorAll(".si-meter[role]");
+    assert.equal(a.getAttribute("id"), `si-row-${key.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")}`);
+    const d = a.children[0]!;
+    assert.deepEqual([d.tagName, d.getAttribute("class"), d.getAttribute("name"), d.hasAttribute("open")], ["details", "si-row-d", "si-rows", false], `${key}: a closed, named <details>`);
+    const sum = d.children[0]!;
+    assert.deepEqual([sum.tagName, sum.getAttribute("class")], ["summary", "si-row-sum"]);
+    assert.equal(sum.querySelectorAll("a, button").length, 0, `${key}: no control nested in the disclosure button`);
+    // line 1: ticker, filer with party and state, owner and tags, range, four meters, filed date
+    assert.equal(ownText(sum.querySelector(".si-row-tk")!), row.lead.txn.ticker ?? "no ticker");
+    assert.ok(sum.querySelector(".si-row-who .si-row-member"), `${key}: the filer`);
+    if (row.grouping !== "cluster") assert.ok(sum.querySelector(".si-row-who .aff"), `${key}: party and state`);
+    assert.ok(sum.querySelector(".si-row-who .owner-note"), `${key}: the owner on the collapsed row (LD22 deviation 2)`);
+    assert.ok(ownText(sum.querySelector(".si-row-amt")!).length > 0, `${key}: the range`);
+    const meters = sum.querySelectorAll(".si-meter[role]");
     assert.equal(meters.length, 4);
     assert.deepEqual(meters.map((m) => m.getAttribute("aria-label")!.split(":")[0]), ["Size", "Pattern", "Others", "Cmte"]);
     for (const m of meters) {
@@ -232,15 +339,39 @@ test("R12: every triage row is an <article> with a ticker link to #on-signals, a
       assert.equal(m.querySelectorAll(".si-mbar").length, 3, "three bars");
       assert.ok(m.querySelector(".si-meter-label"), "the inline label (shown on phones)");
     }
-    assert.ok(ownText(a.querySelector(".si-row-why")!).trim().length > 0, `${key}: a reason sentence`);
+    assert.ok(sum.querySelector(".si-row-filed time"), `${key}: filed`);
+    // line 2: side chip, the reason (one line), traded date and lag, the chevron
+    assert.match(ownText(sum.querySelector(".si-chip")!), /^(BUY|SELL|.+)$/);
+    assert.equal(ownText(sum.querySelector(".si-row-why")!), row.sentence);
+    assert.ok(sum.querySelector(".si-row-traded time") || /trade date not disclosed/.test(sum.querySelector(".si-row-traded")!.textContent), `${key}: traded`);
+    assert.ok(sum.querySelector(".si-row-chv[aria-hidden]"), "the chevron");
+    // the receipt: a sibling of the <details>, never inside the summary
+    const receipt = a.querySelector(".si-row-src a");
+    assert.ok(receipt, `${key}: a receipt link of its own`);
+    assert.ok(receipt!.closest("summary") === null, "the receipt is not inside the summary");
+    assert.ok(receipt!.closest("details.si-row-d") === null, "the receipt sits outside the row's <details>");
+    assert.equal(receipt!.getAttribute("href"), row.lead.doc);
+    // the opened row: the full sentence, the facts, every meter in words, links
+    const det = d.querySelector(".si-row-det")!;
+    assert.equal(ownText(det.querySelector(".si-row-reason")!), row.sentence);
+    const facts = det.querySelectorAll(".si-row-facts dt").map((x) => ownText(x));
+    assert.deepEqual(facts.filter((f) => f !== "Members" && f !== "Late"), ["Lead line", "Grouping", "Owner"]);
+    if (row.lateLines > 0) assert.ok(facts.includes("Late"), `${key}: the LATE detail`);
+    const words = det.querySelectorAll(".si-row-mw dd .si-mw-word").map((x) => ownText(x));
+    assert.deepEqual(words, (["size", "pattern", "others", "cmte"] as const).map((k) => ({ 3: "strong", 2: "medium", 1: "low", 0: "none", [-1]: "unknown" } as Record<number, string>)[row.meters[k]]));
+    for (const dd of det.querySelectorAll(".si-row-mw dd")) assert.ok(ownText(dd.querySelector(".si-mw-def")!).length > 20, "each meter's definition");
+    const links = det.querySelectorAll(".si-row-links a").map((x) => x.getAttribute("href")!);
+    if (row.lead.txn.ticker) assert.ok(links.some((h) => /^\/tickers\/[^/]+\/#on-signals$|^\/e\/\?k=t:/.test(h)), `${key}: the ticker page`);
+    if (row.lead.txn.bioguide) assert.ok(links.some((h) => h.includes(row.lead.txn.bioguide!)), `${key}: the member page`);
+    assert.ok(links.includes(row.lead.doc), `${key}: the receipt`);
   }
-  // the stretched link and the receipt above it
+  // one row open at a time (details[name]); the receipt over the summary's reserved cell
   const css = baseStylesheet();
-  assert.match(css, /\.si-row-link::after \{ content: ""; position: absolute; inset: 0; \}/);
-  assert.match(css, /\.si-row-src, \.si-row a:not\(\.si-row-link\), \.si-row \.note \{ position: relative; z-index: 1; \}/);
+  assert.match(css, /\.si-row-src \{ position: absolute; top: 8px; right: 6px; z-index: 1;/);
+  assert.match(css, /grid-template-areas: "tk who amt met fil src" "sd why why trd trd chv";/);
 });
 
-test("R12: tiers in order, Routine a CLOSED <details>, each with its count; a legend defines the levels and the four meters", () => {
+test("R12: tiers in order, Routine a CLOSED <details>, each with its count and its tip; the column head names the meters", () => {
   const { html, t } = goldenPage();
   const root = domOf(html);
   const stands = root.querySelector("#stands")!;
@@ -252,35 +383,45 @@ test("R12: tiers in order, Routine a CLOSED <details>, each with its count; a le
   assert.equal(routine.tagName, "details");
   assert.equal(routine.hasAttribute("open"), false, "Routine is closed");
   assert.match(ownText(routine.querySelector("summary h3.si-tier-h")!), new RegExp(`^Routine ${t.counts.routine}$`), "the tier heading rides in the summary");
+  assert.equal(routine.querySelector("summary .note-btn"), null, "no tip inside Routine's summary");
+  assert.ok(routine.parent!.querySelector(".si-tier-tip .note-btn"), "Routine's tip sits beside its summary");
   assert.ok(stands.querySelectorAll("article").every((a) => a.getAttribute("data-tier") === "stands"));
-  const legend = root.querySelector("#triage .si-legend")!;
-  assert.deepEqual(legend.querySelectorAll(".si-legend-word").map((w) => ownText(w)), ["strong", "medium", "low", "none", "unknown (hatched)"]);
-  assert.deepEqual(legend.querySelectorAll("dt").map((d) => ownText(d).trim()), ["Size", "Pattern", "Others", "Cmte"]);
-  for (const d of legend.querySelectorAll("dd")) assert.ok(ownText(d).trim().length > 20, "each meter is defined");
-  // the meter column labels over a tier
-  assert.deepEqual(stands.querySelectorAll(".si-meter-head .si-meter-col").map((c) => c.textContent), ["Size", "Pattern", "Others", "Cmte"]);
+  for (const id of ["stands", "look"]) assert.ok(root.querySelector(`#${id}`)!.children.some((c) => c.classList.contains("si-tier-tip") && !!c.querySelector(".note-btn.note-mark")), `${id}: one tip by the heading`);
+  // ONE column head over the tiers: the meter labels and the "What the bars mean" tip
+  const heads = root.querySelectorAll("#triage .si-row-head");
+  assert.equal(heads.length, 1);
+  assert.deepEqual(heads[0]!.querySelectorAll(".si-meter-col").map((c) => c.textContent), ["Size", "Patt", "Oth", "Cmte"]);
+  assert.equal(heads[0]!.querySelector(".si-row-htip .note-btn")!.getAttribute("aria-label"), "What the bars mean, explain");
   // an empty tier states itself
   const none = signalsBody(ART, CTX, { rowsEvaluated: 1, triage: { ...goldenPage().t, rows: [], counts: { stands: 0, look: 0, routine: 0 } } });
   assert.match(none, /No filing in the window stands out — a computed answer over every ranked filing\./);
 });
 
-test("R12 golden render: Armstrong's row tags 701 of 703 lines late; a cluster row names its members; a late batch says so", () => {
+test("R12 golden render: Armstrong's row tags LATE 701/703 (\"701 of 703 lines late\" in words); a cluster row names its members; a late batch says so", () => {
   const { t } = goldenPage();
   const arm = t.rows.find((r) => r.lead.txn.bioguide === "A000383" && r.filed === "2026-07-21")!;
   const a = domOf(triageRowHtml(arm, CTX));
-  assert.equal(ownText(a.querySelector(".si-late-tag")!), "701 of 703 lines late");
-  assert.equal(a.querySelector("a.si-row-link")!.getAttribute("href"), "/tickers/WMB/#on-signals");
-  assert.match(ownText(a.querySelector("h4")!), /^WMB\s*Alan Armstrong$/);
+  const tag = a.querySelector(".si-late-tag")!;
+  assert.equal(ownText(tag), "LATE 701/703", "on screen");
+  assert.equal(tag.querySelector(".visually-hidden")!.textContent, "701 of 703 lines late", "in words");
+  assert.match(a.querySelector(".si-row-facts")!.textContent, /701 of 703 lines filed past the STOCK Act's 45-day window\./, "the opened row states it in full");
+  assert.ok(a.querySelector('.si-row-links a[href="/tickers/WMB/#on-signals"]'), "the ticker page, from the opened row");
+  assert.match(ownText(a.querySelector(".si-row-tk")!), /^WMB$/);
+  assert.match(ownText(a.querySelector(".si-row-member")!), /^Alan Armstrong$/);
   const spcx = t.rows.find((r) => r.grouping === "cluster")!;
   const c = domOf(triageRowHtml(spcx, CTX));
-  assert.match(ownText(c.querySelector("h4")!), /^SPCX\s*6 members$/);
-  assert.match(ownText(c.querySelector(".si-row-what")!), /CLUSTER/);
-  assert.match(ownText(c.querySelector(".si-row-what")!), /Jared Moskowitz/);
+  assert.match(ownText(c.querySelector(".si-row-tk")!), /^SPCX$/);
+  assert.match(ownText(c.querySelector(".si-row-member")!), /^6 members$/);
+  assert.match(ownText(c.querySelector(".si-row-who")!), /CLUSTER/);
+  assert.match(ownText(c.querySelector(".si-row-facts")!), /Jared Moskowitz/, "the members, in the opened row");
   const batch = t.rows.find((r) => r.grouping === "late-batch")!;
   const b = domOf(triageRowHtml(batch, CTX));
-  assert.match(ownText(b.querySelector("h4")!), /Tommy Tuberville · 8 filings$/);
-  assert.match(ownText(b.querySelector(".si-row-what")!), /LATE BATCH/);
-  assert.match(ownText(b.querySelector(".si-row-src")!), /\+7 filings/);
+  assert.match(ownText(b.querySelector(".si-row-who")!), /^Tommy Tuberville\s*×8/);
+  assert.equal(b.querySelector(".si-row-n .visually-hidden")!.textContent, ", 8 filings");
+  assert.match(ownText(b.querySelector(".si-row-who")!), /LATE BATCH/);
+  assert.match(ownText(b.querySelector(".si-row-facts")!), /A late batch: 8 filings by one member on one date/);
+  assert.match(b.querySelector(".si-row-src")!.textContent, /\+7 filings · latest of 8 filings/);
+  assert.match(ownText(b.querySelector(".si-row-latest")!), /^latest of 8 filings: \d{4}-\d{2}-\d{2}$/, "visible in the opened row");
   // sides read BUY / SELL, never a verb
   assert.ok(t.rows.every((r) => !/\b(?:bought|sold|buying)\b/i.test(triageRowHtml(r, CTX))));
 });
@@ -305,6 +446,9 @@ function assertLeadChronology(row: TriageResult["rows"][number], html: string): 
     "the group's latest filing is labelled apart",
   );
   assert.equal(a.querySelector(".si-row-src .mono-note time")!.getAttribute("datetime"), row.filed);
+  // signals-v4 (LD4): beside the receipt for assistive technology, and VISIBLE in the opened row's grouping
+  assert.equal(ownText(a.querySelector(".si-row-facts .si-row-latest")!), `latest of ${n} filings: ${row.filed}`);
+  assert.doesNotMatch(ownText(a.querySelector("summary")!), new RegExp(row.filed === t.filed ? "^$" : row.filed), "never on the summary beside the lead's dates");
 }
 
 test("D21 golden: Salazar's CB row prints the lead line's own filed date, lag and receipt; the group's latest filing is labelled apart", () => {
@@ -325,14 +469,14 @@ test("D21 golden: Salazar's CB row prints the lead line's own filed date, lag an
   for (const r of t.rows.filter((x) => x.filings.length > 1 && x.lead.txn.traded)) assertLeadChronology(r, triageRowHtml(r, CTX));
 });
 
-test("R12: a row whose lead names no ticker renders its heading as plain text; a cut ticker links through /e/", () => {
+test("R12: a row whose lead names no ticker says so and links no ticker page; a cut ticker links through /e/", () => {
   const { t } = goldenPage();
   const row = t.rows.find((r) => r.lead.txn.ticker === "WMB")!;
   const noTicker = { ...row, lead: { ...row.lead, txn: { ...row.lead.txn, ticker: null } } };
-  const h = domOf(triageRowHtml(noTicker, CTX)).querySelector("h4")!;
-  assert.equal(h.querySelector("a"), null);
-  assert.match(ownText(h), /^no ticker/);
-  const cut = domOf(triageRowHtml(row, { cutTickers: new Set(["WMB"]) })).querySelector("a.si-row-link")!;
+  const a = domOf(triageRowHtml(noTicker, CTX));
+  assert.match(ownText(a.querySelector(".si-row-tk")!), /^no ticker$/);
+  assert.ok(!a.querySelectorAll(".si-row-links a").some((x) => /ticker page/.test(x.textContent)), "no ticker page to link");
+  const cut = domOf(triageRowHtml(row, { cutTickers: new Set(["WMB"]) })).querySelectorAll(".si-row-links a")[0]!;
   assert.equal(cut.getAttribute("href"), "/e/?k=t:WMB", "the /e/ route carries no #on-signals block");
 });
 
@@ -363,6 +507,36 @@ test("R11: three cards — the committee card and four buy/sell variants, server
   assert.match(ownText(variants[3]!), /WMB\s*SELL\s*\$5M–\$25M/);
   assert.equal(t.cards.sellRecord!.line.txn.ticker, "MLM");
   assert.doesNotMatch(lead.textContent, /<script/);
+});
+
+test("signals-v4 R4 (LD5, T1.5): each pick opens its row — one stretched a.si-card-open per pick, to an existing row id, under the card's own links; the strip swipes at ≤1080px", () => {
+  const { html, t } = goldenPage();
+  const root = domOf(html);
+  const lead = root.querySelector("#lead-cards")!;
+  const ids = new Set(root.querySelectorAll("#triage article.si-row").map((a) => a.getAttribute("id")));
+  const picks = [t.cards.committee, t.cards.buyRecord, t.cards.buyAbsolute, t.cards.sellRecord, t.cards.sellAbsolute].filter((p) => p !== null);
+  const opens = lead.querySelectorAll("a.si-card-open");
+  assert.equal(opens.length, picks.length, "one per pick, none on an empty card");
+  for (const [i, a] of opens.entries()) {
+    const href = a.getAttribute("href")!;
+    assert.equal(href, `#${triageRowId(picks[i]!.row)}`, "the pick's own row");
+    assert.ok(ids.has(href.slice(1)), `${href} names a rendered row`);
+    assert.match(a.querySelector(".visually-hidden")!.textContent, /^Show the row: /);
+  }
+  // the card keeps its own links (ticker, member, receipt) and both dates beside the stretched one
+  for (const block of [lead.querySelector('.si-card[data-card="committee"]')!, ...lead.querySelectorAll(".si-variant")]) {
+    if (!block.querySelector(".si-card-h")) continue;
+    assert.equal(block.querySelectorAll(".si-card-dates time").length, 2);
+    assert.ok(block.querySelector(".si-card-src a") && block.querySelector(".si-card-h a") && block.querySelector(".si-card-who a"));
+  }
+  const css = baseStylesheet();
+  assert.match(css, /\.si-card-open::after \{ content: ""; position: absolute; inset: 0; \}/);
+  assert.match(css, /\.si-card :is\(a:not\(\.si-card-open\), \.note, \.cell-src\) \{ position: relative; z-index: 1; \}/, "the card's own links sit above it");
+  assert.match(css, /@media \(max-width: 1080px\) \{[^@]*\.si-cards \{ display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x mandatory;/);
+  // the strip is a scroll region only while it overflows; the server gives it no role or name of its own (LD8's rule)
+  const strip = lead.querySelector(".si-cards")!;
+  assert.equal(strip.getAttribute("data-scroll-region"), "Lead cards · swipe for more");
+  for (const at of ["role", "aria-label", "tabindex"]) assert.equal(strip.getAttribute(at), null);
 });
 
 test("R11: the ranking control is CSS only — one variant shows per checked radio, through :checked ~ rules", () => {
@@ -419,7 +593,7 @@ test("R13: Hit rate by family is the filter — <button aria-pressed> rows with 
   assert.match(noRate, /The evaluated-row count is not available, so no rate is stated/);
 });
 
-test("R13: the slim hits — Kind · Ticker · Who · Traded → Filed · Size · Src, 10 server lines, Show 10 more, no chips and no evidence rows", () => {
+test("R13 / signals-v4 R5: the slim hits — Kind · Ticker · Who · Traded → Filed · Size · Src, SIGNAL_HITS_DOM_ROWS server lines with the first 10 visible, Show 10 more, no chips and no evidence rows", () => {
   const many: Signal[] = Array.from({ length: 25 }, (_, i) =>
     sig({ kind: "s1-large", id: `s1-large:${i}`, entities: { bioguide: `B${String(i).padStart(6, "0")}`, memberName: "Cory A. Booker", ticker: "ABC" }, occurrence: { tradeDate: "2026-03-01", filedDate: `2026-06-${String(i + 1).padStart(2, "0")}` } }),
   );
@@ -429,9 +603,15 @@ test("R13: the slim hits — Kind · Ticker · Who · Traded → Filed · Size �
     hits.querySelectorAll("thead th").map((th) => [ownText(th).trim(), th.getAttribute("class")]),
     [["Kind", "c-kind"], ["Ticker", "c-ticker"], ["Who", "c-member c-flex"], ["Traded → Filed", "c-num"], ["Size", "c-num"], ["Src", "c-src"]],
   );
-  const rows = hits.querySelectorAll("tbody tr.si-hit");
-  assert.equal(rows.length, 10);
+  const all = hits.querySelectorAll("tbody tr.si-hit");
+  assert.equal(all.length, Math.min(25, SIGNAL_HITS_DOM_ROWS), "every line up to SIGNAL_HITS_DOM_ROWS is rendered");
+  const rows = all.filter((r) => !r.hasAttribute("hidden"));
+  assert.equal(rows.length, 10, "the first 10 visible");
+  assert.ok(all.slice(10).every((r) => r.hasAttribute("hidden")), "the rest carry hidden");
+  assert.equal(hits.getAttribute("data-dom-rows"), String(SIGNAL_HITS_DOM_ROWS));
+  assert.equal(hits.getAttribute("data-shown"), "10");
   assert.equal(SIGNAL_HITS_COMPACT_ROWS, 10);
+  assert.equal(SIGNAL_HITS_DOM_ROWS, 40);
   assert.equal(SIGNAL_HITS_PAGE_SIZE, 10);
   assert.equal(rows[0]!.children.length, 6);
   // kind: the rule's label trigger
@@ -626,7 +806,7 @@ test("R12 / T11: listed stocks only by default — SSR hides non-stock hits and 
   assert.equal(hitsHiddenText(all.hidden, false), "all asset types shown");
   const client = readFileSync(path.resolve(import.meta.dirname, "..", "src", "scripts", "signals-client.ts"), "utf-8");
   assert.match(client, /let stocksOnly = true;\s*if \(stocksChk\) stocksChk\.checked = true;/, "every load starts at the default");
-  assert.match(client, /hitsRepaint\(hits, filter\(\), shown, ctx/, "the pager repaints through the shared view");
+  assert.match(client, /hitsRepaint\(hits, filter\(\), base \+ extra, ctx/, "the pager repaints through the shared view (LD6: base + extra)");
 });
 
 test("R13 / T2.7: family × stocks — the hidden count is the total minus shown under every combination", () => {
@@ -672,11 +852,13 @@ test("R14: the lag distribution renders on Methodology through lagBandHtml — i
   assert.match(lagBandHtml({ latestBatch: [], latestBatchFiled: null }), /No rows with both dates in the latest filed batch\./);
 });
 
-test("R13: hitsBodyHtml is the ONE body renderer (server lines = the shared view's first 10)", () => {
+test("R13: hitsBodyHtml is the ONE body renderer (server lines = the shared view's first SIGNAL_HITS_DOM_ROWS, the first 10 shown)", () => {
   const { html, art } = goldenPage();
   const active = art.signals.filter((s) => s.status === "active");
   const cols = domOf(html).querySelector("#hits table")!.getAttribute("data-columns")!.split(",");
   const view = hitsView(sortHits(active), DEFAULT_HIT_FILTER);
   const body = /<tbody id="signal-hits-body">([\s\S]*?)<\/tbody>/.exec(html)![1]!;
-  assert.equal(body, hitsBodyHtml(view.lines.slice(0, 10), CTX, cols));
+  assert.equal(body, hitsBodyHtml(view.lines.slice(0, SIGNAL_HITS_DOM_ROWS), CTX, cols, SIGNAL_HITS_COMPACT_ROWS));
+  // control: the hidden marks are the ONLY difference from an all-visible body
+  assert.equal(body.replace(/ hidden>/g, ">"), hitsBodyHtml(view.lines.slice(0, SIGNAL_HITS_DOM_ROWS), CTX, cols));
 });

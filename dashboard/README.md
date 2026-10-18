@@ -118,6 +118,35 @@ verification.
   requests are the cookieless Cloudflare Web Analytics beacon's (see
   `/methodology/#privacy`).
 
+## Deviation register — the Signals v4 mock
+
+The approved mock (https://claude.ai/artifact/GUFeqGmfBnTfHY6C44tpb8) is
+authoritative on layout, behaviour and copy intent. It is not authoritative
+where following it would remove honesty content or break a site rule
+(design-principles §1, §4, §5). Each departure is recorded here with its
+measurement, so it can be reconciled design-side rather than rediscovered;
+the full record is `docs/frontend/signals-v4.md`.
+
+- **LD22-1.** **Phone rows keep the trade date, the lag and the receipt.** The mock's
+   ≤720px rows hid them (`display: none`). Here the receipt holds the row's
+   first line and "traded {date} · {lag}d" its third (151px for the longest,
+   "traded 2025-04-15 · 477d"); the fold gate sweeps both, and the geometry
+   suite reads both unclipped at 320–430px.
+- **LD22-2.** **The owner word is on the collapsed row**, not only in the opened one
+   ("Self" … "owner not stated", 25–85px in the filer cell).
+- **LD22-3.** **The slim hits keep traded → filed**; the mock showed the filed date only.
+- **LD22-7.** **Tap targets follow G12** — 44px at ≤720px or under a coarse pointer, not
+   the mock's 32px (the pane switch's buttons measure 44px at 390px).
+- **LD22-8.** **No `title=` tooltips.** Every hover text is a tip or an `aria-label`; the
+   `src/lib` `title=` survivor count stays 18.
+- **LD22-11.** **A long filer name gives way to an ellipsis** on the collapsed row above
+   720px — the mock's own `.a-who` behaviour, kept so the row is two lines at every
+   width. Only the name shrinks; party and state, owner, ×N, tags and LATE keep their
+   width, a cluster's member count never shrinks, and the full name stays in the DOM
+   and the opened row (no `title=`). Filer cell ≥283px at 1081px, 348px at 1440px.
+
+Design-side reconciliation is still owed for each.
+
 ## Build markers and `/stats.json`
 
 Deploy verification reads two things out of the built site:

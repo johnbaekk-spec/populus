@@ -18,7 +18,14 @@
    on Methodology (`ruleBookHtml`, `lagBandHtml`, `signalsRankingHtml`,
    `committeeDirectHtml`), and the page links to each. Every number is
    computed from the artifact, the build's own rows and the triage
-   (`signal-triage.ts`); nothing here is serialized. */
+   (`signal-triage.ts`); nothing here is serialized.
+
+   signals-v4 M1 (R1–R8, LD3–LD7, LD19): every explanation is an ⓘ tip (the
+   `note()` mark trigger); a triage row is a two-line `<details>` that opens
+   in place (`triageRowHtml`, LD4); a lead card opens its row (LD5); the hits
+   render `SIGNAL_HITS_DOM_ROWS` lines, the rows past the visible count
+   `hidden`, so the column fit (`scripts/column-fit.ts`, LD6) can reveal them;
+   a pane switch picks Filings or Hits where the band stacks (LD7). */
 
 import {
   type RenderCtx,
@@ -46,6 +53,7 @@ import {
   amountText,
   sideLabel,
   partyClass,
+  slug,
 } from "../format.ts";
 import { affTextOf, sumRanges } from "../derive.ts";
 import type { Signal, SignalArtifact, SignalKind, WithheldKind } from "../signals.ts";
@@ -409,9 +417,15 @@ export function hitsHiddenText(hidden: number, stocksOnly: boolean): string {
 
 /* ---------- R13: the slim HIT row — Kind · Ticker · Who · Traded → Filed · Size · Src ---------- */
 
-/** Lines the server renders, and the step of "Show 10 more" (LD7). */
+/** Lines the server SHOWS, the column fit's floor (signals-v4 LD6), and the
+    step of "Show 10 more" (LD7). */
 export const SIGNAL_HITS_COMPACT_ROWS = 10;
 export const SIGNAL_HITS_PAGE_SIZE = 10;
+/** Lines the server RENDERS (signals-v4 R5, LD6): the first
+    `SIGNAL_HITS_COMPACT_ROWS` visible, the rest `hidden`, so the column fit
+    reveals up to this many with no fetch. Rides on `#hits` as
+    `data-dom-rows`, so the client reads it from the page. */
+export const SIGNAL_HITS_DOM_ROWS = 40;
 /** The hits wrapper's accessible name while it scrolls sideways (R-8). */
 export const SIGNAL_HITS_REGION_NAME = "Signal hits · scroll sideways for more columns";
 
@@ -496,8 +510,9 @@ function hitAssetChip(s: Signal): string | null {
 
 /** One slim hits-table line. `group` is the line's members when it collapses
     exact repeats (R11): the size is then their `sumRanges` and the cell says
-    `×n`. */
-export function hitRowHtml(s: Signal, ctx: RenderCtx, columns: readonly string[] | null = null, group: readonly Signal[] | null = null): string {
+    `×n`. `hidden` holds a rendered line past the visible count (signals-v4
+    LD6): a data row only, never a caveat. */
+export function hitRowHtml(s: Signal, ctx: RenderCtx, columns: readonly string[] | null = null, group: readonly Signal[] | null = null, hidden = false): string {
   const members = group !== null && group.length > 1 ? group : [s];
   const grouped = members.length > 1;
   const magnitude = grouped ? groupMagnitude(members) : s.magnitude;
@@ -516,7 +531,7 @@ export function hitRowHtml(s: Signal, ctx: RenderCtx, columns: readonly string[]
   return (
     `<tr class="si-hit si-family-${family.toLowerCase()} si-kind-${esc(s.kind)}" data-signal-id="${esc(s.id)}" data-family="${family}"` +
     ` data-kind="${esc(s.kind)}" data-edge="family-${family.toLowerCase()}" data-bioguide="${esc(s.entities.bioguide ?? "")}" data-ticker="${esc(s.entities.ticker ?? "")}"` +
-    ` data-filed="${esc(s.occurrence.filedDate)}"${grouped ? ` data-group-size="${members.length}"` : ""}>` +
+    ` data-filed="${esc(s.occurrence.filedDate)}"${grouped ? ` data-group-size="${members.length}"` : ""}${hidden ? " hidden" : ""}>` +
     /* The kind WORD is the exact rule's label trigger (R13, LD9). */
     `<td class="c-kind si-kind">${note(s.rule, { scope: "signal-hits" }, s.id, { trigger: "label", textHtml: esc(shortOf(s.kind)) })}</td>` +
     (columns === null || columns.includes("ticker") ? `<td class="c-ticker si-ticker-cell">${ticker}</td>` : "") +
@@ -528,10 +543,12 @@ export function hitRowHtml(s: Signal, ctx: RenderCtx, columns: readonly string[]
   );
 }
 
-/** The hits body for the lines shown — the ONE body renderer the server page
-    and the client pager share, so a repaint is the server's markup (R13). */
-export function hitsBodyHtml(lines: readonly HitLine[], ctx: RenderCtx, columns: readonly string[] | null = null): string {
-  return lines.map((line) => hitRowHtml(line.lead, ctx, columns, line.members)).join("\n");
+/** The hits body for the lines rendered — the ONE body renderer the server
+    page and the client pager share, so a repaint is the server's markup
+    (R13). Lines from index `shown` on carry `hidden` (signals-v4 LD6); with no
+    `shown` every line shows. */
+export function hitsBodyHtml(lines: readonly HitLine[], ctx: RenderCtx, columns: readonly string[] | null = null, shown: number | null = null): string {
+  return lines.map((line, i) => hitRowHtml(line.lead, ctx, columns, line.members, shown !== null && i >= shown)).join("\n");
 }
 
 /** "1–10 of 663 lines · 693 hits" — the ONE range string the server and the
@@ -544,19 +561,29 @@ export function hitsRangeText(page: number, onPage: number, lines: number, hits:
   return `${rangeOfTotal(lo, lo + onPage - 1, lines, lines === 1 ? "line" : "lines")} · ${fmtInt(hits)} ${hits === 1 ? "hit" : "hits"}`;
 }
 
+/** A withheld kind (signals-v4 LD19): ONE visible line — the kind, its typed
+    reason and, when earlier signals of it are carried forward, their count —
+    with a tip holding the reason's detail and what "carried forward" means.
+    The line is a stated absence: it never folds into the tip. */
 function withheldHtml(w: WithheldKind, carried: number): string {
+  const label = SIGNAL_KIND_LABELS[w.kind];
+  const carriedText =
+    carried > 0
+      ? `${fmtInt(carried)} earlier ${carried === 1 ? "signal" : "signals"} of this kind ${carried === 1 ? "is" : "are"} carried forward unevaluated — ` +
+        `this build asked nothing of ${carried === 1 ? "it" : "them"}, so ${carried === 1 ? "its" : "their"} absence from the active tables is ` +
+        `not a retraction and not an amendment.`
+      : "";
+  const tip = noteFromHtml(
+    `<span class="si-tip-p">${esc(w.detail)}</span>` + (carriedText ? `<span class="si-tip-p">${esc(carriedText)}</span>` : ""),
+    { scope: "signals-withheld" },
+    w.kind,
+    { trigger: "mark", name: `Why ${label} is withheld` },
+  );
   return (
-    `<section class="panel" aria-label="${esc(SIGNAL_KIND_LABELS[w.kind])} — withheld">` +
-    `<div class="panel-head"><h2 class="section-h">${esc(SIGNAL_KIND_LABELS[w.kind])}</h2>` +
-    `<span class="badge-planned">WITHHELD · ${esc(w.reason)}</span></div>` +
-    `<p class="section-note">${esc(w.detail)}</p>` +
-    (carried > 0
-      ? `<p class="section-note">${fmtInt(carried)} earlier ${carried === 1 ? "signal" : "signals"} of this kind ` +
-        `${carried === 1 ? "is" : "are"} carried forward <strong>unevaluated</strong> — this build asked nothing of ` +
-        `${carried === 1 ? "it" : "them"}, so ${carried === 1 ? "its" : "their"} absence from the active tables is ` +
-        `not a retraction and not an amendment.</p>`
-      : "") +
-    `</section>`
+    `<p class="si-withheld-line" data-withheld="${esc(w.kind)}"><strong>${esc(label)}</strong> ` +
+    `<span class="badge-planned">WITHHELD · ${esc(w.reason)}</span>` +
+    (carried > 0 ? ` <span class="si-withheld-carried">${fmtInt(carried)} earlier ${carried === 1 ? "signal" : "signals"} carried forward <strong>unevaluated</strong></span>` : "") +
+    ` ${tip}</p>`
   );
 }
 
@@ -685,10 +712,24 @@ function familiesHtml(deps: SignalsPageDeps, active: Signal[], artifact: SignalA
   const max = Math.max(1, ...rates.map((r) => r.rate ?? 0));
   const rateText = (r: (typeof rates)[number]): string =>
     r.withheld ? "withheld" : r.rate == null ? "—" : r.rate < 0.1 && r.hits > 0 ? "<0.1 ‰" : `${r.rate.toFixed(1)} ‰`;
+  /* signals-v4 LD19: the panel note, the evaluated-row count, the date-anomaly
+     count and the filter-vs-signal calibration move into "About hit rates";
+     a missing count stays a visible stated absence. */
+  const tip = noteFromHtml(
+    `<span class="si-tip-p">Hits per 1,000 rows filed in the window, over all asset types. Choose a family to filter the hits.</span>` +
+      (n == null
+        ? ""
+        : `<span class="si-tip-p">${fmtInt(n)} rows filed inside the window` +
+          (artifact.dateAnomaliesExcluded > 0 ? ` · ${fmtInt(artifact.dateAnomaliesExcluded)} date-anomaly rows excluded before any rule ran` : "") +
+          `.</span>`) +
+      `<span class="si-tip-p">A rule that fires on 5% of rows is a filter; one that fires on 0.1% is a signal. Rates are published so "unusual" can be calibrated.</span>`,
+    { scope: "signals-families" },
+    "about",
+    { trigger: "mark", name: "About hit rates" },
+  );
   return (
     `<section class="panel si-families" id="families" aria-labelledby="families-h">` +
-    `<div class="panel-head"><h2 class="section-h" id="families-h">Hit rate by family</h2>` +
-    `<span class="panel-note">HITS PER 1,000 ROWS FILED IN THE WINDOW · ALL ASSET TYPES · A ROW FILTERS THE HITS</span></div>` +
+    `<div class="panel-head"><h2 class="section-h" id="families-h">Hit rate by family</h2>${tip}</div>` +
     (n == null ? `<p class="section-note">The evaluated-row count is not available, so no rate is stated; the rows still filter the hits.</p>` : "") +
     `<div class="si-family-list" role="group" aria-label="Filter hits by family">` +
     rates
@@ -704,11 +745,6 @@ function familiesHtml(deps: SignalsPageDeps, active: Signal[], artifact: SignalA
     /* The active family filter, removable (R13). The client shows it on the
        first filter; with no script there is no filter to remove. */
     `<p class="si-pill-row" id="signal-family-pill-row" hidden><button type="button" class="si-pill" id="signal-family-pill">Family: <span id="signal-family-pill-name"></span> <span aria-hidden="true">×</span><span class="visually-hidden">, remove the family filter</span></button></p>` +
-    (n == null
-      ? ""
-      : `<p class="section-note">${fmtInt(n)} rows filed inside the window` +
-        (artifact.dateAnomaliesExcluded > 0 ? ` · ${fmtInt(artifact.dateAnomaliesExcluded)} date-anomaly rows excluded before any rule ran` : "") +
-        `. A rule that fires on 5% of rows is a filter; one that fires on 0.1% is a signal. Rates are published so "unusual" can be calibrated.</p>`) +
     `</section>`
   );
 }
@@ -721,19 +757,33 @@ function hitsHtml(active: Signal[], ctx: RenderCtx): string {
      repeats collapsed to one line — through the same `hitsView` the client
      repaints with, so the two cannot disagree. */
   const view = hitsView(sorted, DEFAULT_HIT_FILTER);
-  const shown = view.lines.slice(0, SIGNAL_HITS_COMPACT_ROWS);
+  /* signals-v4 R5 / LD6: the first SIGNAL_HITS_DOM_ROWS lines are rendered,
+     the first SIGNAL_HITS_COMPACT_ROWS of them visible — the count, the range
+     and the no-script view are those ten; the column fit reveals the rest. */
+  const held = view.lines.slice(0, SIGNAL_HITS_DOM_ROWS);
+  const shown = Math.min(held.length, SIGNAL_HITS_COMPACT_ROWS);
   const cols = signalHitColumns(active);
-  const more = view.lines.length > shown.length;
+  const more = view.lines.length > shown;
   const body = sorted.length === 0
     ? `<tr><td colspan="${cols.columns.length}" class="si-empty">Zero hits in the retained window — a computed answer over every rule, not missing coverage.</td></tr>`
-    : shown.length === 0
+    : held.length === 0
       ? `<tr><td colspan="${cols.columns.length}" class="si-empty">No hits match this view — a computed answer over every rule, not missing coverage.</td></tr>`
-      : hitsBodyHtml(shown, ctx, cols.columns);
-  const range = hitsRangeText(0, shown.length, view.lines.length, view.hits, SIGNAL_HITS_PAGE_SIZE);
+      : hitsBodyHtml(held, ctx, cols.columns, shown);
+  const range = hitsRangeText(0, shown, view.lines.length, view.hits, SIGNAL_HITS_PAGE_SIZE);
+  /* signals-v4 LD19: the panel note and the source / size / rule key move
+     into "About hits"; the hidden count and the range stay visible. */
+  const tip = noteFromHtml(
+    `<span class="si-tip-p">Every rule hit, newest filed first; every hit carries its receipt.</span>` +
+      `<span class="si-tip-p"><span class="si-stamp">PTR</span> / <span class="si-stamp">eFD</span> = the source regime of the underlying row. ` +
+      `Sizes are the row's statutory range, never narrowed. Each kind word opens its exact rule.</span>` +
+      `<span class="si-tip-p">${fmtInt(active.length)} ${active.length === 1 ? "hit" : "hits"} in the window; the complete artifact: <a href="/signals/data/signals.v1.json">signals.v1.json</a>.</span>`,
+    { scope: "signals-hits" },
+    "about",
+    { trigger: "mark", name: "About hits" },
+  );
   return (
-    `<section class="panel si-hits" id="hits" aria-labelledby="hits-h" data-step="${SIGNAL_HITS_PAGE_SIZE}" data-shown="${shown.length}" data-total="${sorted.length}" data-lines="${view.lines.length}">` +
-    `<div class="panel-head"><h2 class="section-h" id="hits-h">Hits</h2>` +
-    `<span class="panel-note">NEWEST FILED FIRST · EVERY HIT CARRIES ITS RECEIPT</span>` +
+    `<section class="panel si-hits" id="hits" aria-labelledby="hits-h" data-step="${SIGNAL_HITS_PAGE_SIZE}" data-shown="${shown}" data-total="${sorted.length}" data-lines="${view.lines.length}" data-hits="${view.hits}" data-dom-rows="${SIGNAL_HITS_DOM_ROWS}">` +
+    `<div class="panel-head"><h2 class="section-h" id="hits-h">Hits</h2>${tip}` +
     /* R12: checked by default and never persisted (`autocomplete="off"` stops
        a browser restoring it; the island also resets it on load). The hidden
        count beside it is the reader's cue that the view is filtered. */
@@ -751,10 +801,6 @@ function hitsHtml(active: Signal[], ctx: RenderCtx): string {
     `<span class="pager-range" id="signal-hits-range" tabindex="-1">${esc(range)}</span>` +
     `<button type="button" class="pager-btn${more ? "" : " is-unavailable"}" id="signal-hits-more" aria-disabled="${more ? "false" : "true"}">Show ${fmtInt(SIGNAL_HITS_PAGE_SIZE)} more</button>` +
     `</div></div>` +
-    `<p class="section-note" id="signal-hits-count" data-total="${active.length}">` +
-    `<span class="si-stamp">PTR</span> / <span class="si-stamp">eFD</span> = the source regime of the underlying row · ` +
-    `sizes are the row's statutory range, never narrowed · each kind word opens its exact rule · ${fmtInt(active.length)} ${active.length === 1 ? "hit" : "hits"} in the window · ` +
-    `the complete artifact: <a href="/signals/data/signals.v1.json">signals.v1.json</a>.</p>` +
     `<p class="visually-hidden" id="signal-hits-status" role="status" aria-live="polite"></p>` +
     `<noscript><p class="section-note">Filtering and "Show more" need JavaScript; the newest ${fmtInt(SIGNAL_HITS_COMPACT_ROWS)} lines of listed-stock hits are listed above regardless, and the artifact holds every hit.</p></noscript>` +
     `</section>`
@@ -763,14 +809,20 @@ function hitsHtml(active: Signal[], ctx: RenderCtx): string {
 
 /* ---------- R12: the "Filings to read" triage ---------- */
 
+/** The meters' short names — the column head's, the bars tip's and a phone
+    row's inline label (signals-v4 R3: four labelled meters share a phone
+    row's second line with the filer, at the 9.5px type floor). The accessible
+    name keeps the full word. */
+export const METER_SHORT: Readonly<Record<MeterKey, string>> = { size: "Size", pattern: "Patt", others: "Oth", cmte: "Cmte" };
+
 /** One meter (LD7): three bars of 5, 9 and 13 px; level 3 amber, 1–2 accent,
-    -1 hatched. Its accessible name is "Size: strong"; the visible label rides
-    inline and shows on phones (R23). */
+    -1 hatched. Its accessible name is "Size: strong"; the visible label (the
+    short name) rides inline and shows on phones (R23). */
 export function meterHtml(key: MeterKey, level: Level): string {
   const label = METER_LABELS[key];
   return (
     `<span class="si-meter" data-meter="${key}" data-level="${level}" role="img" aria-label="${esc(`${label}: ${LEVEL_WORDS[level]}`)}">` +
-    `<span class="si-meter-label">${esc(label)}</span>` +
+    `<span class="si-meter-label">${esc(METER_SHORT[key])}</span>` +
     `<span class="si-meter-bars"><span class="si-mbar"></span><span class="si-mbar"></span><span class="si-mbar"></span></span>` +
     `</span>`
   );
@@ -792,82 +844,194 @@ function lagOf(r: TxnRow): number | null {
   return r.traded ? daysBetween(r.traded, r.filed) : null;
 }
 
-/** The ticker-page link of a row's heading: the canonical page's
-    `#on-signals` anchor, the /e/ route as the existing helper decides, and
-    no link when the line names no ticker (LD7). */
+/** The ticker-page link of a row: the canonical page's `#on-signals` anchor,
+    the /e/ route as the existing helper decides, and no link when the line
+    names no ticker (LD7). */
 function onSignalsHref(ticker: string | null, ctx: RenderCtx): string | null {
   if (!ticker) return null;
   const href = tickerHrefFor(ticker, ctx);
   return href.startsWith("/tickers/") ? `${href}#on-signals` : href;
 }
 
-/** The LATE tag: every line of a one-line filing, or "701 of 703 lines late". */
+/** The LATE tag: "LATE" on a one-line filing; on more lines the count,
+    "LATE 701/703" on screen and "701 of 703 lines late" in words for
+    assistive technology (signals-v4: the row's first line holds it at
+    1440px). The opened row states it in full. */
 function lateTagHtml(late: number, total: number): string {
   if (late === 0) return "";
-  return ` <span class="si-late si-late-tag">${total === 1 ? "LATE" : `${fmtInt(late)} of ${fmtInt(total)} lines late`}</span>`;
+  if (total === 1) return ` <span class="si-late si-late-tag">LATE</span>`;
+  return (
+    ` <span class="si-late si-late-tag"><span aria-hidden="true">LATE ${fmtInt(late)}/${fmtInt(total)}</span>` +
+    `<span class="visually-hidden">${fmtInt(late)} of ${fmtInt(total)} lines late</span></span>`
+  );
 }
 
-/** R12: one row of "Filings to read" — an `<article>` whose ticker-and-member
-    heading is the stretched link to the ticker page; the receipt is a
-    separate link above it. The ticker page's own block (M3, R18) renders the
-    same row with `link: false`: the heading would only link to itself. */
-export function triageRowHtml(row: TriageRow, ctx: RenderCtx, opts: { link?: boolean } = {}): string {
+/** A row's anchor (signals-v4 LD4, LD5): `si-row-{slug(key)}`. A lead card,
+    a hash and (M2) `revealTarget` open the row through it. */
+export function triageRowId(row: Pick<TriageRow, "key">): string {
+  return `si-row-${slug(row.key)}`;
+}
+
+/** "traded {date} · {lag}d", or the stated absence. */
+function tradedHtml(t: TxnRow): string {
+  const lag = lagOf(t);
+  return t.traded
+    ? `traded <time datetime="${esc(t.traded)}">${esc(t.traded)}</time>${lag != null ? ` · <span class="${lag > 45 ? "si-late" : "si-lag"}">${fmtInt(lag)}d</span>` : ""}`
+    : "trade date not disclosed";
+}
+
+/** The lead line's chronology in the opened row: "traded {date} → filed
+    {date} · {lag}d", or the stated absence of a trade date. */
+function leadDatesHtml(t: TxnRow): string {
+  const lag = lagOf(t);
+  const filed = `filed <time datetime="${esc(t.filed)}">${esc(t.filed)}</time>`;
+  return t.traded
+    ? `traded <time datetime="${esc(t.traded)}">${esc(t.traded)}</time> → ${filed}${lag != null ? ` · <span class="${lag > 45 ? "si-late" : "si-lag"}">${fmtInt(lag)}d</span>` : ""}`
+    : `trade date not disclosed · ${filed}`;
+}
+
+/** The four meters in words, each with its definition (LD4's opened row).
+    The Cmte line carries "context, never an allegation" on every row. */
+function meterWordsHtml(m: Record<MeterKey, Level>): string {
+  const defs = meterDefinitions();
+  return (
+    `<dl class="si-row-mw">` +
+    METER_KEYS.map(
+      (k) =>
+        `<div><dt>${esc(METER_LABELS[k])}</dt><dd><span class="si-mw-word" data-level="${m[k]}">${esc(LEVEL_WORDS[m[k]])}</span> ` +
+        `<span class="si-mw-def">${esc(defs[k].short)}${k === "cmte" ? ` — <span class="si-cmte-context">context, never an allegation</span>` : ""}</span></dd></div>`,
+    ).join("") +
+    `</dl>`
+  );
+}
+
+/** One fact of an opened row. */
+function rowFact(label: string, html: string): string {
+  return `<div><dt>${esc(label)}</dt><dd>${html}</dd></div>`;
+}
+
+/** signals-v4 R2, R3, LD4: one row of "Filings to read" — an `<article>`
+    holding a `<details>` whose `<summary>` is the two-line row (three on a
+    phone) and whose body is the opened row; the receipt sits OUTSIDE the
+    summary, so no link is nested in the disclosure button, and is laid over
+    the summary's reserved cell. Every v3 field keeps its class: the lead
+    line's filed date (`.si-row-filed`), trade date and lag (`.si-row-traded`),
+    receipt (`.si-row-src`), owner (`.owner-note`), LATE tag (`.si-late-tag`),
+    the four meters with their inline names, and the reason (`.si-row-why`,
+    one line here, in full in the opened row). A row grouping several
+    filings names its latest filing apart (D21): in the opened row's grouping,
+    and beside the receipt for assistive technology.
+
+    `link: false` — the ticker page's own block (R18) — omits the ticker-page
+    link, which would point at the page it is on; `open: true` renders the
+    row opened. */
+export function triageRowHtml(row: TriageRow, ctx: RenderCtx, opts: { link?: boolean; open?: boolean } = {}): string {
   const t = row.lead.txn;
-  const href = opts.link === false ? null : onSignalsHref(t.ticker, ctx);
   const filers = [...new Map(row.filings.map((f) => [f.memberKey, f.rows[0]!])).values()];
-  const who =
-    row.grouping === "cluster" && row.cluster
-      ? `${fmtInt(row.cluster.members)} members`
-      : t.name;
-  const suffix =
+  const cluster = row.grouping === "cluster" && row.cluster !== null;
+  const who = cluster ? `${fmtInt(row.cluster!.members)} members` : t.name;
+  const n = row.filings.length;
+  /* a row grouping one member's filings says how many: "×8" on screen,
+     "8 filings" in words (the opened row's grouping states it in full) */
+  const count =
     row.grouping === "member-ticker" || row.grouping === "late-batch"
-      ? ` · ${fmtInt(row.filings.length)} ${row.filings.length === 1 ? "filing" : "filings"}`
+      ? ` <span class="si-row-n"><span aria-hidden="true">×${fmtInt(n)}</span><span class="visually-hidden">, ${fmtInt(n)} ${n === 1 ? "filing" : "filings"}</span></span>`
       : "";
-  const headInner =
-    `<span class="mono-ticker">${esc(t.ticker ?? "no ticker")}</span> ` +
-    `<span class="si-row-member">${esc(who)}${esc(suffix)}</span>`;
-  const head = href ? `<a class="si-row-link" href="${esc(href)}">${headInner}</a>` : headInner;
   const side = sideLabel(t.side, t.flags);
-  const affs = (row.grouping === "cluster" ? filers : [t])
-    .map((r) => `${row.grouping === "cluster" ? `${esc(r.name)} ` : ""}<span class="aff ${partyClass(r.party)}">${esc(affTextOf(r))}</span>`)
-    .join(", ");
   const kindTag =
     row.grouping === "late-batch"
       ? ` <span class="si-group-tag">LATE BATCH</span>`
-      : row.grouping === "cluster"
+      : cluster
         ? ` <span class="si-group-tag">CLUSTER</span>`
         : "";
-  /* The date block is the LEAD line's own chronology (D21): its filed date,
-     its trade date, the lag between those two and its filing's receipt, so
-     the four always correspond. A row that groups several filings names the
-     group's latest filing separately, labelled as such — `row.filed` is that
-     date and the sort key, never the lead line's filed date. */
-  const lag = lagOf(t);
-  const n = row.filings.length;
-  const group =
-    n > 1
-      ? `<span class="mono-note"> +${fmtInt(n - 1)} ${n === 2 ? "filing" : "filings"} · latest of ${fmtInt(n)} filings: <time datetime="${esc(row.filed)}">${esc(row.filed)}</time></span>`
-      : "";
-  return (
-    `<article class="si-row" data-tier="${row.tier}" data-grouping="${row.grouping}" data-ticker="${esc(t.ticker ?? "")}" data-row-key="${esc(row.key)}">` +
-    `<div class="si-row-main">` +
-    `<h4 class="si-row-h">${head}</h4>` +
-    `<p class="si-row-what"><span class="si-chip si-side-${side.cls}">${esc(side.text)}</span> <span class="si-row-amt">${esc(amountText(t))}</span>${kindTag} · ${affs} · ${ownerWordHtml(t.owner)}${lateTagHtml(row.lateLines, row.totalLines)}</p>` +
-    `<p class="si-row-why">${esc(row.sentence)}</p>` +
-    `</div>` +
+  const aff = cluster ? "" : ` <span class="aff ${partyClass(t.party)}">${esc(affTextOf(t))}</span>`;
+  const latestHtml = n > 1 ? `latest of ${fmtInt(n)} filings: <time datetime="${esc(row.filed)}">${esc(row.filed)}</time>` : "";
+  const summary =
+    `<summary class="si-row-sum">` +
+    `<span class="si-row-tk mono-ticker">${esc(t.ticker ?? "no ticker")}</span>` +
+    `<span class="si-chip si-side-${side.cls}">${esc(side.text)}</span>` +
+    `<span class="si-row-who"><span class="si-row-member">${esc(who)}</span>${count}${aff} ${ownerWordHtml(t.owner)}${kindTag}${lateTagHtml(row.lateLines, row.totalLines)}</span>` +
+    `<span class="si-row-amt">${esc(amountText(t))}</span>` +
     metersHtml(row.meters) +
-    `<div class="si-row-when">` +
     `<span class="si-row-filed">filed <time datetime="${esc(t.filed)}">${esc(t.filed)}</time></span>` +
-    `<span class="si-row-traded">${t.traded ? `traded <time datetime="${esc(t.traded)}">${esc(t.traded)}</time>${lag != null ? ` · <span class="${lag > 45 ? "si-late" : "si-lag"}">${fmtInt(lag)}d</span>` : ""}` : "trade date not disclosed"}</span>` +
-    `<span class="si-row-src">${signalReceiptHtml(row.lead.doc, t.chamber)}${group}</span>` +
-    `</div>` +
+    /* the receipt's reserved cell: the receipt itself sits outside the summary */
+    `<span class="si-row-slot" aria-hidden="true"></span>` +
+    `<span class="si-row-why">${esc(row.sentence)}</span>` +
+    `<span class="si-row-traded">${tradedHtml(t)}</span>` +
+    `<span class="si-row-chv" aria-hidden="true"></span>` +
+    `</summary>`;
+  const grouping =
+    row.grouping === "cluster" && row.cluster
+      ? `A cluster: ${fmtInt(row.cluster.members)} members on one ticker and side` +
+        (row.cluster.tradedFrom && row.cluster.tradedTo ? `, traded <time datetime="${esc(row.cluster.tradedFrom)}">${esc(row.cluster.tradedFrom)}</time> → <time datetime="${esc(row.cluster.tradedTo)}">${esc(row.cluster.tradedTo)}</time>` : "") +
+        `, one row`
+      : row.grouping === "late-batch"
+        ? `A late batch: ${fmtInt(n)} ${n === 1 ? "filing" : "filings"} by one member on one date` +
+          (row.batch ? `, completing ${fmtInt(row.batch.clusters.length)} co-occurrence ${row.batch.clusters.length === 1 ? "cluster" : "clusters"} from ${esc(row.batch.years)}` : "") +
+          `, one row`
+        : row.grouping === "member-ticker"
+          ? `${fmtInt(n)} ${n === 1 ? "filing" : "filings"} by one member on one ticker, one row`
+          : "One filing";
+  const members = cluster
+    ? filers.map((r) => `${esc(r.name)} <span class="aff ${partyClass(r.party)}">${esc(affTextOf(r))}</span>`).join(", ")
+    : "";
+  const lateDetail =
+    row.lateLines === 0
+      ? ""
+      : row.totalLines === 1
+        ? "Filed past the STOCK Act's 45-day window."
+        : `${fmtInt(row.lateLines)} of ${fmtInt(row.totalLines)} lines filed past the STOCK Act's 45-day window.`;
+  const tickerHref = opts.link === false ? null : onSignalsHref(t.ticker, ctx);
+  const receipt = row.lead.doc;
+  const links = [
+    tickerHref ? `<a href="${esc(tickerHref)}">${esc(t.ticker!)} ticker page ↗</a>` : "",
+    t.bioguide ? `<a href="${memberHrefFor(t.bioguide, ctx)}">${esc(t.name)} ↗</a>` : "",
+    receipt && receipt.startsWith("https://")
+      ? `<a href="${esc(receipt)}" rel="noopener" target="_blank">Receipt: ${esc(srcLabel(receipt))} ↗</a>`
+      : `<span>Receipt: ${signalReceiptHtml(receipt, t.chamber)} no usable link</span>`,
+  ].filter(Boolean);
+  const detail =
+    `<div class="si-row-det">` +
+    `<p class="si-row-reason">${esc(row.sentence)}</p>` +
+    `<dl class="si-row-facts">` +
+    rowFact("Lead line", `<span class="si-chip si-side-${side.cls}">${esc(side.text)}</span> ${esc(amountText(t))} · ${leadDatesHtml(t)}`) +
+    rowFact("Grouping", grouping + (latestHtml ? ` · <span class="si-row-latest">${latestHtml}</span>` : "")) +
+    (cluster ? rowFact("Members", members) : "") +
+    rowFact("Owner", ownerWordHtml(t.owner)) +
+    (lateDetail ? rowFact("Late", `<span class="si-late">${esc(lateDetail)}</span>`) : "") +
+    `</dl>` +
+    meterWordsHtml(row.meters) +
+    `<div class="si-row-links">${links.join("")}</div>` +
+    `</div>`;
+  return (
+    `<article class="si-row" id="${esc(triageRowId(row))}" data-tier="${row.tier}" data-grouping="${row.grouping}" data-ticker="${esc(t.ticker ?? "")}" data-row-key="${esc(row.key)}">` +
+    `<details class="si-row-d" name="si-rows"${opts.open ? " open" : ""}>` +
+    summary +
+    detail +
+    `</details>` +
+    `<span class="si-row-src">${signalReceiptHtml(receipt, t.chamber)}` +
+    (n > 1 ? `<span class="mono-note visually-hidden"> +${fmtInt(n - 1)} ${n === 2 ? "filing" : "filings"} · ${latestHtml}</span>` : "") +
+    `</span>` +
     `</article>`
   );
 }
 
-/** The meter column labels over a tier's rows (R12); each meter also names
-    itself, so this head is decoration for sighted readers at desktop width. */
-const METER_HEAD = `<div class="si-meter-head" aria-hidden="true"><span></span><span class="si-meters">${METER_KEYS.map((k) => `<span class="si-meter-col">${esc(METER_LABELS[k])}</span>`).join("")}</span><span></span></div>`;
+/** The column labels over the rows (signals-v4 LD4): decoration for sighted
+    readers (each row's meters name themselves), except the "What the bars
+    mean" tip at the line's end. The ticker page's block renders it without
+    the tip: its opened row states every meter in words. */
+export function rowHeadHtml(tip: string | null): string {
+  return (
+    `<div class="si-row-head">` +
+    `<span class="si-row-hc" aria-hidden="true">Ticker</span>` +
+    `<span class="si-row-hc" aria-hidden="true">Filer · why</span>` +
+    `<span class="si-row-hc si-row-hc-amt" aria-hidden="true">Range</span>` +
+    `<span class="si-meter-cols" aria-hidden="true">${METER_KEYS.map((k) => `<span class="si-meter-col">${esc(METER_SHORT[k])}</span>`).join("")}</span>` +
+    `<span class="si-row-hc si-row-hc-fil" aria-hidden="true">Filed · traded</span>` +
+    (tip ? `<span class="si-row-htip">${tip}</span>` : "") +
+    `</div>`
+  );
+}
 
 const TIER_EMPTY: Readonly<Record<Tier, string>> = {
   stands: "No filing in the window stands out — a computed answer over every ranked filing.",
@@ -875,14 +1039,38 @@ const TIER_EMPTY: Readonly<Record<Tier, string>> = {
   routine: "No routine filing in the window.",
 };
 
+/** The tier definitions (signals-v4 LD19: one tip per tier heading), every
+    constant read from `signal-triage.ts`. */
+function tierDefinition(tier: Tier): string {
+  switch (tier) {
+    case "stands":
+      return `Any meter at strong: a large break from the filer's own record, or several members on one ticker and side. A row led by an exchange is never here. Sorted by the count of strong meters, then the sum, the lead line's lower bound and the filed date.`;
+    case "look":
+      return `No meter at strong; any meter at medium, or a sum of ${LOOK_MIN_SUM} or more over the meters that are known. Sorted as ${TIER_LABELS.stands} is.`;
+    default:
+      return `A rule fired, but no meter reaches medium and the known meters sum below ${LOOK_MIN_SUM}; a row led by an exchange is always ${TIER_LABELS.routine}. Newest filed first.`;
+  }
+}
+
+function tierTipHtml(tier: Tier): string {
+  return `<span class="si-tier-tip">${note(tierDefinition(tier), { scope: "signals-tiers" }, tier, { trigger: "mark", name: `About ${TIER_LABELS[tier].toLowerCase()}` })}</span>`;
+}
+
 function tierHtml(tier: Tier, rows: readonly TriageRow[], ctx: RenderCtx): string {
   const label = `${esc(TIER_LABELS[tier])} <span class="si-tier-n">${fmtInt(rows.length)}</span>`;
-  const body = rows.length === 0 ? `<p class="section-note">${esc(TIER_EMPTY[tier])}</p>` : METER_HEAD + rows.map((r) => triageRowHtml(r, ctx)).join("\n");
+  const body = rows.length === 0 ? `<p class="section-note">${esc(TIER_EMPTY[tier])}</p>` : rows.map((r) => triageRowHtml(r, ctx)).join("\n");
   if (tier === "routine") {
-    // the heading rides in the summary, so the tier keeps its place in the outline while closed
-    return `<details class="si-tier" id="routine" data-tier="routine"><summary><h3 class="si-tier-h" id="routine-h">${label}</h3></summary>${body}</details>`;
+    /* the heading rides in the summary, so the tier keeps its place in the
+       outline while closed; the tip sits beside the summary, never inside it
+       (no control nested in the disclosure button) */
+    return (
+      `<div class="si-tier-wrap">` +
+      `<details class="si-tier" id="routine" data-tier="routine"><summary><h3 class="si-tier-h" id="routine-h">${label}</h3></summary>${body}</details>` +
+      tierTipHtml(tier) +
+      `</div>`
+    );
   }
-  return `<section class="si-tier" id="${tier}" data-tier="${tier}" aria-labelledby="${tier}-h"><h3 class="si-tier-h" id="${tier}-h">${label}</h3>${body}</section>`;
+  return `<section class="si-tier" id="${tier}" data-tier="${tier}" aria-labelledby="${tier}-h"><h3 class="si-tier-h" id="${tier}-h">${label}</h3>${tierTipHtml(tier)}${body}</section>`;
 }
 
 /** The meters' definitions, each interpolated from `signal-triage.ts`. */
@@ -917,33 +1105,47 @@ function meterDefinitions(): Record<MeterKey, { short: string; full: string }> {
   };
 }
 
-function legendHtml(): string {
+/** "What the bars mean" (signals-v4 LD19, R8, R24): the v3 legend whole —
+    the levels key, then one paragraph per meter carrying its short
+    definition AND its full rule with every qualification (`meterDefinitions()
+    .full`: Size's minimum history and what "prior" means, Pattern's cutoff,
+    Others' filed-by-the-cutoff count, Cmte's direct / sector / none /
+    unknown distinction and the committee caveat) — as one tip by the meter
+    labels. Methodology repeats the same text. */
+function barsTipHtml(): string {
   const defs = meterDefinitions();
-  const levels = ([3, 2, 1, 0, -1] as const)
-    .map(
-      (l) =>
-        `<span class="si-legend-level"><span class="si-meter" data-level="${l}" aria-hidden="true"><span class="si-meter-bars"><span class="si-mbar"></span><span class="si-mbar"></span><span class="si-mbar"></span></span></span>` +
-        `<span class="si-legend-word">${esc(LEVEL_WORDS[l])}${l === -1 ? " (hatched)" : ""}</span></span>`,
-    )
-    .join("");
-  return (
-    `<div class="si-legend" aria-label="Meter legend" role="group">` +
-    `<p class="si-legend-levels"><span class="si-legend-h">Levels</span> ${levels}</p>` +
-    `<dl class="si-legend-meters">` +
-    METER_KEYS.map(
-      (k) =>
-        `<div><dt>${note(defs[k].full, { scope: "signals-legend" }, k, { trigger: "label", textHtml: esc(METER_LABELS[k]) })}</dt>` +
-        `<dd>${esc(defs[k].short)}${k === "cmte" ? ` — <span class="si-cmte-context">context, never an allegation</span>` : ""}</dd></div>`,
-    ).join("") +
-    `</dl>` +
-    `</div>`
+  return noteFromHtml(
+    `<span class="si-tip-p">Each meter is three bars. Levels: strong (three amber bars) · medium (two) · low (one) · none (empty) · unknown (hatched).</span>` +
+      METER_KEYS.map((k) => {
+        const head =
+          `<strong>${esc(METER_SHORT[k])}</strong>${METER_SHORT[k] === METER_LABELS[k] ? "" : ` (${esc(METER_LABELS[k])})`} — ${esc(defs[k].short)}` +
+          `${k === "cmte" ? ` — <span class="si-cmte-context">context, never an allegation</span>` : ""}.`;
+        /* the committee caveat closes Cmte's full rule: it keeps its class */
+        const full =
+          k === "cmte" && defs.cmte.full.endsWith(COMMITTEE_CAVEAT)
+            ? `${esc(defs.cmte.full.slice(0, -COMMITTEE_CAVEAT.length))}<span class="si-cmte-context">${esc(COMMITTEE_CAVEAT)}</span>`
+            : esc(defs[k].full);
+        return `<span class="si-tip-p">${head} ${full}</span>`;
+      }).join("") +
+      `<span class="si-tip-p">The same rules on Methodology: <a href="/methodology/#signals-ranking">How rows are ranked ↗</a></span>`,
+    { scope: "signals-legend" },
+    "bars",
+    { trigger: "mark", name: "What the bars mean" },
   );
 }
 
 function triageHtml(triage: TriageResult | null, artifact: SignalArtifact, ctx: RenderCtx): string {
-  const head =
-    `<div class="panel-head"><h2 class="section-h" id="triage-h">Filings to read</h2>` +
-    `<span class="panel-note">${triage ? `${fmtInt(triage.rows.length)} ${triage.rows.length === 1 ? "ROW" : "ROWS"} RANKED · ` : ""}FILED ${esc(artifact.coverageFrom)} → ${esc(artifact.coverageTo)} · EACH AGAINST THE FILER'S OWN RECORD, AS OF ITS FILING</span></div>`;
+  /* signals-v4 LD19: the panel note (rows ranked, the filed window, the own
+     record) is the "About filings to read" tip; the window also stays in the
+     ledger. */
+  const tip = note(
+    `${triage ? `${fmtInt(triage.rows.length)} ${triage.rows.length === 1 ? "row" : "rows"} ranked · ` : ""}filed ${artifact.coverageFrom} → ${artifact.coverageTo} · each against the filer's own record, as of its filing. ` +
+      `Open a row for the full reason, every meter in words, its grouping and owner, and its links.`,
+    { scope: "signals-triage" },
+    "about",
+    { trigger: "mark", name: "About filings to read" },
+  );
+  const head = `<div class="panel-head"><h2 class="section-h" id="triage-h">Filings to read</h2>${tip}</div>`;
   if (triage === null) {
     return (
       `<section class="panel si-triage" id="triage" aria-labelledby="triage-h">` +
@@ -956,7 +1158,7 @@ function triageHtml(triage: TriageResult | null, artifact: SignalArtifact, ctx: 
   return (
     `<section class="panel si-triage" id="triage" aria-labelledby="triage-h">` +
     head +
-    legendHtml() +
+    rowHeadHtml(barsTipHtml()) +
     (triage.cmteAvailable ? "" : `<p class="section-note">Cmte reads unknown on every row: committee data is not in this build (${esc(triage.cmteUnavailableReason ?? "inputs-not-in-build")}).</p>`) +
     tierHtml("stands", by("stands"), ctx) +
     tierHtml("look", by("look"), ctx) +
@@ -974,6 +1176,9 @@ function cardFactsHtml(p: CardPick, ctx: RenderCtx): string {
   const ticker = `<span class="mono-ticker">${esc(t.ticker ?? "no ticker")}</span>`;
   const lag = lagOf(t);
   return (
+    /* signals-v4 LD5: the card opens its row — a stretched link UNDER the
+       card's own links (ticker, member, receipt), which sit above it */
+    `<a class="si-card-open" href="#${esc(triageRowId(p.row))}"><span class="visually-hidden">Show the row: ${esc(t.ticker ?? "no ticker")}, ${esc(t.name)}</span></a>` +
     `<h3 class="si-card-h">${href ? `<a href="${esc(href)}">${ticker}</a>` : ticker} <span class="si-chip si-side-${side.cls}">${esc(side.text)}</span> <span class="si-card-amt">${esc(amountText(t))}</span></h3>` +
     `<p class="si-card-who">${t.bioguide ? `<a href="${memberHrefFor(t.bioguide, ctx)}">${esc(t.name)}</a>` : esc(t.name)} <span class="aff ${partyClass(t.party)}">${esc(affTextOf(t))}</span> · ${ownerWordHtml(t.owner)}</p>` +
     `<p class="si-card-dates">traded ${t.traded ? `<time datetime="${esc(t.traded)}">${esc(t.traded)}</time>` : "date not disclosed"} · filed <time datetime="${esc(t.filed)}">${esc(t.filed)}</time>${lag != null ? ` · <span class="${lag > 45 ? "si-late" : "si-lag"}">${fmtInt(lag)}d</span>` : ""}</p>` +
@@ -990,7 +1195,8 @@ function emptyCardHtml(text: string): string {
     largest buy and the largest sell — with ONE segmented control ranking the
     buy and sell cards by the filer's own record or by absolute dollars. The
     control is two radio inputs and CSS (`:checked ~`): no script. Without CSS
-    both variants show. */
+    both variants show. signals-v4 (R4, LD5): each pick opens its row, and at
+    ≤1080px the cards swipe sideways in their own strip. */
 export function leadCardsHtml(triage: TriageResult | null, ctx: RenderCtx): string {
   const c = triage?.cards ?? null;
   const committeeBody =
@@ -1027,20 +1233,60 @@ export function leadCardsHtml(triage: TriageResult | null, ctx: RenderCtx): stri
       `</div>`
     );
   };
+  /* signals-v4 LD19: the v3 panel note is the "About lead cards" tip */
+  const tip = note(
+    "Listed-stock lines of the Filings to read: the committee card, then the largest purchase and the largest sale, ranked by the filer's own record or by absolute dollars. " +
+      "Both dates and the receipt on every card. Choose a card to open its row.",
+    { scope: "signals-lead" },
+    "about",
+    { trigger: "mark", name: "About lead cards" },
+  );
   return (
     `<section class="si-lead" id="lead-cards" aria-labelledby="lead-cards-h">` +
     `<input type="radio" name="rank" id="si-rank-record" class="si-rank-input" value="record" checked autocomplete="off" />` +
     `<input type="radio" name="rank" id="si-rank-absolute" class="si-rank-input" value="absolute" autocomplete="off" />` +
-    `<div class="panel-head si-lead-head"><h2 class="section-h" id="lead-cards-h">Lead cards</h2>` +
-    `<span class="panel-note">LISTED-STOCK LINES OF THE FILINGS TO READ · BOTH DATES · EVERY RECEIPT</span>` +
+    `<div class="panel-head si-lead-head"><h2 class="section-h" id="lead-cards-h">Lead cards</h2>${tip}` +
     `<div class="seg si-rank-seg" role="group" aria-label="Rank the largest buy and sell by"><label for="si-rank-record">Own record</label><label for="si-rank-absolute">Absolute $</label></div></div>` +
-    `<div class="si-cards">` +
+    `<div class="si-cards" data-scroll-region="Lead cards · swipe for more">` +
     `<article class="si-card" data-card="committee" data-tone="amber"><div class="si-card-tag">${esc(committeeTag)}</div>${committeeBody}` +
     `<p class="si-card-context">${esc(COMMITTEE_CAVEAT)}</p></article>` +
     `<article class="si-card" data-card="buy" data-tone="green">${variant("record", c?.buyRecord ?? null, "buy")}${variant("absolute", c?.buyAbsolute ?? null, "buy")}</article>` +
     `<article class="si-card" data-card="sell" data-tone="red">${variant("record", c?.sellRecord ?? null, "sell")}${variant("absolute", c?.sellAbsolute ?? null, "sell")}</article>` +
     `</div>` +
     `</section>`
+  );
+}
+
+/* ---------- signals-v4 LD7: the pane switch ---------- */
+
+/** One pane of a stacked band: its element id, its label (plain text, or
+    pre-escaped html for a markup-bound label) and an optional count. */
+export interface PaneSpec {
+  id: string;
+  label: string;
+  labelHtml?: string;
+  count?: string;
+  /** an id for the count, so a client can restate it */
+  countId?: string;
+}
+
+/** LD7: the switch that picks which pane of a stacked band shows. The server
+    renders it `hidden` and every pane visible; `signals-client.ts` reveals it
+    and hides the unselected panes with the `hidden` attribute ONLY while
+    `(max-width: 1080px)` matches. No media rule hides a pane. A `.seg`, so
+    its buttons meet the hit-area rule (G12). M2 reuses it. */
+export function paneSwitchHtml(panes: readonly PaneSpec[], name = "Show"): string {
+  return (
+    `<div class="seg pane-switch" role="group" aria-label="${esc(name)}" data-pane-switch hidden>` +
+    panes
+      .map(
+        (p, i) =>
+          `<button type="button" aria-pressed="${i === 0 ? "true" : "false"}" aria-controls="${esc(p.id)}">${p.labelHtml ?? esc(p.label)}` +
+          (p.count != null ? ` <span class="pane-n"${p.countId ? ` id="${esc(p.countId)}"` : ""}>${esc(p.count)}</span>` : "") +
+          `</button>`,
+      )
+      .join("") +
+    `</div>`
   );
 }
 
@@ -1062,6 +1308,25 @@ function howSignalsWorkHtml(artifact: SignalArtifact, superseded: number, uneval
     "Filings to read ranks each filing against the filer's own record as it stood on the filing's date; the tiers, meters and cards are defined on Methodology.",
   ];
   return parts.map((p) => esc(p)).join(" ") + ` <a href="/methodology/#signals-ranking">How rows are ranked ↗</a>`;
+}
+
+/** signals-v4 LD19: the page foot's link row — the v3 Methodology-links
+    paragraph and the superseded foot's link. The superseded COUNT is in the
+    head tip. */
+function footLinksHtml(superseded: number): string {
+  const links: readonly (readonly [string, string])[] = [
+    ["/methodology/#signal-rules", "Rule book"],
+    ["/methodology/#signals-ranking", "How rows are ranked"],
+    ["/methodology/#signal-lag", "Lag distribution"],
+    ["/methodology/#committee-direct", "Committee table"],
+    ["/signals/data/signals.v1.json", "signals.v1.json"],
+  ];
+  return (
+    `<p class="si-foot" id="signal-method-links">` +
+    links.map(([href, text]) => `<a href="${href}">${esc(text)} ↗</a>`).join(" ") +
+    (superseded > 0 ? ` <a href="/signals/data/signals.v1.json" id="signal-changes-foot">changes since last build ↗</a>` : "") +
+    `</p>`
+  );
 }
 
 /* ---------- the page body ---------- */
@@ -1092,35 +1357,30 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
   const withheld = artifact.withheld
     .map((w) => withheldHtml(w, unevaluated.filter((s) => s.kind === w.kind).length))
     .join("\n");
-  /* R17: the superseded rows leave the page. They stay in the artifact and
-     are linked from the footnote as the changes since the last build. */
-  const supersededFoot =
-    superseded.length === 0
-      ? ""
-      : `<p class="section-note" id="signal-changes-foot">${fmtInt(superseded.length)} ${superseded.length === 1 ? "signal" : "signals"} from an earlier build left the retained view ` +
-        `(amended away or no longer matching) — <a href="/signals/data/signals.v1.json">changes since last build</a>, in the artifact.</p>`;
+  const how = noteFromHtml(howSignalsWorkHtml(artifact, superseded.length, unevaluated.length), { scope: "signals-head" }, "how", { trigger: "mark", name: "How signals work" });
+  const listedHits = hitsView(sortHits(active), DEFAULT_HIT_FILTER).hits;
 
   return (
     `<div class="page-head">` +
     `<div class="page-head-copy"><div class="kicker">Public record / Signals · rule-based · no price data</div>` +
-    `<h1 class="page-title">Congress signals</h1>` +
-    `<p class="page-lede">Filings to read first, each measured against the filer's own record, with every receipt. ` +
-    noteFromHtml(howSignalsWorkHtml(artifact, superseded.length, unevaluated.length), { scope: "signals-head" }, "how", { trigger: "label", textHtml: "How signals work" }) +
-    `</p></div>` +
+    `<div class="page-title-row"><h1 class="page-title">Congress signals</h1>${how}</div>` +
+    `<p class="page-lede">What stands out in Congress trades, each against the filer's own record.</p></div>` +
     ledger +
     `</div>` +
     leadCardsHtml(triage, ctx) +
+    /* LD7: where the band stacks (≤1080px) the client shows ONE pane at a time */
+    paneSwitchHtml([
+      { id: "triage", label: "Filings", ...(triage ? { count: fmtInt(triage.rows.length) } : {}) },
+      { id: "signals-side", label: "Hits", count: fmtInt(listedHits), countId: "signal-pane-hits-n" },
+    ]) +
     /* LD7: one band — the triage (the primary cell) │ families above the hits. */
     pairBandHtml(
       "design-signals-band",
       triageHtml(triage, artifact, ctx),
-      `<div class="si-side">` + familiesHtml(d, active, artifact) + hitsHtml(active, ctx) + `</div>`,
+      `<div class="si-side" id="signals-side">` + familiesHtml(d, active, artifact) + hitsHtml(active, ctx) + `</div>`,
       { primary: "left" },
     ) +
-    `<p class="section-note" id="signal-method-links">On Methodology: <a href="/methodology/#signal-rules">the rule book</a> · ` +
-    `<a href="/methodology/#signal-lag">the lag distribution</a> · <a href="/methodology/#signals-ranking">how rows are ranked</a> · ` +
-    `<a href="/methodology/#committee-direct">the committee direct-match table</a>. The raw artifact: <a href="/signals/data/signals.v1.json">signals.v1.json</a>.</p>` +
-    supersededFoot +
+    footLinksHtml(superseded.length) +
     withheld
   );
 }
@@ -1236,8 +1496,9 @@ export function tickerOnSignalsHtml(triageRows: readonly TriageRow[], hits: read
       `</div>` +
       // the tier is the row's heading level above it, as in "Filings to read"
       `<h3 class="si-tier-h tk-onsig-tier">${esc(TIER_LABELS[row.tier])}</h3>` +
-      METER_HEAD +
-      triageRowHtml(row, ctx, { link: false }) +
+      rowHeadHtml(null) +
+      /* signals-v4 LD4: the same row, opened, with no link to the page it is on */
+      triageRowHtml(row, ctx, { link: false, open: true }) +
       (row.meters.cmte >= 1 ? `<p class="section-note si-cmte-context">${esc(COMMITTEE_CAVEAT)}</p>` : "") +
       `</section>`
     );

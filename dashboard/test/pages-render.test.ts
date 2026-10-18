@@ -738,8 +738,11 @@ function fullBlockProblems(html: string, row: TRIAGE.TriageRow): string[] {
   if (text(".tk-onsig-tier") !== TRIAGE.TIER_LABELS[row.tier]) out.push(`tier label ${text(".tk-onsig-tier")}`);
   // the heading names the lead line's member ("· 2 filings" follows on a grouped row)
   if (row.grouping !== "cluster" && !(text(".si-row-member") ?? "").startsWith(L.name)) out.push(`member ${text(".si-row-member")}`);
-  if (text(".si-row-what .aff") !== affTextOf(L)) out.push(`party and state ${text(".si-row-what .aff")}`);
-  if (text(".si-row-what .si-chip") !== sideLabel(L.side, L.flags).text) out.push(`side chip ${text(".si-row-what .si-chip")}`);
+  /* signals-v4 LD4: the row is a <details>, opened here; line 1 holds the
+     filer with party and state, line 2 the side chip */
+  if (text(".si-row-sum .si-row-who .aff") !== affTextOf(L)) out.push(`party and state ${text(".si-row-sum .si-row-who .aff")}`);
+  if (text(".si-row-sum .si-chip") !== sideLabel(L.side, L.flags).text) out.push(`side chip ${text(".si-row-sum .si-chip")}`);
+  if (!block.querySelector(".si-row-sum .owner-note")) out.push("the owner");
   if (text(".si-row-amt") !== amountText(L)) out.push(`amount range ${text(".si-row-amt")}`);
   const filed = block.querySelector(".si-row-filed time");
   if (filed?.getAttribute("datetime") !== L.filed) out.push(`filed date ${filed?.getAttribute("datetime")} is not the lead line's ${L.filed}`);
@@ -748,14 +751,16 @@ function fullBlockProblems(html: string, row: TRIAGE.TriageRow): string[] {
   const lag = lagOfLine(L);
   if (!(text(".si-row-traded") ?? "").includes(`${lag}d`)) out.push(`lag: "${text(".si-row-traded")}" lacks the lead line's ${lag}d`);
   if (text(".si-row-why") !== row.sentence) out.push("reason sentence");
-  const meters = block.querySelectorAll('.si-row [role="img"]').map((m) => m.getAttribute("aria-label") ?? "");
+  const meters = block.querySelectorAll('.si-row-sum [role="img"]').map((m) => m.getAttribute("aria-label") ?? "");
   const want = TRIAGE.METER_KEYS.map((k) => `${TRIAGE.METER_LABELS[k]}: ${TRIAGE.LEVEL_WORDS[row.meters[k]]}`);
   if (meters.length !== 4 || !meters.every((m) => /^(Size|Pattern|Others|Cmte): /.test(m)) || meters.join("|") !== want.join("|")) out.push(`meters ${meters.join(", ")}`);
   const receipt = block.querySelector(".si-row-src a");
   if (receipt?.getAttribute("href") !== L.doc) out.push(`receipt ${receipt?.getAttribute("href")} is not the lead filing ${L.doc}`);
   const back = block.querySelector("a.tk-onsig-back");
   if (back?.getAttribute("href") !== "/signals/" || visibleText(back).trim() !== "← Back to Signals") out.push("back to Signals");
-  const caveat = block.querySelector(".si-cmte-context");
+  /* the block's own caveat paragraph (the opened row's Cmte line says
+     "context, never an allegation" on every row) */
+  const caveat = block.querySelector("p.si-cmte-context");
   if (row.meters.cmte >= 1 && (caveat ? visibleText(caveat).trim() : "") !== COMMITTEE_CAVEAT) out.push("the committee caveat is missing");
   if (row.meters.cmte < 1 && caveat) out.push("a committee caveat with no committee context");
   return out;
@@ -788,9 +793,12 @@ test("T3.3 (R18): a Stands-out ticker renders the FULL block once, before the ta
   assert.equal((html.match(/id="on-signals"/g) ?? []).length, 1, "exactly one block");
   assert.ok(html.indexOf('id="on-signals"') < html.indexOf('role="tablist"'), "before the tabs");
   assert.deepEqual(fullBlockProblems(html, row), []);
-  // the same function the triage row uses, with the heading's self-link removed
+  // the same function the triage row uses: rendered OPEN, with no link to the page it is on (signals-v4 LD4)
   const block = domOf(html).querySelector("#on-signals")!;
-  assert.ok(!block.querySelector("a.si-row-link"), "the row's heading does not link to the page it is on");
+  assert.ok(block.querySelector("details.si-row-d")!.hasAttribute("open"), "the block's row is open");
+  assert.ok(!block.querySelectorAll(".si-row-links a").some((a) => (a.getAttribute("href") ?? "").startsWith("/tickers/")), "no link to the ticker page it is on");
+  assert.ok(block.querySelectorAll(".si-row-links a").some((a) => a.getAttribute("href") === row.lead.doc), "the opened row links the receipt");
+  assert.equal(block.querySelector(".si-row-head .note-btn"), null, "the column head carries no tip here: the opened row states every meter in words");
   // Removal tests: each R18 field the honesty rules protect fails the reading when deleted
   const cut = (re: RegExp, why: string): string[] => {
     const mutated = html.replace(re, "");
@@ -800,7 +808,8 @@ test("T3.3 (R18): a Stands-out ticker renders the FULL block once, before the ta
   assert.ok(cut(/<p class="section-note si-cmte-context">[^<]*<\/p>/, "the caveat").some((p) => /committee caveat is missing/.test(p)), "removing the caveat fails");
   assert.ok(cut(/<span class="si-row-filed">.*?<\/span>/, "the filed date").some((p) => /filed date/.test(p)), "removing the filed date fails");
   assert.ok(cut(/<time datetime="[^"]+">[^<]+<\/time>(?= · <span class="si-lag|<\/span><span class="si-row-src)/, "the trade date").some((p) => /trade date/.test(p)), "removing the trade date fails");
-  assert.ok(cut(/<span class="si-row-src">.*?<\/span>(?=<\/div><\/article>)/, "the receipt").some((p) => /receipt/.test(p)), "removing the receipt fails");
+  assert.ok(cut(/<span class="si-row-src">.*?<\/span>(?=<\/article>)/, "the receipt").some((p) => /receipt/.test(p)), "removing the receipt fails");
+  assert.ok(cut(/<span class="owner-note">[^<]*<\/span>/, "the owner").some((p) => /owner/.test(p)), "removing the owner fails");
 });
 
 test("T3.3 (R18, D21): the full block's dates and lag are ONE line's — the lead line's own — never a group's latest filed date", () => {

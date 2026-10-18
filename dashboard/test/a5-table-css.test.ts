@@ -57,9 +57,11 @@ function boxSelectors(source: string): string[] {
 }
 
 /** Table-scroll boxes: every bounded scroll box except the search panel's
-    suggestion list and the mobile nav menu, which hold no table. */
+    suggestion list, the mobile nav menu and an open note panel — the
+    signals-v4 (LD3) bottom sheet, bounded at 70vh so a long explanation
+    scrolls inside it — none of which holds a table. */
 function tableBoxes(source: string): string[] {
-  return [...new Set(boxSelectors(source).filter((s) => !/search|suggest|\.nav-|menu/.test(s)))].sort();
+  return [...new Set(boxSelectors(source).filter((s) => !/search|suggest|\.nav-|menu|^\.note-pop(?::popover-open)?$/.test(s)))].sort();
 }
 
 /** In-table sticky HEADS: a sticky rule on a table part (table, .etable,
@@ -89,6 +91,9 @@ test("A-5 / L8: no table sits in a max-height scroll box and no table head stick
     ['[data-holdings-surface="filer"] .table-scroll'],
   );
   assert.deepEqual(tableBoxes(".table-scroll{max-height:200px;overflow-y:scroll}"), [".table-scroll"], "the generic container too");
+  // signals-v4 LD3: the note sheet is exempt by its exact selector only — a table inside a note panel is not
+  assert.deepEqual(tableBoxes(".note-pop:popover-open{max-height:70vh;overflow:auto}"), []);
+  assert.deepEqual(tableBoxes(".note-pop .table-scroll{max-height:70vh;overflow:auto}"), [".note-pop .table-scroll"]);
   // …and so is the sticky head the three boxes used, in either the old form or a bare one
   assert.deepEqual(
     inTableStickyHeads(":is(.design-flow-band > .panel > .table-scroll, .design-history) .etable thead { position: sticky; top: 0; z-index: 3; }"),
