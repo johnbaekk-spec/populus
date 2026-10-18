@@ -13,7 +13,10 @@
    security ids with no name in the aggregate (measured 2026-09-09 on build
    20260812.1: 9.39M `sid:` keys, 95K `cusip:` keys, zero names). Anything
    issuer-named comes from the serving artifact (see `clusterBoard` in
-   activity.ts), not from here. No Node APIs, no DOM. */
+   activity.ts), not from the aggregate's keys: the one name this module
+   passes on — a conviction leader's largest new position (signals-v4 LD12) —
+   is the R1 display field `QoqDeltaRow.issuer_name`, enriched from the
+   serving artifact, and null when it is absent. No Node APIs, no DOM. */
 
 import type { ConcentrationRow, InstData, QoqDeltaRow } from "./inst.ts";
 import { fmtCik, type TxnRow } from "./format.ts";
@@ -75,6 +78,19 @@ export interface NewPositionLeader {
   newPositions: number;
   /** the complete book's reported value — the denominator */
   bookValueUsd: number;
+  /** signals-v4 LD12: WHICH new position is the largest — the one whose
+      reported value is the filer's maximum (ties by position key). `issuer`
+      is null when the aggregate names no issuer for it; `ticker` only where
+      the reviewed mapping names one. */
+  largest: LargestNewPosition | null;
+}
+
+export interface LargestNewPosition {
+  issuer: string | null;
+  ticker: string | null;
+  valueUsd: number;
+  weightBps: number;
+  positionKey: string;
 }
 
 /** Why an evaluated filer is not ranked (DESIGN-POLISH M4, R26). Each filer
@@ -125,7 +141,15 @@ export function newPositionLeaders(
   inst: InstData,
   period: string,
   notableCiks: ReadonlySet<string>,
-  opts: { limit?: number; thresholdBps?: number; minBookPositions?: number } = {},
+  opts: {
+    limit?: number;
+    thresholdBps?: number;
+    minBookPositions?: number;
+    /** the reviewed ticker of a filed (issuer, class) pair — the caller's
+        `tickerFor`; this module stays client-safe and never reads the
+        mapping itself. Absent: no ticker is named. */
+    tickerOf?: (issuerName: string, titleOfClass: string | null) => string | null;
+  } = {},
 ): NewPositionLeaders | null {
   if (!inst.present) return null;
   const limit = opts.limit ?? 5;
@@ -155,15 +179,18 @@ export function newPositionLeaders(
     }
     let max = 0;
     let at = 0;
+    let top: QoqDeltaRow | null = null;
     for (const d of news) {
       const bps = Math.round((d.curr_value_usd! / conc.total_value_usd) * 10_000);
       if (bps > max) max = bps;
       if (bps >= thresholdBps) at++;
+      if (top === null || d.curr_value_usd! > top.curr_value_usd! || (d.curr_value_usd === top.curr_value_usd && d.position_key < top.position_key)) top = d;
     }
     if (at === 0) {
       excluded.belowThreshold++;
       continue;
     }
+    const issuer = top!.issuer_name?.trim() || null;
     rows.push({
       cik,
       filerName: nameOf.get(cik) ?? `CIK ${fmtCik(cik)}`,
@@ -172,6 +199,13 @@ export function newPositionLeaders(
       atThreshold: at,
       newPositions: news.length,
       bookValueUsd: conc.total_value_usd,
+      largest: {
+        issuer,
+        ticker: issuer && opts.tickerOf ? opts.tickerOf(issuer, top!.title_of_class ?? null) : null,
+        valueUsd: top!.curr_value_usd!,
+        weightBps: Math.round((top!.curr_value_usd! / conc.total_value_usd) * 10_000),
+        positionKey: top!.position_key,
+      },
     });
   }
   rows.sort((a, b) => b.maxWeightBps - a.maxWeightBps || b.atThreshold - a.atThreshold || (a.cik < b.cik ? -1 : 1));

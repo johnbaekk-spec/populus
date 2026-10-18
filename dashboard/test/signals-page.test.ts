@@ -107,8 +107,13 @@ function compositionProblems(html: string): string[] {
   const root = domOf(html);
   const triage = root.querySelector("#triage");
   for (const id of ["stands", "look", "routine"]) if (!triage?.querySelector(`#${id}`)) out.push(`#${id} is not inside #triage`);
-  const figs = root.querySelectorAll(".page-head .ledger-fig").length;
+  /* signals-v4 M2 (LD9): one ledger group per tab, three figures each; the
+     Congress group shows without script */
+  const figs = root.querySelectorAll('.page-head [data-tab-for="congress"] .ledger-fig').length;
   if (figs !== 3) out.push(`${figs} ledger figures, not 3`);
+  const groups = root.querySelectorAll(".page-head [data-tab-for]");
+  if (groups.some((g) => g.querySelectorAll(".ledger-fig").length !== 3)) out.push("a ledger group without exactly three figures");
+  if (groups.filter((g) => !g.hasAttribute("hidden")).length !== 1) out.push("not exactly one ledger group shows without script");
   const cards = root.querySelectorAll("#lead-cards .si-card").length;
   if (cards !== 3) out.push(`${cards} lead cards, not 3`);
   // absent
@@ -137,7 +142,7 @@ test("success criterion 1: head (3 figures) → #lead-cards (3) → #triage (#st
 
 test("R10: exactly three figures — Hits (with listed stocks), Stand out (of N rows ranked), Window 90d (with dates)", () => {
   const { html, t, art } = goldenPage();
-  const figs = domOf(html).querySelectorAll(".page-head .ledger-fig").map((f) => ({
+  const figs = domOf(html).querySelectorAll('.page-head [data-tab-for="congress"] .ledger-fig').map((f) => ({
     label: ownText(f.querySelector("dt")!).trim(),
     value: ownText(f.querySelector(".ledger-value")!).trim(),
     sub: ownText(f.querySelector(".ledger-sub")!).trim(),
@@ -151,7 +156,7 @@ test("R10: exactly three figures — Hits (with listed stocks), Stand out (of N 
   assert.equal(figs[2]!.value, "90d");
   assert.equal(figs[2]!.sub, `${art.coverageFrom} → ${art.coverageTo}`);
   // without a triage the figure states its absence, never a computed zero
-  const plain = domOf(signalsBody(ART, CTX)).querySelectorAll(".page-head .ledger-fig")[1]!;
+  const plain = domOf(signalsBody(ART, CTX)).querySelectorAll('.page-head [data-tab-for="congress"] .ledger-fig')[1]!;
   assert.equal(ownText(plain.querySelector(".ledger-value")!).trim(), "—");
   assert.equal(ownText(plain.querySelector(".ledger-sub")!).trim(), "not computed in this view");
 });
@@ -190,7 +195,17 @@ test("LD9 / signals-v4 LD19 (T1.8): every caveat that left the visible page is i
   const trigger = root.querySelector(".page-head .page-title-row .note-btn")!;
   assert.equal(trigger.getAttribute("aria-label"), "How signals work, explain");
   assert.ok(trigger.classList.contains("note-mark"), "an ⓘ (mark) trigger");
-  assert.equal(ownText(root.querySelector(".page-lede")!).trim(), "What stands out in Congress trades, each against the filer's own record.", "the M1 lede (LD9)");
+  assert.equal(ownText(root.querySelector(".page-lede")!).trim(), "What stands out in Congress trades and 13F moves.", "the M2 lede (LD9)");
+  /* signals-v4 M2 (LD9): the tip adds the Institutional paragraph after the
+     nine sentences; with no Institutional model it states the 13F caveat
+     without a build-specific claim */
+  const howParas = how.querySelectorAll(".si-tip-p");
+  assert.equal(howParas.length, 2, "the Congress paragraph, then the Institutional one");
+  assert.ok(howParas[0]!.textContent.includes("A signal is a fact about a filing"), "the nine sentences come first");
+  assert.ok(
+    howParas[1]!.textContent.includes("13F filings are quarter-end, long-only snapshots filed up to 45 days after the quarter — never current holdings. Exits are inferred from absence in the next filing."),
+    "the Institutional paragraph",
+  );
   // the lead cards' panel note → "About lead cards"
   assert.match(tipText(root, "About lead cards"), /Listed-stock lines of the Filings to read.*Both dates and the receipt on every card\./);
   // the triage panel note → "About filings to read"; the window also stays in the ledger
@@ -651,13 +666,14 @@ test("memberLastName: generational suffixes and given names drop", () => {
 
 /* ---------- R-8: the scroll region ---------- */
 
-function regionBox(scrollWidth: number, clientWidth: number, name: string | undefined): ScrollRegionNode & { attrs: Map<string, string> } {
-  const attrs = new Map<string, string>();
+function regionBox(scrollWidth: number, clientWidth: number, name: string | undefined, own: Record<string, string> = {}): ScrollRegionNode & { attrs: Map<string, string> } {
+  const attrs = new Map<string, string>(Object.entries(own));
   return {
     scrollWidth,
     clientWidth,
     dataset: { scrollRegion: name },
     attrs,
+    getAttribute: (k) => attrs.get(k) ?? null,
     setAttribute: (k, v) => void attrs.set(k, v),
     removeAttribute: (k) => void attrs.delete(k),
   };
@@ -672,11 +688,34 @@ test("R-8: the hits wrapper is a named, focusable region only while its table ov
   assert.match(name, /scroll sideways/);
   const narrow = regionBox(900, 358, name);
   assert.equal(syncScrollRegion(narrow), true);
-  assert.deepEqual(Object.fromEntries(narrow.attrs), { tabindex: "0", role: "region", "aria-label": name });
+  /* signals-v4 LD8: the roles it writes are recorded as its own */
+  assert.deepEqual(Object.fromEntries(narrow.attrs), { "data-scroll-region-owned": "1", tabindex: "0", role: "region", "aria-label": name });
   narrow.scrollWidth = 1200;
   narrow.clientWidth = 1200;
   assert.equal(syncScrollRegion(narrow), false);
-  assert.deepEqual(Object.fromEntries(narrow.attrs), {}, "no tab stop, no role, no name once nothing scrolls");
+  assert.deepEqual(Object.fromEntries(narrow.attrs), { "data-scroll-region-owned": "1" }, "no tab stop, no role, no name once nothing scrolls");
+  // and it overflows again: re-roled, because those roles were its own
+  narrow.scrollWidth = 1600;
+  assert.equal(syncScrollRegion(narrow), true);
+});
+
+test("signals-v4 LD8: an element whose SERVER markup carries a role or a name is never re-roled — the sync logs an error and leaves it", () => {
+  const errors: unknown[] = [];
+  const prev = console.error;
+  console.error = (...a: unknown[]) => void errors.push(a);
+  try {
+    const list = regionBox(900, 358, "Signal tabs · scroll sideways", { role: "tablist", "aria-label": "Signal sources" });
+    assert.equal(syncScrollRegion(list), false);
+    assert.deepEqual(Object.fromEntries(list.attrs), { role: "tablist", "aria-label": "Signal sources" }, "the tablist keeps its role and name");
+    assert.equal(errors.length, 1, "a console error names the misuse");
+    const named = regionBox(900, 358, "x", { "aria-label": "Kind of change" });
+    assert.equal(syncScrollRegion(named), false);
+    assert.equal(named.attrs.get("aria-label"), "Kind of change");
+    // control: a role-less wrapper is re-roled as before
+    assert.equal(syncScrollRegion(regionBox(900, 358, "x")), true);
+  } finally {
+    console.error = prev;
+  }
 });
 
 /* ---------- valid markup: no block inside a <p> (review C2-6) ---------- */
@@ -722,15 +761,22 @@ function priorRecord(over: Partial<Signal> & { kind: Signal["kind"] }): Signal {
 const hitRows = (html: string) => domOf(html).querySelectorAll("#signal-hits-body tr.si-hit");
 const FILTER = (over: Partial<HitFilter> = {}): HitFilter => ({ family: "all", stocksOnly: true, ...over });
 
-test("R7 / T8: the page is Congress signals (title, h1, description); the 13F and cross-regime tiles stay gone", () => {
+/* signals-v4 M2 (LD9) REVERSES this run's R7: the page holds Congress and
+   13F tabs, so it is "Signals" again — the property kept is that the title,
+   h1 and description name what is on the page (signals-v4.md §Reversed
+   decisions). */
+test("signals-v4 LD9 (was R7 / T8): the page is Signals — Congress and 13F (title, h1, description); the 13F and cross-regime tiles stay gone", () => {
   const html = signalsBody(ART, CTX);
-  assert.match(html, /<h1 class="page-title">Congress signals<\/h1>/);
+  assert.match(html, /<h1 class="page-title">Signals<\/h1>/);
+  assert.doesNotMatch(html, /<h1 class="page-title">Congress signals/, "the M1 title is gone");
   assert.doesNotMatch(html, /Hits · 13F|Cross-regime|CROSS-REGIME/);
   const page = readFileSync(PAGE_SRC, "utf-8");
-  assert.match(page, /<Base title="Congress signals — Public Filings"/);
-  assert.match(page, /"Congress signals: /, "the meta description names the page");
+  assert.match(page, /<Base title="Signals — Congress and 13F — Public Filings"/);
+  assert.match(page, /"Signals from Congress trades and 13F filings: /, "the meta description names both sources");
+  assert.match(page, /notable 13F managers/, "and what the 13F tab holds");
   assert.match(page, /active="signals"/, "the masthead nav entry is unchanged");
   assert.match(page, /triage: getTriage\(\)/, "the page reads the build's one memoised triage");
+  assert.match(page, /institutional: getSignalsInstitutional\(\)/, "and the build's one memoised Institutional model");
 });
 
 test("R10 / T9: the WHAT sentence — owner, verb, asset, chip; S-3 names its members and side; a prior record says the asset is not in it", () => {

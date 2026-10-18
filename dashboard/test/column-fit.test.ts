@@ -35,7 +35,7 @@ function box(rect: () => { top: number; bottom: number }, children: Box[] = [], 
 /** A two-column band: the reference ends at `refEnd()`; the filled column is
     240px above + its list + 60px below, starting at `top`. `rows` are the
     row heights; `n` of them are visible. `cellHeight` stretches both cells. */
-function band(opts: { rows: number[]; refEnd: () => number; top?: number; chrome?: number; cellHeight?: () => number | null; extra?: () => number }) {
+function band(opts: { rows: number[]; refEnd: () => number; top?: number; chrome?: number; cellHeight?: () => number | null; extra?: () => number; floor?: () => number }) {
   const top = opts.top ?? 0;
   const chrome = opts.chrome ?? 0;
   let visible = 10;
@@ -64,6 +64,7 @@ function band(opts: { rows: number[]; refEnd: () => number; top?: number; chrome
       applied.push(n);
       visible = Math.min(opts.rows.length, n + extra());
     },
+    ...(opts.floor ? { floor: opts.floor } : {}),
   };
   return {
     ref,
@@ -209,6 +210,39 @@ test("LD6 bindFit: a newer run cancels an older one still waiting on a repaint (
      only the second run corrects */
   assert.deepEqual(b.applied(), [30, 30, 29, 28, 29, 28], "both estimates land; ONE correction runs — the cancelled run stops after its repaint");
   assert.equal(b.visible(), 28, "the second run's result stands");
+});
+
+test("LD6 bindFit (codex M2 r2 F1): an OPEN row is never hidden — the fit stays at its place + 1 (exception 4: no alignment past it); an open row above the cut that grows the column refits it back to the reference", async () => {
+  // row 35 open (the floor 35): the fit would show 30, it shows 35, and the column ends past the reference
+  const b = band({ rows: uniform(40), refEnd: () => 900, floor: () => 35 });
+  await bindFit(b.ref, b.col, b.target, { min: 10, observe: false }).refit();
+  assert.equal(b.visible(), 35, "the open row stays visible");
+  assert.ok(b.colEnd() > 901, "exception 4: the column ends past the reference, and no alignment is claimed");
+  // control: the same fit without the floor hides it
+  const c = band({ rows: uniform(40), refEnd: () => 900 });
+  await bindFit(c.ref, c.col, c.target, { min: 10, observe: false }).refit();
+  assert.equal(c.visible(), 30, "control: without the floor row 35 is hidden");
+  // row 6 opened to 400px (above the cut): the refit drops rows below it until the column ends at the reference again
+  const rows = uniform(40);
+  const fit = band({ rows, refEnd: () => 900, floor: () => 6 });
+  const binding = bindFit(fit.ref, fit.col, fit.target, { min: 10, observe: false });
+  await binding.refit();
+  assert.equal(fit.visible(), 30);
+  rows[5] = 400;
+  assert.ok(fit.colEnd() > 901, "precondition: the opened row pushed the column past the reference");
+  await binding.refit();
+  assert.equal(fit.visible(), 11, "240 + (10 × 20 + 400) + 60 = 900");
+  assert.equal(fit.colEnd(), 900, "re-aligned");
+  // closed: the refit grows back
+  rows[5] = 20;
+  await binding.refit();
+  assert.equal(fit.visible(), 30);
+  assert.equal(fit.colEnd(), 900);
+  // stacked columns take the floor, not the minimum
+  const s = band({ rows: uniform(40), refEnd: () => 900, floor: () => 22 });
+  const lower = { ...s.col, getBoundingClientRect: () => ({ top: 1500, bottom: 2000, left: 0, right: 600 }) };
+  await bindFit(s.ref, lower, s.target, { min: 10, observe: false }).refit();
+  assert.deepEqual(s.applied(), [22]);
 });
 
 /* ---------------------------------------------------------------- the contract, on the real pager */

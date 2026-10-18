@@ -470,7 +470,8 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
    the next figure (review C2-2); at the fold it takes a full row (below). It
    is wide when its value holds more characters than a 150px figure (a
    member's net-flow range), or when its sub would take a third line there (a
-   long issuer name in the Consensus add — the M2 delta review): its sub then
+   long issuer name in a no-ticker Top add, once the Consensus add — the M2
+   delta review): its sub then
    sizes the figure too, uncontained, so it reads on one line where the ledger
    has room. A figure wider than its ledger line shrinks to it (never below
    the 150px floor) and its sub wraps there — the page never scrolls sideways. */
@@ -556,8 +557,6 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
   .advanced-filters > summary { min-height: 44px; padding: 12px 8px; }
 }
 
-.design-institutional-band > * { min-width: 0; }
-.design-institutional-band .panel { margin-top: 0; }
 /* The filer page (DESIGN-POLISH M2, F, A-9): its DOM order IS its visual order.
    The `:has()`/`order` grid rules that re-stacked it here are deleted — reading
    and tab order differed from what was shown (WCAG 1.3.2, 2.4.3). Band F1 is
@@ -576,11 +575,12 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 .design-page > .design-briefing, .entity-page > .design-briefing { margin-left:calc(-1 * var(--design-gutter)); margin-right:calc(-1 * var(--design-gutter)); margin-bottom:0; }
 .design-band { display:grid; gap:0; margin:0 calc(-1 * var(--design-gutter)); border-bottom:1px solid var(--rule); }
 .design-band > * { min-width:0; padding:10px var(--gutter) 14px; }
-/* D-11: 28px gutters only on Institutional's left band cells and on the inner
-   gutters of the member's Filing history │ Signals pair, as the exports draw
-   them; every other pair keeps 32px. The table inside follows its cell. */
+/* D-11: 28px gutters only on the inner gutters of the member's Filing
+   history │ Signals pair, as the exports draw them; every other pair keeps
+   32px (Institutional's band I1, whose left cell also took 28px, moved to
+   /signals/#institutional as a different band in signals-v4 M2). The table
+   inside follows its cell. */
 @media (min-width: 1081px) {
-  .design-institutional-band:not([data-collapsed]) > :first-child { --gutter: 28px; }
   .design-member-history-band:not([data-collapsed]) > :first-child { padding-right: 28px; }
   .design-member-history-band:not([data-collapsed]) > :first-child .table-scroll { --gutter-r: 28px; }
   .design-member-history-band:not([data-collapsed]) > :last-child { padding-left: 28px; }
@@ -589,10 +589,6 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 .design-band > * + * { border-left:1px solid var(--rule); }
 .design-band .panel { margin:0; border:0; }
 .design-member-band { grid-template-columns:minmax(0,1.7fr) minmax(0,1fr); }
-/* Band I1: Consensus (1.3fr, the primary — the seven-column table) │
-   Conviction leaders (1fr, the side panel), as the approved preview draws it
-   (coordinator decision CD-5). */
-.design-institutional-band { grid-template-columns:minmax(0,1.3fr) minmax(0,1fr); }
 /* A paired band (R10): two cells of equal width with the 1px seam. */
 .design-pair { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
 /* Band F1: Reported positions (1.7fr) │ Book shape + Filing history (1fr). */
@@ -617,7 +613,6 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 .design-supplement > summary { cursor:pointer; padding:10px 0; color:var(--ink3); }
 .design-supplement .entity-grid { margin:0; }
 .design-activity .inst-data-note { font-size:var(--fs-meta); }
-.design-institutional-band .etable { min-width:0; }
 .design-rankings { gap:0; margin:0 -32px; border-bottom:1px solid var(--rule); }
 .design-rankings > * { padding:10px var(--gutter) 16px; margin:0; border:0; }
 .design-rankings > * + * { border-left:1px solid var(--rule); }
@@ -628,7 +623,6 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
  .design-band > *, .design-rankings > * { padding:10px 16px 16px; }
  .design-story { padding:16px; }
  .design-rankings { margin-left:-16px; margin-right:-16px; }
- .design-institutional-band .etable { min-width:540px; }
  .design-unavailable .etable { min-width:480px; }
  .design-provenance { padding:6px 0 14px; }
 }
@@ -1020,6 +1014,148 @@ details.si-tier > summary > .si-tier-h { display: inline; }
   .si-row-facts, .si-row-mw { grid-template-columns: 74px minmax(0,1fr); }
   .si-tier-tip { right: 2px; }
 }
+/* ---------- signals-v4 M2 (R9–R17, LD6–LD8, LD11–LD13, LD18): the tabs and the Institutional tab ---------- */
+/* LD9: one ledger group per tab in the head; the shown group lays out as the
+   head's ledger always did (the wrapper takes no box of its own). The
+   `hidden` attribute hides the others, never a media rule. */
+.sig-ledger { display: contents; }
+/* LD8: the tab strip. The sticky box that scrolls sideways is the ROLE-LESS
+   wrapper (a named region only while it overflows); the tablist inside it
+   keeps its role at every width and never wraps. */
+.sig-tabs-scroll { position: sticky; top: 0; z-index: 5; margin: 18px 0 0; background: var(--paper); overflow-x: auto; overflow-y: hidden; }
+.sig-tabs-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sig-tabs { position: static; flex-wrap: nowrap; margin: 0; min-width: max-content; }
+.sig-panel { padding-top: 16px; }
+/* R16: the provenance line — the quarter, and the newest filing in amber */
+.sig-prov { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 16px; }
+.sig-pchip { font: 500 var(--fs-control)/1.5 var(--mono); color: var(--ink2); border: 1px solid var(--rule2); border-radius: 3px; padding: 1px 8px; overflow-wrap: anywhere; }
+.sig-pchip-warn { color: var(--amber); border-color: var(--amber); }
+.design-provenance .sig-pchip { font-size: var(--fs-meta); }
+/* LD6: Named moves (the primary cell) │ Consensus above the new-position
+   leaders. The cells do not stretch: the column fit measures content. */
+.sig-inst-band { grid-template-columns: minmax(0,1.6fr) minmax(0,1fr); align-items: start; }
+.sig-inst-side > * + * { margin-top: 20px; }
+/* LD11: the chip rows, then one row per move — a <details> whose summary is
+   the row, the 13F receipt laid over the grid's last track, which no summary
+   cell fills (as LD4's row lays it over its reserved cell). */
+.mv-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 10px; }
+.mv-chips:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mv-name-detail { margin: 6px 0 10px; padding: 8px 10px; border: 1px solid var(--rule2); border-radius: 4px; }
+.mv-name-sides { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 6px 24px; }
+.mv-item { position: relative; border-bottom: 1px solid var(--rule-row); }
+.mv-sum, .mv-head {
+  display: grid;
+  grid-template-columns: minmax(0,1.15fr) minmax(0,1fr) 40px 84px 56px 64px 40px 72px 34px;
+  column-gap: 8px;
+  align-items: baseline;
+}
+.mv-head { padding: 6px 6px 5px; border-bottom: 1px solid var(--rule2); font: 500 var(--fs-label)/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-meta); align-items: center; }
+.mv-hc-r { text-align: right; }
+.mv-hc-cg { display: inline-flex; justify-content: flex-end; align-items: center; gap: 4px; }
+.mv-hc-cg .note { z-index: 2; }
+.mv-sum { padding: 7px 6px; cursor: pointer; list-style: none; font: 400 var(--fs-small)/1.5 var(--sans); color: var(--ink2); }
+.mv-sum::-webkit-details-marker { display: none; }
+.mv-sum:hover, .mv-row[open] { background: var(--raised); }
+.mv-sum:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.mv-mgr, .mv-tk { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mv-row[open] > .mv-sum > :is(.mv-mgr, .mv-tk) { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+.mv-mgr { color: var(--accent); font-weight: 500; }
+.mv-p { color: var(--ink3); font-weight: 400; }
+.mv-tk .mono-ticker { font-weight: 600; color: var(--ink); }
+.mv-iss { color: var(--ink2); }
+.mv-dsh, .mv-now, .mv-dv, .mv-cg, .mv-fil { font: 400 var(--fs-control)/1.5 var(--mono); text-align: right; white-space: nowrap; }
+.mv-fil { color: var(--ink3); }
+.cg-on { color: var(--amber); }
+.mv-src { position: absolute; top: 7px; right: 6px; z-index: 1; font: 400 var(--fs-control)/1.5 var(--mono); }
+/* the kind word is its own grid cell (one span, LD11's byte budget); it keeps the row's line box */
+.mv-sum > .mv-k { line-height: 1.5; }
+.mv-det { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.25fr); align-items: start; gap: 10px 28px; padding: 4px 6px 14px; }
+.mv-facts > p { margin: 0 0 3px; font: 400 var(--fs-small)/1.5 var(--sans); color: var(--ink2); overflow-wrap: anywhere; }
+.mv-cong-link { margin: 4px 0 0; font: 400 var(--fs-small)/1.5 var(--sans); }
+/* LD10: each (ticker, side)'s Congress lines, once — a closed disclosure at
+   the Named moves' foot that an opened row copies its side from */
+.mv-bank { margin: 10px 0 0; border-top: 1px solid var(--rule); }
+.mv-bank > summary { display: flex; align-items: center; min-height: var(--hit-min); cursor: pointer; font: 400 var(--fs-note)/1.5 var(--sans); color: var(--ink3); }
+.mv-bank > .mv-cong { padding: 6px 0 8px; border-bottom: 1px solid var(--rule-row); }
+.mv-cong-h { margin: 0 0 4px; font: 500 var(--fs-meta)/1.5 var(--mono); letter-spacing: .06em; color: var(--ink-meta); }
+.mv-cong-none, .mv-cong-more { margin: 4px 0 0; font: 400 var(--fs-small)/1.5 var(--sans); color: var(--ink3); }
+/* LD10: one Congress trade line — member, owner, side, range, both dates,
+   receipt; it wraps rather than drop a field */
+.cl-list { list-style: none; margin: 0; padding: 0; }
+.cl-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; padding: 3px 0; font: 400 var(--fs-small)/1.5 var(--sans); color: var(--ink2); }
+.cl-line > .si-row-src { position: static; }
+.cl-tk { font-weight: 600; color: var(--ink); }
+.cl-amt, .cl-dates { font: 400 var(--fs-control)/1.5 var(--mono); }
+.cl-amt { color: var(--ink); white-space: nowrap; }
+.cl-dates { color: var(--ink3); }
+/* LD12: Consensus — each row a filter (the stretched button), the Congress
+   count on its second line */
+.cs-count { margin: 0 0 6px; }
+.cs-head, .cs-row { display: grid; grid-template-columns: 54px minmax(0,1fr) 26px 26px 26px 26px 72px; column-gap: 8px; }
+.cs-head { padding: 6px 4px 5px; border-bottom: 1px solid var(--rule2); font: 500 var(--fs-label)/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-meta); }
+.cs-hr { text-align: right; }
+.cs-hcg { grid-column: 7; } /* the Congress cell sits under Net $ on the row's second line (grid-template-areas), so its head does too */
+.cs-row { position: relative; grid-template-areas: "tk iss n a t x net" "tk top top top top top cg"; row-gap: 1px; align-items: baseline; padding: 7px 4px; border-bottom: 1px solid var(--rule-row); }
+.cs-list[data-collapsed="true"] > [data-compact-extra] { display: none; }
+.cs-row:hover { background: var(--raised); }
+.cs-row:has(> .cs-pick[aria-pressed="true"]) { background: var(--seg-fill); box-shadow: inset 3px 0 0 var(--amber); }
+.cs-pick { position: absolute; inset: 0; z-index: 1; width: 100%; margin: 0; padding: 0; border: 0; background: none; cursor: pointer; }
+.cs-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.cs-tk { grid-area: tk; font: 600 var(--fs-control)/1.5 var(--mono); color: var(--ink); }
+.cs-iss { grid-area: iss; min-width: 0; font: 400 var(--fs-small)/1.5 var(--sans); color: var(--ink2); overflow-wrap: anywhere; }
+.cs-n, .cs-a, .cs-t, .cs-x, .cs-net, .cs-cg { font: 400 var(--fs-control)/1.5 var(--mono); text-align: right; white-space: nowrap; }
+.cs-n { grid-area: n; } .cs-a { grid-area: a; } .cs-t { grid-area: t; } .cs-x { grid-area: x; } .cs-net { grid-area: net; } .cs-cg { grid-area: cg; }
+.cs-strong { color: var(--ink); font-weight: 600; }
+.cs-top { grid-area: top; min-width: 0; font: 400 var(--fs-note)/1.5 var(--sans); color: var(--ink3); overflow-wrap: anywhere; }
+/* LD12: the new-position leaders — the filer, the weight, and on the second
+   line WHICH position is the largest */
+.cv-count { margin: 0 0 6px; }
+.cv-list { list-style: none; margin: 0; padding: 0; }
+.cv-row { display: grid; grid-template-columns: 22px minmax(0,1fr) 84px 52px; grid-template-areas: "rk fl bar pc" "rk top top rt"; column-gap: 10px; row-gap: 2px; align-items: center; padding: 8px 4px; border-bottom: 1px solid var(--rule-row); }
+.cv-rk { grid-area: rk; align-self: start; font: 600 var(--fs-note)/1.6 var(--mono); color: var(--ink3); }
+.cv-fl { grid-area: fl; min-width: 0; font: 500 var(--fs-small)/1.5 var(--sans); overflow-wrap: anywhere; }
+.cv-bar { grid-area: bar; height: 5px; background: var(--bar-track); border-radius: 3px; overflow: hidden; }
+.cv-bar > span { display: block; height: 100%; background: var(--accent); }
+.cv-pc { grid-area: pc; font: 600 var(--fs-control)/1.5 var(--mono); color: var(--accent); text-align: right; }
+.cv-top { grid-area: top; min-width: 0; font: 400 var(--fs-note)/1.5 var(--sans); color: var(--ink3); overflow-wrap: anywhere; }
+.cv-rt { grid-area: rt; font: 400 var(--fs-control)/1.5 var(--mono); color: var(--ink3); text-align: right; white-space: nowrap; }
+/* LD18: /institutional/'s one-line pointer to the moved sections */
+.inst-moved { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; margin: 0 0 18px; padding: 10px 14px; border: 1px solid var(--rule2); border-radius: 6px; background: var(--raised); font: 400 var(--fs-small)/1.5 var(--sans); color: var(--ink2); }
+@media (min-width: 721px) and (max-width: 1439px) {
+  .mv-sum, .mv-head { grid-template-columns: minmax(0,1.1fr) minmax(0,1fr) 40px 76px 52px 60px 36px 72px 34px; column-gap: 6px; }
+}
+@media (max-width: 1080px) {
+  .sig-inst-band { grid-template-columns: minmax(0,1fr); }
+}
+@media (max-width: 720px) {
+  /* R26: the chip row scrolls sideways inside itself, never the page. Each
+     segmented group keeps the site's own layout (it wraps when its box is
+     narrow); the row gives each group a max-content track, so a group never
+     needs to wrap and the row scrolls instead. */
+  .mv-chips { display: grid; grid-auto-flow: column; grid-auto-columns: max-content; justify-content: start; overflow-x: auto; padding-bottom: 2px; }
+  .mv-name-sides { grid-template-columns: minmax(0,1fr); }
+  /* LD11 at the fold: three lines — manager, kind, Δ $ and the receipt's
+     cell; ticker and issuer, the Congress count; Δ shares, now $ and the
+     filed date. Every field keeps its own cell; nothing is hidden. */
+  .mv-head { display: flex; justify-content: flex-end; border-bottom: 0; padding: 4px 2px; }
+  .mv-head > .mv-hc:not(.mv-hc-cg) { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  .mv-sum {
+    grid-template-columns: minmax(0,1fr) auto auto 34px;
+    grid-template-areas: "mgr k dv slot" "tk tk cg cg" "dsh now fil fil";
+    column-gap: 8px;
+    row-gap: 2px;
+    padding: 10px 2px;
+  }
+  .mv-mgr { grid-area: mgr; } .mv-k { grid-area: k; } .mv-dv { grid-area: dv; }
+  .mv-tk { grid-area: tk; } .mv-cg { grid-area: cg; }
+  .mv-dsh { grid-area: dsh; text-align: left; } .mv-now { grid-area: now; } .mv-fil { grid-area: fil; }
+  .mv-src { top: 10px; right: 2px; }
+  .mv-det { grid-template-columns: minmax(0,1fr); padding: 4px 2px 14px; }
+  .cs-head, .cs-row { grid-template-columns: 50px minmax(0,1fr) 22px 22px 22px 22px 64px; column-gap: 6px; }
+  .cs-row { padding: 10px 2px; }
+  .cv-row { padding: 10px 2px; }
+}
+
 /* cluster board + new-position leaders + benchmarked book shape (the bars and
    the cell roles are in the ledger region) */
 /* R11: the comparison text is never cut — its track sizes to it (auto) and it
@@ -1034,8 +1170,8 @@ details.si-tier > summary > .si-tier-h { display: inline; }
 .book-below { color: var(--accent); }
 .design-trading-profile .book-metric dd { grid-template-columns: 40px minmax(40px,1fr) auto; }
 /* Accessibility text inside right-aligned cells is absolutely positioned; anchor it to the cell so it never extends the document past the right edge. */
-.book-metric dd > span, .si-lag-val, .si-rate-val, .design-newpositions td, .design-clusters td, .si-table td { position: relative; }
-.book-metric dd .visually-hidden, .si-lag-val .visually-hidden, .si-rate-val .visually-hidden, .design-newpositions td .visually-hidden, .design-clusters td .visually-hidden, .si-table td .visually-hidden { left: 0; top: 0; }
+.book-metric dd > span, .si-lag-val, .si-rate-val, .design-clusters td, .si-table td, .cv-pc, .cv-rt, .cs-cg, .mv-cg, .mv-dsh, .mv-now { position: relative; }
+.book-metric dd .visually-hidden, .si-lag-val .visually-hidden, .si-rate-val .visually-hidden, .design-clusters td .visually-hidden, .si-table td .visually-hidden, :is(.cv-pc, .cv-rt, .cs-cg, .mv-cg, .mv-dsh, .mv-now) .visually-hidden { left: 0; top: 0; }
 .book-metric dd > span { min-width: 0; }
 /* ---------- /tickers (Ticker.dc.html bands) ----------
    signals-v3 M3 (R16–R21): two tab panels. Congress: the timeline beside the

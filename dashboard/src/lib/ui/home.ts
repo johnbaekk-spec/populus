@@ -161,7 +161,7 @@ export function movesTileHtml(moves: readonly NotableMove[], period: string | nu
     .join("\n");
   return (
     `<section class="panel home-tile" id="home-moves" aria-label="Notable-manager moves this quarter">` +
-    `<div class="panel-head"><h2 class="section-h">Notable managers · ${period ? `quarter ended ${esc(period)}` : "this quarter"}</h2><span class="panel-note"><a class="section-link" href="/institutional/">all moves ↗</a></span></div>` +
+    `<div class="panel-head"><h2 class="section-h">Notable managers · ${period ? `quarter ended ${esc(period)}` : "this quarter"}</h2><span class="panel-note"><a class="section-link" href="/signals/#institutional">all moves ↗</a></span></div>` +
     (shown.length === 0
       ? `<p class="section-note">${period ? "No notable-manager moves are on record for this quarter." : "No closed quarter is available yet — 13F filings arrive up to 45 days after quarter end."}</p>`
       : `<div class="table-scroll"><table class="etable etable-compact"><caption class="visually-hidden">Largest notable-manager position changes this quarter</caption>` +

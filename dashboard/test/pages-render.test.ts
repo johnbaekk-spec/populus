@@ -689,6 +689,35 @@ test("T2.8 / R5: #committee-direct is the DIRECT_SIC table — every committee, 
   assert.match(text, /a direct grade only refines an existing hit/);
 });
 
+/* signals-v4 M2 (R27, LD10; T2.7): Methodology #signals-congress-column —
+   the join, the quarter and the broad-account rule, every constant read from
+   congress-quarter.ts, and linked from the Institutional tab */
+import { signalsCongressColumnHtml } from "../src/lib/ui/index.ts";
+import * as CQ from "../src/lib/congress-quarter.ts";
+import { signalsInstitutionalHtml } from "../src/lib/ui/index.ts";
+import { fixtureInstitutional } from "./lib/inst-signals-fixture.ts";
+
+test("T2.7 (R27): Methodology renders #signals-congress-column through its one function; the text states the quarter rule, BROAD_ACCOUNT_NAMES and CONGRESS_DETAIL_LINES, read from code", () => {
+  const page = readFileSync(METHODOLOGY, "utf-8");
+  assert.ok(page.includes("signalsCongressColumnHtml()"), "methodology calls it");
+  const root = domOf(signalsCongressColumnHtml());
+  assert.ok(root.querySelector("section#signals-congress-column"));
+  const text = visibleText(root).replace(/\s+/g, " ");
+  for (const w of [
+    `calendar quarter end (${CQ.QUARTER_ENDS_TEXT})`,
+    "the first day of its first month through the quarter end",
+    "Filed dates are not bounded",
+    "the House Clerk's ST or the Senate's Stock",
+    "a partial sale counts as a sale",
+    "BRK.B meets BRK-B, while GOOG and GOOGL stay distinct",
+    `more than ${CQ.BROAD_ACCOUNT_NAMES} distinct tickers in the quarter`,
+    `at most ${CQ.CONGRESS_DETAIL_LINES} lines per side`,
+    "never coordination, never intent",
+  ]) assert.ok(text.includes(w), `#signals-congress-column states: ${w}`);
+  // the Institutional tab links it
+  assert.match(signalsInstitutionalHtml(fixtureInstitutional(), {}), /<a href="\/methodology\/#signals-congress-column">/);
+});
+
 /* ======================================================================
    signals-v3 M3 (R17–R21, LD8, LD9): the ticker page
    ====================================================================== */

@@ -15,7 +15,9 @@ import {
   trackedValueFor,
 } from "../src/lib/inst-analytics.ts";
 import { loadClusterBoard } from "../src/lib/activity.ts";
-import { clusterBoardHtml, newPositionLeadersHtml } from "../src/lib/ui/index.ts";
+import { clusterBoardHtml } from "../src/lib/ui/index.ts";
+// signals-v4 M2 (LD12): the leaders' panel moved to /signals/#institutional
+import { convictionLeadersHtml } from "../src/lib/ui/signals-institutional.ts";
 import type { InstData, QoqDeltaRow, ConcentrationRow } from "../src/lib/inst.ts";
 import type { TxnRow } from "../src/lib/format.ts";
 
@@ -59,11 +61,38 @@ test("new-position leaders: weight over a COMPLETE book only; incomplete books a
   assert.equal(l.excluded.missingValue, 2, "the NULL-book filer and the undisclosed-value filer are stated, not zero-filled");
   assert.equal(l.excluded.belowThreshold, 1);
   assert.equal(l.evaluated, 4);
-  const html = newPositionLeadersHtml(l, () => "top", P);
-  assert.match(html, /Conviction leaders/);
+  const html = convictionLeadersHtml(l, () => "top", P);
+  assert.match(html, /<span class="ref-label">Conviction leaders<\/span>/, "the owner's reference label, markup-bound (LD20)");
   assert.match(html, /5\.0%/);
   assert.match(html, /2 a position without a value/);
   assert.doesNotMatch(html, /Filer 2/);
+});
+
+test("signals-v4 LD12: each leader names its LARGEST new position — the maximum reported value, ties by position key; no issuer name states its absence", () => {
+  const book = (cik: string, total: number) => conc(cik, total, 0, 5000, 1200, 25);
+  const named = (d: QoqDeltaRow, issuer: string | null, cls: string | null = "COM"): QoqDeltaRow => ({ ...d, issuer_name: issuer, title_of_class: cls });
+  const data = inst([
+    // "b" (60) is the largest; "a" (50) is not
+    { cik: "1", conc: [book("1", 1_000)], deltas: [named(delta("1", "a", "new", 50), "ALPHA INC"), named(delta("1", "b", "new", 60), "BETA CORP")] },
+    // a tie at 70: the smaller position key wins
+    { cik: "2", conc: [book("2", 1_000)], deltas: [named(delta("2", "z", "new", 70), "ZED INC"), named(delta("2", "m", "new", 70), "EMM INC")] },
+    // the aggregate names no issuer for it
+    { cik: "3", conc: [book("3", 1_000)], deltas: [named(delta("3", "q", "new", 80), null)] },
+  ]);
+  const tickers: Record<string, string> = { "BETA CORP|COM": "BETA" };
+  const l = newPositionLeaders(data, P, new Set(["1", "2", "3"]), { tickerOf: (i, c) => tickers[`${i}|${c}`] ?? null })!;
+  const by = new Map(l.rows.map((r) => [r.cik, r.largest]));
+  assert.deepEqual(by.get("1"), { issuer: "BETA CORP", ticker: "BETA", valueUsd: 60, weightBps: 600, positionKey: "b" });
+  assert.equal(by.get("2")!.positionKey, "m", "ties break by position key");
+  assert.equal(by.get("2")!.ticker, null, "no reviewed ticker, none named");
+  assert.equal(by.get("3")!.issuer, null);
+  const html = convictionLeadersHtml(l, () => "top", P);
+  assert.match(html, /Largest new: <span class="mono-ticker">BETA<\/span> <span class="filed-name">BETA CORP<\/span> · \$60 · 6\.0% of book/);
+  assert.match(html, /Largest new position not named in this aggregate/);
+  // without the caller's ticker lookup no ticker is named (the module never reads the mapping)
+  assert.equal(newPositionLeaders(data, P, new Set(["1"]))!.rows[0]!.largest!.ticker, null);
+  // control: a "largest" chosen by FIRST position instead of the maximum value would name ALPHA
+  assert.notEqual(by.get("1")!.issuer, "ALPHA INC");
 });
 
 test("tracked value: one closed period, partial books flagged as a lower bound", () => {

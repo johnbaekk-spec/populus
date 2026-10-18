@@ -21,8 +21,24 @@
 
    The contract: visible = min(matching, base + extra). `base` is the fitted
    count, recomputed on every trigger; `extra` is the "Show more" extension,
-   0 at load and after a filter change; alignment is claimed only when
-   extra = 0 and matching ≥ base. Below its minimum the list never shrinks. */
+   0 at load and after a filter change. The list never shrinks below its
+   FLOOR: the larger of its minimum and the target's `floor()` — for the
+   Named moves, the place of the last OPEN row in the matching order + 1
+   (less the extension), so a refit never hides a row a reader has open
+   (codex M2 round 2, F1). Alignment is claimed only when none of the four
+   stated exceptions holds:
+   1. a "Show more" extension stands (extra > 0);
+   2. the list is shorter than the fit asks for (every matching row shows);
+   3. the reference is shorter than the minimum list (the column ends past it
+      at the minimum);
+   4. an open row forces the floor past the fit (a tall opened row, or one
+      far down the list): the column ends past the reference with that row
+      still visible.
+   Re-runs: a ResizeObserver over the REFERENCE only, a `populus:rerender`
+   that is not the list's own, and `refit()` — which the page calls after a
+   filter change AND after every in-column height change the observer cannot
+   see (a Named move or the Congress-lines bank opening or closing, a held
+   row's body inserted). */
 
 /** The narrow surface the fit reads, declared structurally so the math and
     the binder run under `node --test` over a fake layout as well as on a
@@ -117,6 +133,10 @@ export interface FitTarget {
   /** set the fitted base: visible becomes min(matching, base + extra).
       Returns a promise only when it must repaint (rows the DOM does not hold). */
   apply(base: number): void | Promise<void>;
+  /** the base the fit may never go below beside the minimum — the rows that
+      must stay visible (an open row's place + 1, less the extension); absent
+      or 0 when nothing pins the list */
+  floor?(): number;
 }
 
 export interface FitOptions {
@@ -146,7 +166,8 @@ function sideBySide(ref: FitBox, col: FitBox): boolean {
     `ref`. Re-runs on a ResizeObserver over `ref` — its size moves with the
     viewport, with a row or Routine opening, and with a Consensus "Show all" —
     and on a `populus:rerender` that is not the list's own; `refit()` runs it
-    after a filter change. A newer run cancels an older one still waiting on a
+    after a filter change and after a height change inside `col` (a row
+    opening or closing), which the observer does not watch. A newer run cancels an older one still waiting on a
     repaint (the token guard the pager's `paint()` uses). */
 export function bindFit(ref: FitElement, col: FitElement, target: FitTarget, opts: FitOptions): FitBinding {
   let token = 0;
@@ -161,11 +182,14 @@ export function bindFit(ref: FitElement, col: FitElement, target: FitTarget, opt
     return mine === token;
   };
 
+  /** the list's floor now: its minimum, or more where an open row pins it */
+  const floor = (): number => Math.max(opts.min, Math.floor(target.floor?.() ?? 0));
+
   async function fit(): Promise<void> {
     const mine = ++token;
     if (!sideBySide(ref, col)) {
       memo = null;
-      await step(opts.min, mine);
+      await step(floor(), mine);
       return;
     }
     const rb = ref.getBoundingClientRect();
@@ -173,7 +197,7 @@ export function bindFit(ref: FitElement, col: FitElement, target: FitTarget, opt
     const list = target.list();
     const rowHeight = medianRowHeight(target.rows());
     if (!list || rowHeight <= 0) {
-      await step(opts.min, mine);
+      await step(floor(), mine);
       return;
     }
     const lb = list.getBoundingClientRect();
@@ -186,15 +210,17 @@ export function bindFit(ref: FitElement, col: FitElement, target: FitTarget, opt
       rowHeight,
       min: opts.min,
     });
-    /* a list shorter than the fit asks for shows all of it */
-    n = Math.max(opts.min, Math.min(n, target.matching()));
+    /* a list shorter than the fit asks for shows all of it; an open row is
+       never hidden (exception 4: no alignment is claimed past it) */
+    const lo = floor();
+    n = Math.max(lo, Math.min(n, target.matching()));
     if (!(await step(n, mine))) return;
     /* the exact correction holds the alignment claim, so it runs only where
        the claim is made: no "Show more" extension */
     if (target.extra() > 0) return;
     const over = (): boolean => contentBottom(col) > contentBottom(ref) + 1;
     let guard = 2 * Math.max(target.matching(), n) + 4;
-    while (n > opts.min && over() && guard-- > 0) {
+    while (n > lo && over() && guard-- > 0) {
       n -= 1;
       if (!(await step(n, mine))) return;
     }

@@ -173,7 +173,11 @@ function routeAbsent(route: Route, reason: string): { skip: string } | { fail: s
 const ROUTES: Route[] = [
   { id: "congress", path: "/congress/", minTables: 3, minColumns: 16, pairs: 1, g10Min: { colours: 1 } },
   { id: "member", path: "/congress/members/M001193/", minTables: 3, minColumns: 12, pairs: 2, g10Min: { colours: 1 } },
-  { id: "institutional", path: "/institutional/", minTables: 2, minColumns: 8, pairs: 1 },
+  /* signals-v4 M2 (R17): band I1 (Consensus │ Conviction leaders) and the
+     named-moves table moved to /signals/#institutional, so the landing carries
+     no pair, and one table with rows — the filer directory, 5 columns (T0
+     counted the moves table as its second, and its columns toward 8) */
+  { id: "institutional", path: "/institutional/", minTables: 1, minColumns: 5, pairs: 0 },
   { id: "filer", path: "/institutional/filers/1135730/", minTables: 3, minColumns: 12, pairs: 1, g10Min: { colours: 1 } },
   /* signals-v4 M1: the hits table is the page's one table; where the band
      stacks (≤1080px) it sits in the Hits pane, which the hash selects (LD7),
@@ -1036,52 +1040,62 @@ test.describe("M2: route properties", () => {
       await ctx.close();
     }
   });
-  /* M2 delta review: the /institutional/ "Consensus add" sub carries the
-     issuer's filed name, and a real one wraps to three lines in a 150px
-     figure. The renderer marks such a figure `data-wide` (a character count,
-     `ledgerFigureWide`); marked, its sub stays within two lines at 1440 and at
-     390. The bounded build has no consensus issuer, so the page's own figure
-     is replaced by the REAL renderer's figure over fixture rows — the served
-     page's head, stylesheet and fold. */
-  const LONG_ADDS: { issuer: string; ticker: string; n: number }[] = [
-    { issuer: "MICROSOFT CORP", ticker: "MSFT", n: 8 },
-    { issuer: "BERKSHIRE HATHAWAY INC DEL", ticker: "BRK.B", n: 12 },
+  /* M2 delta review: a Top add (it was /institutional/'s "Consensus add";
+     signals-v4 M2 moved it to the Signals Institutional tab's ledger) whose
+     name no reviewed ticker maps leads its sub with the issuer's filed name,
+     and a long one wraps to three lines in a 150px figure. The renderer marks
+     such a figure `data-wide` (a character count, `ledgerFigureWide`);
+     marked, its sub stays within two lines at 1440 and at 390. The bounded
+     build has no consensus issuer, so the tab's own figure is replaced by the
+     REAL renderer's figure over fixture rows — the served page's head,
+     stylesheet and fold, on the tab selected by its hash. */
+  const LONG_ADDS: { issuer: string; n: number }[] = [
+    { issuer: "BERKSHIRE HATHAWAY INC DEL", n: 12 },
+    { issuer: "TAIWAN SEMICONDUCTOR MFG LTD", n: 4 },
+    { issuer: "TAIWAN SEMICONDUCTOR MANUFACTURING CO LTD", n: 3 },
   ];
-  const consensusAddFigure = (a: (typeof LONG_ADDS)[number]): string =>
+  /** The name whose UNMARKED sub wraps to three lines on this page at both
+      widths: the Signals head's unmarked figure is 166px at 1440 and 171px
+      at 390 (measured), where the 26- and 28-character subs take two lines
+      even unmarked; the 41-character one takes three. */
+  const CONTROL_ADD = "TAIWAN SEMICONDUCTOR MANUFACTURING CO LTD";
+  const topAddFigure = (a: (typeof LONG_ADDS)[number]): string =>
     disclosureLedger([consensusAddLedgerItem({
-      issuerKey: "k", issuer: a.issuer, ticker: a.ticker, newStakes: a.n, adds: 0, trims: 0, exits: 0, filers: a.n,
+      issuerKey: "k", issuer: a.issuer, ticker: null, newStakes: a.n, adds: 0, trims: 0, exits: 0, filers: a.n,
       netDeltaUsd: 1, netDeltaPartial: false, topMover: null,
-    }, "2026-03-31")], { scope: "inst-ledger" }).replace(/^<dl[^>]*>|<\/dl>$/g, "");
+    }, "2026-03-31")], { scope: "signals-inst-ledger" }).replace(/^<dl[^>]*>|<\/dl>$/g, "");
   for (const width of [1440, 390] as const) {
-    test(`T2.8 (M2 delta): a long Consensus-add sub stays within two lines — the renderer marks its figure wide @${width}; control: unmarked, it wraps to three`, async ({ browser }, testInfo) => {
-      const { ctx, page } = await open(browser, testInfo, width, "/institutional/");
+    test(`T2.8 (M2 delta): a long Top-add sub stays within two lines — the renderer marks its figure wide @${width}; control: unmarked, it wraps to three`, async ({ browser }, testInfo) => {
+      const { ctx, page } = await open(browser, testInfo, width, "/signals/#institutional");
       try {
-        await expect(page.locator("main dl.design-ledger").first()).toBeVisible({ timeout: 20_000 });
-        expect((await ledgerProblems(page)).problems, "the page's own ledger").toEqual([]);
+        const group = 'main [data-tab-for="institutional"]';
+        await expect(page.locator(`${group} dl.design-ledger`)).toBeVisible({ timeout: 20_000 });
+        expect((await ledgerProblems(page)).problems, "the tab's own ledger").toEqual([]);
         const unmarkedCaught: string[] = [];
         for (const a of LONG_ADDS) {
-          const html = consensusAddFigure(a);
+          const html = topAddFigure(a);
           expect(html, `${a.issuer}: the renderer marks the figure wide`).toMatch(/^<div class="ledger-fig" data-tone="blue" data-wide>/);
-          const swapped = await page.evaluate((h) => {
-            const fig = Array.from(document.querySelectorAll("main dl.design-ledger .ledger-fig")).find((f) => /Consensus add/.test(f.querySelector("dt")?.textContent ?? ""));
+          const swapped = await page.evaluate(([h, g]) => {
+            const fig = Array.from(document.querySelectorAll(`${g} dl.design-ledger .ledger-fig`)).find((f) => /Top add/.test(f.querySelector("dt")?.textContent ?? ""));
             if (!fig) return null;
             fig.outerHTML = h;
-            return (document.querySelector("main dl.design-ledger .ledger-fig[data-tone=blue] .ledger-sub")?.textContent ?? "").trim();
-          }, html);
-          expect(swapped, `${a.issuer}: the page's Consensus add figure`).toBe(`${a.issuer} · ${a.n} notable managers opened it`);
+            return (document.querySelector(`${g} dl.design-ledger .ledger-fig[data-tone=blue][data-wide] .ledger-sub`)?.textContent ?? "").trim();
+          }, [html, group] as const);
+          expect(swapped, `${a.issuer}: the tab's Top add figure`).toBe(`${a.issuer} · no reviewed ticker`);
           const marked = await ledgerProblems(page);
           expect(marked.problems, `${a.issuer} @${width}, marked wide`).toEqual([]);
           // control: the same figure WITHOUT data-wide (the pre-fix renderer)
-          await page.evaluate(() => document.querySelector("main dl.design-ledger .ledger-fig[data-tone=blue]")!.removeAttribute("data-wide"));
+          await page.evaluate((g) => document.querySelector(`${g} dl.design-ledger .ledger-fig[data-tone=blue][data-wide]`)!.setAttribute("data-unmarked", ""), group);
+          await page.evaluate((g) => document.querySelector(`${g} dl.design-ledger .ledger-fig[data-unmarked]`)!.removeAttribute("data-wide"), group);
           const unmarked = (await ledgerProblems(page)).problems;
           if (unmarked.some((p) => /^sub .* renders on [3-9] lines \(at most two\)/.test(p))) unmarkedCaught.push(a.issuer);
-          await page.evaluate(() => document.querySelector("main dl.design-ledger .ledger-fig[data-tone=blue]")!.setAttribute("data-wide", ""));
+          await page.evaluate((g) => { const f = document.querySelector(`${g} dl.design-ledger .ledger-fig[data-unmarked]`)!; f.setAttribute("data-wide", ""); f.removeAttribute("data-unmarked"); }, group);
           expect((await ledgerProblems(page)).problems, `${a.issuer}: clean again once marked`).toEqual([]);
         }
-        /* at 1440 both names wrap to three lines unmarked (a 150px figure); at
-           390 the half column is 171px, so the Microsoft sub fits two lines there
-           and the longer name is the control */
-        expect(unmarkedCaught, `@${width}: the unmarked figures whose sub wraps to three lines`).toEqual(width === 1440 ? LONG_ADDS.map((a) => a.issuer) : ["BERKSHIRE HATHAWAY INC DEL"]);
+        /* control: unmarked, the longest name's sub wraps to three lines at
+           both widths (on /institutional/ the figure was 150px, and the two
+           shorter names wrapped there too) */
+        expect(unmarkedCaught, `@${width}: the longest name's unmarked sub wraps to three lines`).toContain(CONTROL_ADD);
       } finally {
         await ctx.close();
       }
@@ -1136,9 +1150,10 @@ test.describe("M2: route properties", () => {
     "e-member": [{ id: "member-flows-tbody", n: 20, hold: true }, { id: "member-history-tbody", n: 12, hold: true }],
     filer: [{ id: "filer-holdings-tbody", n: 20, hold: true }],
     "e-filer": [{ id: "filer-holdings-tbody", n: 20, hold: false }],
-    /* CD-5: the Consensus board, I1's primary, shows a fixed 10 (the bounded
-       build has no qualifying issuer, so nothing is held back there) */
-    institutional: [{ id: "inst-consensus-tbody", n: 10, hold: false }],
+    /* CD-5 → signals-v4 LD12: the Consensus board shows a fixed 10 — on
+       /signals/#institutional now (the bounded build has no qualifying
+       issuer, so nothing is held back there) */
+    signals: [{ id: "consensus-list", n: 10, hold: false }],
   };
   /** Each fixed default that is not what the page shows. */
   async function defaultRowProblems(page: Page, routeId: string): Promise<string[]> {

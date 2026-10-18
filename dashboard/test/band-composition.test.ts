@@ -13,14 +13,20 @@ import path from "node:path";
 import { type TxnRow } from "../src/lib/format.ts";
 import { quarterlyFlow, type QuarterlyFlowResult } from "../src/lib/derive.ts";
 import {
-  consensusConvictionBandHtml,
   filerLedgerHtml,
   flowRibbon,
-  newPositionLeadersHtml,
+  signalsInstitutionalHtml,
   SIGNAL_HITS_COMPACT_ROWS,
   SIGNAL_HITS_PAGE_SIZE,
 } from "../src/lib/ui/index.ts";
-import { consensusBoardHtml, CONSENSUS_COMPACT_ROWS } from "../src/lib/notable-moves.ts";
+/* signals-v4 M2 (R14, R15, LD6, LD12): band I1 (Consensus │ Conviction
+   leaders) left /institutional/; Consensus and the new-position leaders are
+   the side column of the Signals Institutional band, beside the Named moves.
+   The band rules they were pinned under (R10's collapse, CD-1's one primary,
+   CD-5's fixed default, G9's own count, M2F-D2's all-lines band) are pinned
+   here on the new band and panels. */
+import { buildSignalsInstitutional, consensusPanelHtml, convictionLeadersHtml, CONSENSUS_COMPACT_ROWS } from "../src/lib/ui/signals-institutional.ts";
+import type { NotableMove } from "../src/lib/notable-moves.ts";
 import {
   disclosureLedger,
   ledgerItemProblem,
@@ -159,7 +165,7 @@ function bandCollapseProblems(band: MiniElement): string[] {
 const LEADERS_NONE = { period: "2026-03-31", thresholdBps: 200, rows: [], qualifying: 0, evaluated: 39, excluded: { notNotable: 30, smallBook: 4, missingValue: 2, belowThreshold: 3 }, minBookPositions: 20 };
 const LEADERS_SOME = {
   period: "2026-03-31", thresholdBps: 200, qualifying: 1, evaluated: 40, minBookPositions: 20, excluded: { notNotable: 30, smallBook: 4, missingValue: 2, belowThreshold: 3 },
-  rows: [{ cik: "0000000001", filerName: "A Filer", maxWeightBps: 450, atThreshold: 1, newPositions: 3 }],
+  rows: [{ cik: "0000000001", filerName: "A Filer", maxWeightBps: 450, atThreshold: 1, newPositions: 3, largest: null }],
 };
 const BOARD = {
   period: "2026-03-31", minFilers: 3, qualifying: 1, wrappersExcluded: 0, unkeyedMoves: 0,
@@ -168,77 +174,89 @@ const BOARD = {
 
 const LEADERS_FIVE = {
   period: "2026-03-31", thresholdBps: 200, qualifying: 5, evaluated: 44, minBookPositions: 20, excluded: { notNotable: 30, smallBook: 4, missingValue: 2, belowThreshold: 3 },
-  rows: Array.from({ length: 5 }, (_, i) => ({ cik: `000000000${i + 1}`, filerName: `Filer ${i + 1}`, maxWeightBps: 450 - i * 10, atThreshold: 1, newPositions: 3 })),
+  rows: Array.from({ length: 5 }, (_, i) => ({ cik: `000000000${i + 1}`, filerName: `Filer ${i + 1}`, maxWeightBps: 450 - i * 10, atThreshold: 1, newPositions: 3, largest: null })),
 };
-const filerHref = (c: string): string => `/f/${c}`;
-/** The I1 grid declaration: [primary fraction, side fraction], or null. */
-function i1Fractions(css: string): [number, number] | null {
-  const m = /\.design-institutional-band \{ grid-template-columns:minmax\(0,([\d.]+)fr\) minmax\(0,([\d.]+)fr\); \}/.exec(css);
+/** The Signals Institutional tab over `moves` (and, optionally, leaders). */
+function instModel(moves: readonly NotableMove[], leaders: unknown = LEADERS_FIVE) {
+  return buildSignalsInstitutional({
+    present: true, period: "2026-03-31", latestFiled: "2026-07-31", freshness: "f", notableManagers: 5, moves, leaders: leaders as never, txns: [],
+    filerHref: (c) => `/f/${c}`, filerTier: () => "top",
+  });
+}
+function mv(i: number, ikey: string, over: Partial<NotableMove> = {}): NotableMove {
+  return {
+    cik: String(i).padStart(10, "0"), manager: `Manager ${i}`, principal: null, type: "hedge_fund", issuer: `ISSUER ${ikey}`, ticker: null, ticker_verified: null,
+    kind: "new", delta_shares: 1, curr_value: 100, delta_value: 100 - i, filed: "2026-05-15", doc: "https://www.sec.gov/x", key: `sid:${ikey}:${i}`, ikey, ...over,
+  } as NotableMove;
+}
+/** Three notable managers on each of `n` names: a board of `n` rows. */
+const MOVES = (n: number): NotableMove[] => Array.from({ length: n }, (_, k) => [1, 2, 3].map((i) => mv(i + k * 3, `iss:${k}`))).flat();
+/** The Signals Institutional band. */
+const sigBand = (html: string): MiniElement => domOf(html).querySelector(".design-band.sig-inst-band")!;
+/** The heading text of a band cell (its panels' headings, for the side column). */
+const cellName = (c: MiniElement): string => c.querySelectorAll("h2").map((h) => visibleText(h).trim()).join(" + ");
+
+/** The Signals Institutional band's composition (LD6), as ONE predicate:
+    Named moves │ Consensus above the leaders, in that order; the Named moves
+    its one primary cell; the grid gives the primary the wider fraction. */
+function sigFractions(css: string): [number, number] | null {
+  const m = /\.sig-inst-band \{ grid-template-columns: minmax\(0,([\d.]+)fr\) minmax\(0,([\d.]+)fr\);/.exec(css);
   return m ? [Number(m[1]), Number(m[2])] : null;
 }
-/** Coordinator decision CD-5, as ONE predicate: a paired band I1 is Consensus
-    │ Conviction leaders in that order, Consensus is its ONE primary cell, and
-    the grid gives the primary the wider fraction — 1.3fr │ 1fr, the approved
-    preview's composition. */
-function i1CompositionProblems(band: MiniElement, css: string): string[] {
+function sigCompositionProblems(band: MiniElement, css: string): string[] {
   const out: string[] = [];
   if (band.getAttribute("data-collapsed") !== "empty-state") {
-    const labels = band.children.map((c) => c.getAttribute("aria-label") ?? "?");
-    if (labels.join(" │ ") !== "Consensus │ Conviction leaders") out.push(`cells ${labels.join(" │ ")} (Consensus │ Conviction leaders)`);
-    const primaries = band.children.filter((c) => c.hasAttribute("data-pair-primary")).map((c) => c.getAttribute("aria-label"));
-    if (primaries.length !== 1 || primaries[0] !== "Consensus") out.push(`primary: ${primaries.join(", ") || "none"} (Consensus)`);
+    const names = band.children.map(cellName);
+    if (names.join(" │ ") !== "Named moves │ Consensus + Conviction leaders") out.push(`cells ${names.join(" │ ")} (Named moves │ Consensus + Conviction leaders)`);
+    const primaries = band.children.filter((c) => c.hasAttribute("data-pair-primary")).map(cellName);
+    if (primaries.length !== 1 || primaries[0] !== "Named moves") out.push(`primary: ${primaries.join(", ") || "none"} (Named moves)`);
   }
-  const fr = i1Fractions(css);
-  if (!fr) out.push("no I1 grid declaration");
-  else if (fr[0] !== 1.3 || fr[1] !== 1) out.push(`I1 grid ${fr[0]}fr │ ${fr[1]}fr (1.3fr │ 1fr, the primary first)`);
+  const fr = sigFractions(css);
+  if (!fr) out.push("no Institutional band grid declaration");
+  else if (!(fr[0] > fr[1])) out.push(`band grid ${fr[0]}fr │ ${fr[1]}fr (the primary, first, the wider)`);
   return out;
 }
 
-test("T2.4: no qualifying conviction filer collapses band I1 — one column, the empty line after Consensus", () => {
-  const consensus = consensusBoardHtml(BOARD as never, { filerHref: (c) => `/f/${c}` });
-  const conviction = newPositionLeadersHtml(LEADERS_NONE as never, () => "top", "2026-03-31");
-  const band = domOf(consensusConvictionBandHtml(consensus, conviction)).children[0]!;
-  assert.ok(band.classList.contains("design-band") && band.classList.contains("design-consensus-band"));
-  assert.equal(band.getAttribute("data-collapsed"), "empty-state");
-  /* DESIGN-POLISH M4 (R26): the computed zero is a headed section marked
-     `data-empty-state` (like the empty Consensus board), no longer the
-     "not available in this build" line */
-  assert.deepEqual(band.children.map((c) => c.getAttribute("aria-label") ?? c.getAttribute("class")), ["Consensus", "Conviction leaders"]);
-  assert.ok(band.children[1]!.hasAttribute("data-empty-state"));
-  assert.match(visibleText(band.children[1]!), /Zero is the computed answer/, "the computed zero is stated, not a placeholder");
-  assert.deepEqual(bandCollapseProblems(band), []);
-  // the collapse is ONE column in CSS, and it outranks each pair's own two-column rule
+test("T2.4 → signals-v4 LD6: a Named moves cell that is only its empty line collapses the Institutional band — one column, the line under the side column, which is the primary; band I1 is gone from /institutional/", () => {
   const css = baseStylesheet().replace(/\/\*[\s\S]*?\*\//g, "");
+  // the build's registry marks no notable manager: no move, the Named moves are their stated zero
+  const empty = sigBand(signalsInstitutionalHtml(instModel([], LEADERS_NONE), {}));
+  assert.ok(empty.classList.contains("design-band"));
+  assert.equal(empty.getAttribute("data-collapsed"), "empty-state");
+  assert.deepEqual(empty.children.map(cellName), ["Consensus + Conviction leaders", "Named moves"], "the empty line sits under the side column");
+  assert.ok(empty.children[1]!.hasAttribute("data-empty-state"));
+  assert.match(visibleText(empty.children[1]!), /Zero is the computed answer/, "the computed zero is stated, not a placeholder");
+  assert.deepEqual(bandCollapseProblems(empty), []);
+  assert.deepEqual(primaryProblems(empty), [], "the content cell is the primary and leads");
+  // the collapse is ONE column in CSS, and it outranks each pair's own two-column rule
   assert.match(css, /\.design-band\[data-collapsed="empty-state"\] \{ grid-template-columns:minmax\(0,1fr\); \}/);
 
-  // an empty CONSENSUS cell (its renderer marks it `data-empty-state`) goes under the Conviction table, never above it
-  const emptyBoard = consensusBoardHtml({ ...BOARD, rows: [], qualifying: 0 } as never, { filerHref: (c) => `/f/${c}` });
-  assert.match(emptyBoard, /^<section\b[^>]*\bdata-empty-state\b/, "the empty board carries its empty-state marker");
-  const flipped = domOf(consensusConvictionBandHtml(emptyBoard, newPositionLeadersHtml(LEADERS_SOME as never, () => "top", "2026-03-31"))).children[0]!;
-  assert.deepEqual(flipped.children.map((c) => c.getAttribute("aria-label")), ["Conviction leaders", "Consensus"]);
-  assert.deepEqual(bandCollapseProblems(flipped), []);
-
-  // both cells with rows: a real pair, no collapse — Consensus the primary (CD-5)
-  const paired = domOf(consensusConvictionBandHtml(consensus, newPositionLeadersHtml(LEADERS_SOME as never, () => "top", "2026-03-31"))).children[0]!;
+  // moves and a board: a real pair, no collapse — the Named moves the primary
+  const paired = sigBand(signalsInstitutionalHtml(instModel(MOVES(4)), {}));
   assert.equal(paired.getAttribute("data-collapsed"), null);
   assert.deepEqual(bandCollapseProblems(paired), []);
   assert.deepEqual(primaryProblems(paired), []);
-  assert.deepEqual(i1CompositionProblems(paired, css), []);
-  // a collapse makes the remaining content cell the primary, whichever it is
-  assert.deepEqual(primaryProblems(band), []);
-  assert.deepEqual(primaryProblems(flipped), []);
+  assert.deepEqual(sigCompositionProblems(paired, css), []);
+  // empty Consensus and leaders inside the side column never collapse the band: the side holds two headed panels
+  assert.deepEqual(sigBand(signalsInstitutionalHtml(instModel(MOVES(1).slice(0, 2), LEADERS_NONE), {})).getAttribute("data-collapsed"), null);
 
   // control: a band holding the empty line WITHOUT data-collapsed fails R10
-  const lost = domOf(consensusConvictionBandHtml(consensus, conviction).replace(' data-collapsed="empty-state"', "")).children[0]!;
+  const lost = domOf(signalsInstitutionalHtml(instModel([], LEADERS_NONE), {}).replace(' data-collapsed="empty-state"', "")).querySelector(".sig-inst-band")!;
   assert.deepEqual(bandCollapseProblems(lost), ["a band holds an empty-state cell uncollapsed"]);
-  // control: a collapse claimed over two full cells fails too
-  const liar = domOf(pairBandHtml("design-pair", consensus, newPositionLeadersHtml(LEADERS_SOME as never, () => "top", "2026-03-31"), { primary: "right" }).replace('class="design-band design-pair"', 'class="design-band design-pair" data-collapsed="empty-state"')).children[0]!;
-  assert.ok(bandCollapseProblems(liar).length > 0);
-  // control (review Q2-3): the empty board WITHOUT its marker is not collapsed —
-  // the band reads the collapse off the cell, never off a flag the page computes
-  const unmarked = domOf(consensusConvictionBandHtml(emptyBoard.replace(" data-empty-state", ""), newPositionLeadersHtml(LEADERS_SOME as never, () => "top", "2026-03-31"))).children[0]!;
+  /* control (review Q2-3): the empty Named moves WITHOUT their marker do not
+     collapse the band — it reads the collapse off the cell, never off a flag
+     the page computes — and the predicate still catches the section-shaped line */
+  const movesLine = empty.children[1]!.outerHTML.replace(/ data-empty-state(?=[\s>])/, "");
+  const sideCell = empty.children[0]!.outerHTML.replace(/ data-pair-primary(?=[\s>])/, "");
+  const unmarked = domOf(pairBandHtml("sig-inst-band", movesLine, sideCell, { primary: "left" })).children[0]!;
   assert.equal(unmarked.getAttribute("data-collapsed"), null);
-  assert.deepEqual(bandCollapseProblems(unmarked), ["a band holds an empty-state cell uncollapsed"], "control: the section-shaped empty board is still caught by the predicate");
+  assert.deepEqual(bandCollapseProblems(unmarked), ["a band holds an empty-state cell uncollapsed"]);
+
+  // /institutional/ composes no band I1, no board and no leaders panel (R17)
+  const page = readFileSync(path.join(SRC, "pages", "institutional", "index.astro"), "utf-8");
+  for (const gone of ["design-consensus-band", "design-institutional-band", "consensusConvictionBandHtml", "newPositionLeadersHtml", "consensusBoardHtml"]) {
+    assert.ok(!page.includes(gone), `/institutional/ no longer composes ${gone}`);
+  }
 });
 
 /* ======================================================================
@@ -392,13 +410,12 @@ function heightDerivedCountProblems(sources: Record<string, string>): string[] {
   return Object.entries(sources).filter(([, src]) => HEIGHT_DERIVED.test(src)).map(([rel, src]) => `${rel}: ${HEIGHT_DERIVED.exec(src)![0]}`);
 }
 
-test("CD-5: Consensus shows a FIXED 10 beside any Conviction list (or none); no row count anywhere depends on the partner cell; a partner-dependent count fails", () => {
+test("CD-5 → signals-v4 LD12: Consensus shows a FIXED 10 whatever the leaders beside it hold; no row count anywhere depends on a partner cell's height; a partner-dependent count fails", () => {
   // 30 qualifying issuers, so the board holds rows back whatever its partner
-  const board = { ...BOARD, qualifying: 30, rows: Array.from({ length: 30 }, (_, i) => ({ ...BOARD.rows[0]!, issuerKey: `k${i}`, issuer: `Issuer ${i}`, ticker: null })) };
   const shown: number[] = [];
   for (const leaders of [LEADERS_NONE, LEADERS_SOME, LEADERS_FIVE]) {
-    const html = consensusConvictionBandHtml(consensusBoardHtml(board as never, { filerHref }), newPositionLeadersHtml(leaders as never, () => "top", "2026-03-31"));
-    shown.push(shownOf(html, "inst-consensus-tbody"));
+    const html = signalsInstitutionalHtml(instModel(MOVES(30), leaders), {});
+    shown.push(shownOf(html, "consensus-list"));
   }
   assert.equal(CONSENSUS_COMPACT_ROWS, 10);
   assert.deepEqual(fixedDefaultProblems(shown, 10), [], `Consensus: 10, fixed (${shown.join(", ")})`);
@@ -407,69 +424,74 @@ test("CD-5: Consensus shows a FIXED 10 beside any Conviction list (or none); no 
   const tuned = [0, 1, 5, 12].map((r) => partnerTunedRows({ partnerPx: 109 + r * 30, chromePx: 184, max: 10 }));
   assert.ok(fixedDefaultProblems(tuned, 10).length > 0, `control: a partner-dependent Consensus N (${tuned.join(", ")}) fails`);
 
-  // the page composes the board from its own options only — no partner input
+  // the tab composes the board from the model only — no partner input
   const read = (rel: string): string => readFileSync(path.join(SRC, rel), "utf-8");
-  const page = read("pages/institutional/index.astro");
-  const call = /consensusBoardHtml\(board, (\{[^}]*\})\)/.exec(page)?.[1];
-  assert.equal(call, "{ filerHref: hrefOf }", "the page passes the board no row count");
-  // and no band source derives a row count from a height (the sweep)
+  const src = read("lib/ui/signals-institutional.ts");
+  const call = /consensusPanelHtml\(([^)]*)\) \+/.exec(src)?.[1];
+  assert.equal(call, "model.board, model.quarter", "the tab passes the board no row count");
+  /* and no band source derives a row count from a height (the sweep). The
+     Named moves' column fit (LD6) reads LAYOUT, in the client, through
+     `scripts/column-fit.ts` — never a pixel constant in a renderer. */
   const sources = productionSources();
-  assert.ok(Object.keys(sources).length > 50 && "pages/institutional/index.astro" in sources && "lib/notable-moves.ts" in sources, "the sweep reads the whole source tree");
+  assert.ok(Object.keys(sources).length > 50 && "lib/ui/signals-institutional.ts" in sources && "lib/notable-moves.ts" in sources, "the sweep reads the whole source tree");
   assert.deepEqual(heightDerivedCountProblems(sources), []);
-  // control: the withdrawn page line, re-planted, is caught by the sweep
-  const planted = { ...sources, "pages/institutional/index.astro": page.replace("{ filerHref: hrefOf }", "{ filerHref: hrefOf, compact: consensusPairedRows(leaders.rows.length) }") };
-  assert.deepEqual(heightDerivedCountProblems(planted), ["pages/institutional/index.astro: consensusPairedRows"]);
+  // control: the withdrawn line, re-planted, is caught by the sweep
+  const planted = { ...sources, "lib/ui/signals-institutional.ts": src.replace("model.board, model.quarter", "model.board, model.quarter, consensusPairedRows(leaders.rows.length)") };
+  assert.deepEqual(heightDerivedCountProblems(planted), ["lib/ui/signals-institutional.ts: consensusPairedRows"]);
 });
 
-test("CD-5: band I1 is Consensus (1.3fr, the primary) │ Conviction leaders (1fr); the M2 composition (Conviction primary, 1fr │ 1.3fr) fails", () => {
+test("CD-5 → signals-v4 LD6: the Institutional band is Named moves (1.6fr, the primary) │ Consensus above the leaders (1fr); the primary on the narrow side fails", () => {
   const css = baseStylesheet().replace(/\/\*[\s\S]*?\*\//g, "");
-  const conviction = newPositionLeadersHtml(LEADERS_FIVE as never, () => "top", "2026-03-31");
-  const consensus = consensusBoardHtml(BOARD as never, { filerHref });
-  const band = domOf(consensusConvictionBandHtml(consensus, conviction)).children[0]!;
-  assert.deepEqual(i1CompositionProblems(band, css), []);
+  const band = sigBand(signalsInstitutionalHtml(instModel(MOVES(4)), {}));
+  assert.deepEqual(sigCompositionProblems(band, css), []);
   assert.deepEqual(primaryProblems(band), []);
-  const fr = i1Fractions(css)!;
-  assert.ok(fr[0] > fr[1], "the primary (first) cell takes the wider fraction, which G9 requires at 1440");
-  // control: the M2 composition — Conviction the primary on the right …
-  const m2 = domOf(pairBandHtml("design-institutional-band design-consensus-band", consensus, conviction, { primary: "right" })).children[0]!;
-  assert.deepEqual(i1CompositionProblems(m2, css), ["primary: Conviction leaders (Consensus)"]);
-  // … and its grid, 1fr │ 1.3fr, are each caught
-  const m2Css = css.replace("grid-template-columns:minmax(0,1.3fr) minmax(0,1fr)", "grid-template-columns:minmax(0,1fr) minmax(0,1.3fr)");
-  assert.notEqual(m2Css, css, "the control replaced the I1 grid");
-  assert.deepEqual(i1CompositionProblems(band, m2Css), ["I1 grid 1fr │ 1.3fr (1.3fr │ 1fr, the primary first)"]);
+  assert.deepEqual(sigFractions(css), [1.6, 1]);
+  // control: the side column as the primary …
+  const html = signalsInstitutionalHtml(instModel(MOVES(4)), {});
+  assert.ok(html.includes('<section data-pair-primary class="panel sig-moves"'), "precondition: the Named moves carry the primary mark");
+  const flipped = domOf(html.replace('<section data-pair-primary class="panel sig-moves"', '<section class="panel sig-moves"').replace('<div class="sig-inst-side" id="inst-side">', '<div data-pair-primary class="sig-inst-side" id="inst-side">')).querySelector(".sig-inst-band")!;
+  assert.deepEqual(sigCompositionProblems(flipped, css), ["primary: Consensus + Conviction leaders (Named moves)"]);
+  // … and a grid that gives the side the wider fraction, are each caught
+  const swapped = css.replace(".sig-inst-band { grid-template-columns: minmax(0,1.6fr) minmax(0,1fr);", ".sig-inst-band { grid-template-columns: minmax(0,1fr) minmax(0,1.6fr);");
+  assert.notEqual(swapped, css, "the control replaced the band grid");
+  assert.deepEqual(sigCompositionProblems(band, swapped), ["band grid 1fr │ 1.6fr (the primary, first, the wider)"]);
 });
 
 /* M2 delta review: G9 exempts a COMPLETE primary (a Consensus board of one to
    three issuers ends early because it has no more rows), and reads that off
    the table's OWN count — so a complete board must carry it. */
-test("M2 delta (G9): every Consensus board carries its own count — a complete one a hidden shell (total ≤ shown, every row in its tbody), one holding rows back its bound — and the shell adds no visible word", () => {
+test("M2 delta (G9) → signals-v4 LD12: every Consensus board carries its own count — a complete one a hidden shell (total ≤ shown, every row in its list), one holding rows back its bound — and the shell adds no visible word", () => {
   const board = (n: number) => ({ ...BOARD, qualifying: n, rows: Array.from({ length: n }, (_, i) => ({ ...BOARD.rows[0]!, issuerKey: `k${i}`, issuer: `Issuer ${i}` })) });
   const countOf = (n: number) => {
-    const root = domOf(consensusBoardHtml(board(n) as never, { filerHref }));
-    const w = root.querySelector('.compact-disclosure[data-compact-for="inst-consensus-tbody"]');
-    const tbody = root.querySelector("#inst-consensus-tbody")!;
+    const root = domOf(consensusPanelHtml(board(n) as never, null));
+    const w = root.querySelector('.compact-disclosure[data-compact-for="consensus-list"]');
+    const list = root.querySelector("#consensus-list")!;
     return {
       root,
       count: w ? { total: Number(w.getAttribute("data-compact-total")), shown: Number(w.getAttribute("data-compact-shown")), hidden: w.hasAttribute("hidden") } : null,
-      rows: tbody.children.length,
-      held: tbody.children.filter((r) => r.hasAttribute("data-compact-extra")).length,
+      rows: list.children.length,
+      held: list.children.filter((r) => r.hasAttribute("data-compact-extra")).length,
+      collapsed: list.getAttribute("data-collapsed"),
     };
   };
   for (const n of [1, 3, 10]) {
     const c = countOf(n);
     assert.deepEqual(c.count, { total: n, shown: n, hidden: true }, `${n} issuers: the complete board's count, a hidden shell`);
-    assert.deepEqual([c.rows, c.held], [n, 0], `${n} issuers: every row in the tbody, none held`);
+    assert.deepEqual([c.rows, c.held, c.collapsed], [n, 0, null], `${n} issuers: every row in the list, none held`);
   }
   const cut = countOf(18);
   assert.deepEqual(cut.count, { total: 18, shown: 10, hidden: false }, "18 issuers: 10 shown, 8 held back");
-  assert.deepEqual([cut.rows, cut.held], [18, 8]);
+  assert.deepEqual([cut.rows, cut.held, cut.collapsed], [18, 8, "true"]);
+  // the held rows are hidden only while the list is collapsed: the one sanctioned data-row rule
+  const css = baseStylesheet().replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.match(css, /\.cs-list\[data-collapsed="true"\] > \[data-compact-extra\] \{ display: none; \}/);
   // the shell states nothing (the omission rule): no visible word is added
   const three = countOf(3).root;
   const shell = /<div class="compact-disclosure"[^>]*hidden>[\s\S]*?<\/button><\/div>/;
-  const html = consensusBoardHtml(board(3) as never, { filerHref });
+  const html = consensusPanelHtml(board(3) as never, null);
   assert.match(html, shell);
   assert.equal(visibleText(three).replace(/\s+/g, " "), visibleText(domOf(html.replace(shell, ""))).replace(/\s+/g, " "), "the shell adds no visible word");
-  // control: the M2 board (no shell when nothing is held) carried no count G9 could read
+  // control: without the shell a complete board carries no count G9 could read
   assert.equal(domOf(html.replace(shell, "")).querySelector(".compact-disclosure"), null, "control: without the shell a complete board has no count");
 });
 
@@ -503,7 +525,7 @@ test("CD-5 (T2.9): the canvas comparison holds I1's two heads to one line, as th
     measure — no primary, no narrow cap. */
 function allLinesBandProblems(band: MiniElement, want: readonly string[]): string[] {
   const out: string[] = [];
-  const got = band.children.map((c) => c.getAttribute("aria-label") ?? c.getAttribute("class") ?? "?");
+  const got = band.children.map((c) => cellName(c) || (c.getAttribute("class") ?? "?"));
   if (got.join(" | ") !== want.join(" | ")) out.push(`renders ${got.join(" | ") || "nothing"} (every line: ${want.join(" | ")})`);
   if (!band.children.every(isEmptyStateCell)) out.push("a cell is not an empty-state line");
   if (band.getAttribute("data-collapsed") !== "empty-state") out.push("not collapsed");
@@ -512,20 +534,21 @@ function allLinesBandProblems(band: MiniElement, want: readonly string[]): strin
 }
 
 test("M2F-D2: a band whose cells are BOTH empty-state lines renders both lines, collapsed, and is no measured pair", () => {
-  const emptyBoard = consensusBoardHtml({ ...BOARD, rows: [], qualifying: 0 } as never, { filerHref });
-  const none = newPositionLeadersHtml(LEADERS_NONE as never, () => "top", "2026-03-31");
+  /* signals-v4 M2: the two headed empty-state panels band I1 paired (the
+     empty board, the computed-zero leaders), now the Signals renderers,
+     through the pair primitive */
+  const emptyBoard = consensusPanelHtml({ ...BOARD, rows: [], qualifying: 0 } as never, null);
+  const none = convictionLeadersHtml(LEADERS_NONE as never, () => "top", "2026-03-31");
   const want = ["Consensus", "Conviction leaders"]; // M4: both are headed empty-state sections
-  const html = consensusConvictionBandHtml(emptyBoard, none);
+  const html = pairBandHtml("design-pair", emptyBoard, none, { primary: "left" });
   const band = domOf(html).children[0]!;
   assert.deepEqual(allLinesBandProblems(band, want), []);
   assert.deepEqual(bandCollapseProblems(band), []);
   assert.deepEqual(primaryProblems(band), []);
   assert.match(visibleText(band), /No issuer was moved by 3 or more notable managers/, "the Consensus line is stated");
-  assert.match(visibleText(band), /Zero is the computed answer/, "the Conviction line is stated");
-  // the same through the primitive with the primary on either side
-  for (const primary of ["left", "right"] as const) {
-    assert.deepEqual(allLinesBandProblems(domOf(pairBandHtml("design-pair", emptyBoard, none, { primary })).children[0]!, want), [], primary);
-  }
+  assert.match(visibleText(band), /Zero is the computed answer/, "the leaders' line is stated");
+  // the same with the primary on the other side
+  assert.deepEqual(allLinesBandProblems(domOf(pairBandHtml("design-pair", emptyBoard, none, { primary: "right" })).children[0]!, want), [], "right");
   // controls: each way the band could go wrong is caught
   const uncollapsed = domOf(html.replace(' data-collapsed="empty-state"', "")).children[0]!;
   assert.deepEqual(allLinesBandProblems(uncollapsed, want), ["not collapsed"], "control: the lines left as an uncollapsed pair");
@@ -701,14 +724,16 @@ test("C2-2: a value longer than a narrow figure holds is marked data-wide; the u
   assert.ok("unbounded — open bounds on both sides".length > 2 * LEDGER_VALUE_NARROW_MAX, "control: the phrase the value used to carry");
 });
 
-/* ---------- review R2-3: the Consensus add figure never reads as absence ---------- */
+/* ---------- review R2-3: the Top add figure (it was the Consensus add) never reads as absence ---------- */
 
-test("R2-3: a consensus add with no reviewed ticker shows its manager count, never \"—\"; only a quarter with none shows \"—\"", async () => {
+test("R2-3 (signals-v4 LD9: the Institutional tab's Top add): a top add with no reviewed ticker shows its manager count, never \"—\"; only a quarter with none shows \"—\"", async () => {
   const { consensusAddLedgerItem } = await import("../src/lib/notable-moves.ts");
   const row = BOARD.rows[0]!;
   const withTicker = consensusAddLedgerItem(row as never, "2026-03-31");
+  assert.equal(withTicker.label, "Top add");
   assert.equal(withTicker.value, "NVDA");
-  assert.match(withTicker.detail, /^Nvidia Corp · 3 notable managers opened it$/);
+  assert.match(withTicker.detail, /^3 notable managers opened it$/, "LD9: the ticker, then how many opened it");
+  assert.match(withTicker.noteHtml!, /^NVDA Nvidia Corp: the issuer the most notable managers opened/, "the issuer is named in the figure's note");
   const noTicker = consensusAddLedgerItem({ ...row, ticker: null } as never, "2026-03-31");
   assert.equal(noTicker.value, "3 managers", "a figure, not the absence dash");
   assert.match(noTicker.detail, /^Nvidia Corp · no reviewed ticker$/, "the filed name still leads the sub");
@@ -722,32 +747,35 @@ test("R2-3: a consensus add with no reviewed ticker shows its manager count, nev
   assert.notEqual(noTicker.value, none.value, "control: a name that qualified never reads like a quarter with none");
 });
 
-/* ---------- M2 delta review: a long Consensus-add sub makes its figure wide ---------- */
+/* ---------- M2 delta review: a long Top-add sub makes its figure wide ---------- */
 
-test("M2 delta (ledger sub): a Consensus add whose issuer name would wrap its sub to three lines in a narrow figure is data-wide; a sub that fits two stays narrow", async () => {
+test("M2 delta (ledger sub): a Top add whose issuer name would wrap its sub to three lines in a narrow figure is data-wide; a sub that fits two stays narrow", async () => {
   const { consensusAddLedgerItem } = await import("../src/lib/notable-moves.ts");
   const { ledgerSubLines, ledgerFigureWide, LEDGER_SUB_NARROW_CHARS } = await import("../src/lib/ui/shared.ts");
   const row = BOARD.rows[0]!;
-  const add = (issuer: string, newStakes: number): LedgerItem => consensusAddLedgerItem({ ...row, issuer, newStakes } as never, "2026-03-31");
+  /* signals-v4 LD9: the issuer leads the sub only where no reviewed ticker
+     maps the name (the value is then the manager count) */
+  const add = (issuer: string, newStakes: number): LedgerItem => consensusAddLedgerItem({ ...row, issuer, newStakes, ticker: null } as never, "2026-03-31");
   const figOf = (it: LedgerItem) => domOf(disclosureLedger([it], { scope: "t" })).querySelectorAll(".ledger-fig")[0]!;
-  // the reported name, and a longer real one
-  for (const [issuer, n] of [["MICROSOFT CORP", 8], ["BERKSHIRE HATHAWAY INC DEL", 12]] as const) {
+  // real long names
+  for (const [issuer, n] of [["BERKSHIRE HATHAWAY INC DEL", 12], ["TAIWAN SEMICONDUCTOR MFG LTD", 4]] as const) {
     const it = add(issuer, n);
-    assert.equal(it.value.length <= 10, true, `${issuer}: a short ticker value — only the sub can make it wide`);
+    assert.equal(it.value.length <= 11, true, `${issuer}: a short count value — only the sub can make it wide`);
     assert.ok(ledgerSubLines(it.detail) > 2, `${issuer}: "${it.detail}" takes ${ledgerSubLines(it.detail)} lines of ${LEDGER_SUB_NARROW_CHARS} characters`);
     assert.equal(figOf(it).hasAttribute("data-wide"), true, `${issuer}: the renderer marks the figure wide`);
   }
-  // the character-count rule: greedy, breaking at spaces — the Microsoft sub
-  // is 45 characters, within a flat 2 × 23, and still takes three lines
-  const msft = add("MICROSOFT CORP", 8).detail;
-  assert.equal(msft, "MICROSOFT CORP · 8 notable managers opened it");
+  // the character-count rule: greedy, breaking at spaces — a 45-character
+  // sub, within a flat 2 × 23, still takes three lines
+  const msft = "MICROSOFT CORP · 8 notable managers opened it";
   assert.ok([...msft].length <= 2 * LEDGER_SUB_NARROW_CHARS, "control: a flat length rule would call it narrow");
   assert.equal(ledgerSubLines(msft), 3);
+  assert.equal(ledgerFigureWide({ value: "MSFT", detail: msft }), true, "the rule reads the lines, not the length");
   assert.equal(ledgerSubLines("x".repeat(50)), 3, "a word longer than a line breaks every 23 characters");
   assert.equal(ledgerSubLines(""), 0);
   // controls: a sub that fits two lines stays NARROW — a short issuer, the
   // absence line, and the longest sub a route renders on the 20260817.1 build
-  assert.equal(figOf(add("NVIDIA CORP", 3)).hasAttribute("data-wide"), false, "NVIDIA CORP · 3 notable managers opened it: two lines");
+  assert.equal(figOf(add("NVIDIA CORP", 3)).hasAttribute("data-wide"), false, "NVIDIA CORP · no reviewed ticker: two lines");
+  assert.equal(figOf(consensusAddLedgerItem(row as never, "2026-03-31")).hasAttribute("data-wide"), false, "a ticker's sub, 3 notable managers opened it: two lines");
   assert.equal(figOf(consensusAddLedgerItem(null, "2026-03-31")).hasAttribute("data-wide"), false, "the absence sub fits two lines");
   for (const sub of ["await closed 13F periods · not simulated", "open on both sides · an interval", "1 withheld this build · 1 by design"]) {
     assert.equal(ledgerFigureWide({ value: "—", detail: sub }), false, sub);

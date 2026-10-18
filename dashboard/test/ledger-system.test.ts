@@ -1064,7 +1064,9 @@ test("C2-7: late-additions.css repeats no declaration for the same selector in t
   // controls: the deleted duplicates, re-planted, are each caught
   assert.ok(repeatedDeclarations(late + "\n@media print {\n .design-supplement::details-content { content-visibility:visible; display:block; }\n}").length > 0, "control: the duplicate print block");
   assert.ok(repeatedDeclarations(late + "\n@media (max-width: 720px) {\n  .site-search { width: 100%; }\n}").length > 0, "control: the duplicate fold search width");
-  assert.ok(repeatedDeclarations(late + "\n.design-institutional-band { grid-template-columns:minmax(0,1.3fr) minmax(0,1fr); }").length > 0, "control: the duplicate I1 grid");
+  /* signals-v4 M2: band I1's grid left with the band; the control re-plants
+     the Signals Institutional band's grid, the same mechanism */
+  assert.ok(repeatedDeclarations(late + "\n.sig-inst-band { grid-template-columns: minmax(0,1.6fr) minmax(0,1fr); }").length > 0, "control: the duplicate Institutional band grid");
   // no rule for a design class that no renderer or page emits (the retired reconciliation panel)
   const emitted = (cls: string): boolean => {
     const walk = (dir: string): boolean =>

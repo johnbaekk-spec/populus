@@ -118,10 +118,16 @@ for (const [file, route] of references) {
       expect(source.toLowerCase()).toContain(`background:${metrics.paper.toLowerCase()}`);
       expect(metrics.width).toBeLessThanOrEqual(metrics.viewport + 1);
       if (route === "/institutional/") {
-        // R14: named moves lead; the cluster board became the consensus board.
-        for (const title of ["Notable managers — latest named moves", "Filer directory", "Consensus", "Conviction leaders", "Recent activity"]) {
+        /* signals-v4 R17 (LD18): the named moves, Consensus and the leaders
+           moved to /signals/#institutional; the landing keeps the directory
+           and Recent activity, and points to the moved sections. */
+        for (const title of ["Filer directory", "Recent activity"]) {
           await expect(page.getByRole('heading', {name:title, exact:true})).toBeVisible();
         }
+        for (const gone of ["Notable managers — latest named moves", "Consensus", "Conviction leaders"]) {
+          await expect(page.getByRole('heading', {name:gone, exact:true})).toHaveCount(0);
+        }
+        await expect(page.locator('p.inst-moved a[href="/signals/#institutional"]')).toBeVisible();
       }
       if (route.includes('/members/')) {
         // R16: the empty annual/overlap frames are one planned line.
@@ -140,7 +146,9 @@ for (const [file, route] of references) {
         for (const title of ['Lead cards', 'Filings to read']) {
           await expect(page.getByRole('heading', {name:title, exact:true})).toBeVisible();
         }
-        const paneSwitch = page.locator('[data-pane-switch]');
+        /* signals-v4 M2: the Institutional tab has its own three-pane switch;
+           this one is the Congress panel's (Filings │ Hits) */
+        const paneSwitch = page.locator('#congress [data-pane-switch]');
         expect(await paneSwitch.isVisible(), 'the pane switch shows exactly where the band stacks').toBe(width <= 1080);
         if (width <= 1080) await paneSwitch.locator('button[aria-controls="signals-side"]').click();
         for (const title of ['Hit rate by family', 'Hits']) {
@@ -151,7 +159,10 @@ for (const [file, route] of references) {
           await expect(page.getByRole('heading', {name:gone, exact:true})).toHaveCount(0);
         }
         await expect(page.locator('#signal-watch, #signal-rules, #signal-rulebook, #signal-lag, .si-evidence-row, .si-hit-filter')).toHaveCount(0);
-        await expect(page.locator('main .page-head .ledger-fig')).toHaveCount(3);
+        /* signals-v4 LD9: one ledger group per tab; Congress's shows */
+        await expect(page.locator('main .page-head [data-tab-for="congress"] .ledger-fig')).toHaveCount(3);
+        for (const f of await page.locator('main .page-head [data-tab-for="congress"] .ledger-fig').all()) await expect(f).toBeVisible();
+        await expect(page.locator('main .page-head [data-tab-for="institutional"]')).toBeHidden();
         // the three lead cards show on the page, each with both dates
         const cards = page.locator('#lead-cards .si-card');
         await expect(cards).toHaveCount(3);
@@ -431,52 +442,30 @@ test('Member composition at 1440 (T2.3): chart, M1, transactions, M2, Planned li
   test.info().annotations.push({ type: 'chart', description: chart.line === null ? 'the window holds trades: plot drawn' : `empty window: ${chart.line}` });
 });
 
-test('Institutional composition at 1440 (T2.4): heading order, Recent activity full width, collapsed adds, the Consensus-add figure', async ({ page }) => {
+test('Institutional composition at 1440 (T2.4 → signals-v4 R17, LD18): the pointer, then the directory, then Recent activity full width; collapsed adds; three one-line figures; no band I1', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   expect((await page.goto('/institutional/'))?.status()).toBe(200);
-  /* the approved preview's order: notable managers → directory → Consensus │
-     Conviction → Recent activity (the pair's cells in either order) */
   const heads = await page.locator('main h2.section-h').evaluateAll((hs) => hs.filter((h) => h.checkVisibility()).map((h) => ({ text: h.textContent!.replace(/\s+/g, ' ').trim(), top: Math.round(h.getBoundingClientRect().top + scrollY) })));
   const at = (re: RegExp): number => heads.findIndex((h) => re.test(h.text));
-  const notable = at(/^Notable managers/), directory = at(/^Filer directory$/), consensus = at(/^Consensus$/), conviction = at(/^Conviction leaders$/), activity = at(/^Recent activity$/);
-  expect([notable, directory, consensus, conviction, activity].every((i) => i >= 0), `every band heading is present: ${heads.map((h) => h.text).join(' | ')}`).toBe(true);
-  expect(notable).toBeLessThan(directory);
-  expect(directory).toBeLessThan(Math.min(consensus, conviction));
-  expect(Math.max(consensus, conviction)).toBeLessThan(activity);
-  expect(heads[directory]!.top).toBeLessThan(Math.min(heads[consensus]!.top, heads[conviction]!.top));
-  expect(Math.max(heads[consensus]!.top, heads[conviction]!.top)).toBeLessThan(heads[activity]!.top);
+  const directory = at(/^Filer directory$/), activity = at(/^Recent activity$/);
+  expect([directory, activity].every((i) => i >= 0), `every band heading is present: ${heads.map((h) => h.text).join(' | ')}`).toBe(true);
+  expect(directory).toBeLessThan(activity);
+  expect(heads[directory]!.top).toBeLessThan(heads[activity]!.top);
+  for (const re of [/^Notable managers/, /^Consensus$/, /^Conviction leaders$/]) expect(at(re), `${re} moved to /signals/#institutional`).toBe(-1);
+  /* the one-line pointer sits between the provenance line and the directory */
+  const order = await page.evaluate(() => {
+    const top = (sel: string) => document.querySelector(sel)?.getBoundingClientRect().top ?? null;
+    return { prov: top('.design-provenance'), moved: top('p.inst-moved'), dir: top('#inst-managers-section') };
+  });
+  expect(order.prov !== null && order.moved !== null && order.dir !== null && order.prov < order.moved && order.moved < order.dir, JSON.stringify(order)).toBe(true);
+  await expect(page.locator('.design-consensus-band, #inst-consensus, #inst-notable-moves, .planned-line')).toHaveCount(0);
   /* Recent activity is full width, in no pair */
   const activityBand = await page.locator('main section', { has: page.locator('h2.section-h', { hasText: /^Recent activity$/ }) }).first().evaluate((s) => ({ inPair: !!s.closest('.design-band, .design-pair'), width: s.getBoundingClientRect().width, main: document.querySelector('main')!.getBoundingClientRect().width }));
   expect(activityBand.inPair, 'Recent activity is not inside a .design-band or .design-pair').toBe(false);
   /* "Recently added issuers" stays in its collapsed disclosure */
   const adds = await page.locator('#inst-adds-section').evaluate((s) => { const d = s.closest('details'); return { inDetails: !!d, open: !!d?.open }; });
   expect(adds).toEqual({ inDetails: true, open: false });
-  /* band I1 (CD-5): Consensus (1.3fr, the primary) │ Conviction leaders (1fr),
-     or collapsed (D-8) with the empty line under the other cell, which is
-     then the primary — no primary when both cells are lines (M2F-D2) */
-  const i1 = await page.evaluate(() => {
-    const band = document.querySelector('.design-consensus-band')!;
-    const cells = Array.from(band.children).filter((c) => c.checkVisibility()).map((c) => ({
-      h: c.querySelector('h2')?.textContent?.trim(), top: c.getBoundingClientRect().top, bottom: c.getBoundingClientRect().bottom,
-      width: c.getBoundingClientRect().width, primary: c.hasAttribute('data-pair-primary'),
-      line: c.hasAttribute('data-empty-state') || c.classList.contains('design-unavailable-line'),
-    }));
-    return { collapsed: band.getAttribute('data-collapsed'), cells };
-  });
-  expect(i1.cells.map((c) => c.h).sort()).toEqual(['Consensus', 'Conviction leaders']);
-  if (i1.collapsed === 'empty-state') {
-    expect(i1.cells[1]!.top, 'the empty cell sits under the other').toBeGreaterThanOrEqual(i1.cells[0]!.bottom - 1);
-    expect(i1.cells.map((c) => c.primary), 'the content cell is the primary (none when both are lines)').toEqual(i1.cells.every((c) => c.line) ? [false, false] : [true, false]);
-    test.info().annotations.push({ type: 'band I1', description: `collapsed: ${i1.cells.map((c) => `${c.h}${c.line ? ' (line)' : ''}`).join(' over ')}` });
-  } else {
-    expect(Math.abs(i1.cells[0]!.top - i1.cells[1]!.top)).toBeLessThanOrEqual(2);
-    expect(i1.cells.map((c) => c.h), 'Consensus leads').toEqual(['Consensus', 'Conviction leaders']);
-    expect(i1.cells.map((c) => c.primary), 'Consensus is the primary').toEqual([true, false]);
-    expect(i1.cells[0]!.width / i1.cells[1]!.width, '1.3fr │ 1fr').toBeCloseTo(1.3, 1);
-  }
-  /* the ledger: every value on one line (R15), and the Consensus-add value is
-     the TICKER with the issuer in its sub — or, with no qualifying name, "—"
-     with an absence statement */
+  /* the ledger: three figures, every value on one line (R15) */
   const figs = await page.locator('main dl.design-ledger > .ledger-fig').evaluateAll((fs) => fs.map((f) => {
     const v = f.querySelector('.ledger-value')!;
     const rg = document.createRange();
@@ -484,22 +473,74 @@ test('Institutional composition at 1440 (T2.4): heading order, Recent activity f
     const lines = new Set(Array.from(rg.getClientRects()).filter((q) => q.width > 0).map((q) => Math.round(q.top)));
     return { label: (f.querySelector('dt') as HTMLElement).innerText.trim(), value: v.textContent!.trim(), sub: f.querySelector('.ledger-sub')?.textContent?.trim() ?? '', lines: lines.size };
   }));
+  expect(figs.map((f) => f.label)).toEqual(['FILERS TRACKED', 'TRACKED VALUE', 'NOTABLE MANAGERS']);
   for (const f of figs) expect(f.lines, `${f.label}: the value is one line`).toBe(1);
-  const add = figs.find((f) => f.label === 'CONSENSUS ADD');
-  expect(add, 'the ledger carries the Consensus add figure').toBeTruthy();
-  if (add!.value === '—') {
-    expect(add!.sub, 'no qualifying name: the sub states the absence').toMatch(/^no\b/i);
-    test.info().annotations.push({ type: 'consensus-add', description: `the board is empty on this build: "—" / "${add!.sub}"` });
-  } else {
-    expect(add!.value, 'the value is a ticker, never the issuer name').toMatch(/^[A-Z][A-Z0-9.\-]{0,9}$/);
-    expect(add!.sub.length, 'the issuer name leads the sub').toBeGreaterThan(add!.value.length);
-    expect(add!.sub.startsWith(add!.value), 'the sub is the issuer, not the ticker again').toBe(false);
-  }
   /* control for the one-line rule: a forced two-line value is caught */
   await page.addStyleTag({ content: '.ledger-value { white-space: normal !important; word-break: break-all !important; width: 1ch !important; }' });
   const forced = await page.locator('main dl.design-ledger .ledger-value').first().evaluate((v) => { const rg = document.createRange(); rg.selectNodeContents(v); return new Set(Array.from(rg.getClientRects()).filter((q) => q.width > 0).map((q) => Math.round(q.top))).size; });
   expect(forced, 'control: a wrapped value measures more than one line').toBeGreaterThan(1);
 });
+test('signals-v4 T2.4 / T2.6: /signals/#institutional at 1440 — the tab selected, its three one-line figures (the Top add a ticker, a count, or a stated absence), the band Named moves │ Consensus above the leaders, or collapsed to the side column with the stated zero under it', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  expect((await page.goto('/signals/#institutional'))?.status()).toBe(200);
+  await expect(page.locator('#tab-institutional')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#institutional')).toBeVisible();
+  await expect(page.locator('#congress')).toBeHidden();
+  for (const title of ['Lead cards', 'Named moves', 'Consensus', 'Conviction leaders']) {
+    await expect(page.locator('#institutional').getByRole('heading', { name: title, exact: true })).toBeVisible();
+  }
+  const figs = await page.locator('main [data-tab-for="institutional"] .ledger-fig').evaluateAll((fs) => fs.map((f) => {
+    const v = f.querySelector('.ledger-value')!;
+    const rg = document.createRange();
+    rg.selectNodeContents(v);
+    const lines = new Set(Array.from(rg.getClientRects()).filter((q) => q.width > 0).map((q) => Math.round(q.top)));
+    return { label: (f.querySelector('dt') as HTMLElement).innerText.trim(), value: v.textContent!.trim(), sub: f.querySelector('.ledger-sub')?.textContent?.trim() ?? '', lines: lines.size, visible: f.checkVisibility() };
+  }));
+  expect(figs.map((f) => f.label)).toEqual(['MOVES', 'TOP ADD', 'QUARTER']);
+  for (const f of figs) {
+    expect(f.visible, `${f.label} shows on its tab`).toBe(true);
+    expect(f.lines, `${f.label}: the value is one line`).toBe(1);
+  }
+  const add = figs[1]!;
+  if (add.value === '—') {
+    expect(add.sub, 'no qualifying name: the sub states the absence').toMatch(/^no\b/i);
+    test.info().annotations.push({ type: 'top-add', description: `no Consensus on this build: "—" / "${add.sub}"` });
+  } else if (/ managers?$/.test(add.value)) {
+    expect(add.sub, 'a name no reviewed ticker maps: its filed name leads the sub').toMatch(/ · no reviewed ticker$/);
+  } else {
+    expect(add.value, 'the value is a ticker, never the issuer name').toMatch(/^[A-Z][A-Z0-9.\-]{0,9}$/);
+    expect(add.sub).toMatch(/^\d[\d,]* notable managers? opened it$/);
+  }
+  /* the band (LD6): a pair, Named moves the wider primary on the left — or,
+     where the Named moves are their one stated line (this build's registry
+     marks no notable manager), collapsed with the line under the side column */
+  const band = await page.evaluate(() => {
+    const b = document.querySelector('#institutional .sig-inst-band')!;
+    const cells = Array.from(b.children).filter((c) => c.checkVisibility()).map((c) => ({
+      id: c.id, top: c.getBoundingClientRect().top, bottom: c.getBoundingClientRect().bottom, width: c.getBoundingClientRect().width, left: c.getBoundingClientRect().left,
+      primary: c.hasAttribute('data-pair-primary'), line: c.hasAttribute('data-empty-state'),
+    }));
+    return { collapsed: b.getAttribute('data-collapsed'), cells, align: getComputedStyle(b).alignItems };
+  });
+  expect(band.align, 'the cells do not stretch (LD6)').toBe('start');
+  if (band.collapsed === 'empty-state') {
+    expect(band.cells.map((c) => c.id)).toEqual(['inst-side', 'named-moves']);
+    expect(band.cells[1]!.top, 'the stated zero sits under the side column').toBeGreaterThanOrEqual(band.cells[0]!.bottom - 1);
+    expect(band.cells.map((c) => c.primary)).toEqual([true, false]);
+    test.info().annotations.push({ type: 'institutional band', description: 'collapsed: the Named moves are the stated zero on this build' });
+  } else {
+    expect(band.cells.map((c) => c.id)).toEqual(['named-moves', 'inst-side']);
+    expect(Math.abs(band.cells[0]!.top - band.cells[1]!.top), 'side by side').toBeLessThanOrEqual(2);
+    expect(band.cells[0]!.width, 'the Named moves are the wider primary').toBeGreaterThan(band.cells[1]!.width);
+    expect(band.cells.map((c) => c.primary)).toEqual([true, false]);
+  }
+  /* every move row carries its 13F receipt outside its summary, and its filed date */
+  const rows = await page.locator('#mv-list article.mv-item').evaluateAll((as) => as.map((a) => ({ src: !!a.querySelector(':scope > a.mv-src, :scope > .mv-src.c-muted'), inSummary: !!a.querySelector('summary a, summary button'), filed: !!a.querySelector('.mv-fil time') })));
+  expect(rows.every((r) => r.src && !r.inSummary && r.filed), 'receipt beside, never inside, the summary; the filed date on every row').toBe(true);
+  /* the §5 note ships with the tab's 13F data */
+  await expect(page.locator('#institutional #inst-data-note')).toHaveCount(1);
+});
+
 
 test('Filer composition at 1440 (T2.5): parts in DOM order = visual order; the period roots', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -681,8 +722,6 @@ const WHY = {
   flags: "the canvas draws no flag column; Flags renders by presence (R12)",
   ticker: "the canvas's hit subject carries no ticker column; the route states the ticker in its own (R26, T2.6)",
   paper: "a paper filing's kind word: the canvas draws no paper row (M1: the feed keeps its paper rows, D1)",
-  conviction: "the canvas draws Conviction leaders as a bar list, not a table: the route's table is held to band I1's table spec — the Cluster board's header, body, row and gap roles",
-  i1: "coordinator decision CD-5: band I1 is Consensus (1.3fr, the primary) │ Conviction leaders (1fr) as the approved preview draws it; the canvas draws the Cluster board beside Recent activity and Conviction leaders beside Sector rotation, two bands, so its baseline gap between them measures nothing",
   netbar: "the member ranking's NET FLOW cell is its interval bar with the range as screen-reader text (M1 C-4): no visible text run has a role",
 } as const;
 const CANVAS_CASES: CanvasCase[] = [
@@ -710,8 +749,6 @@ const CANVAS_CASES: CanvasCase[] = [
     tables: [
       { label: "Recent activity", selector: ".design-activity table.etable" },
       { label: "Filer directory", selector: "#inst-managers-section table.etable" },
-      { label: "Consensus", selector: "#inst-consensus table.etable" },
-      { label: "Conviction leaders", selector: ".design-newpositions table.etable" },
     ],
     map: {
       ledger: true, cards: false,
@@ -721,20 +758,14 @@ const CANVAS_CASES: CanvasCase[] = [
           empty: "the notable feed lists the curated managers' changes, and the bounded build carries no manager registry (0 of 9,451 filers typed): its one row is the stated empty line",
         },
         { canvas: "Filer directory", route: "Filer directory", roleDeviation: { VALUE: "table.role.number", "LATEST NOTABLE": "table.role.notable.m3" } },
-        /* Consensus is I1's primary LEFT cell (CD-5), as the Cluster board is
-           the canvas's left cell: its gutters compare (28px, D-11) */
-        { canvas: "Cluster board", route: "Consensus", band: "design-consensus-band" },
-        /* review Q2-8: the Conviction table is measured too, on I1's table spec */
-        {
-          canvas: "Cluster board", route: "Conviction leaders", band: "design-consensus-band", minCompared: 0,
-          noGutters: "the Cluster board is the canvas's LEFT cell (28px, D-11); Conviction is I1's right side cell (1fr, CD-5), and full width when I1 collapses — its gutters are G10's (band edges ± --gutter)",
-          unmatched: { "#": WHY.conviction, FILER: WHY.conviction, "": WHY.conviction, "LARGEST NEW": WHY.conviction, "≥2% / NEW": WHY.conviction, gutters: WHY.conviction },
-        },
+        /* signals-v4 M2 (R17): the canvas's Cluster board and Conviction
+           leaders bands have no twin on this route any more — Consensus and
+           the leaders moved to /signals/#institutional, where they follow the
+           approved Signals v4 mock, not this canvas — so they are not
+           compared here, never faked. */
       ],
-      heads: [{ canvas: "Recent activity", route: "Recent activity" }, { canvas: "Conviction leaders", route: "Conviction leaders" }, { canvas: "Cluster board", route: "Consensus" }],
-      /* band I1 (review Q2-8, CD-5): its two heads on one line, as the preview
-         draws them, unless the pair collapsed */
-      pairs: [{ canvas: ["Cluster board", "Conviction leaders"], route: ["Consensus", "Conviction leaders"], preview: WHY.i1 }],
+      heads: [{ canvas: "Recent activity", route: "Recent activity" }],
+      pairs: [],
       segs: [{ canvas: "All|Tech|L/S|Multi|Value", route: "notable|…" }],
     },
   },

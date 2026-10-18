@@ -89,6 +89,8 @@ import {
 import { COMMITTEE_DIRECT_SOURCE, COMMITTEE_DIRECT_VERSION, DIRECT_COMMITTEE_NAMES, DIRECT_SIC, directRangesText } from "../committee-direct.ts";
 import { SIGNAL_THRESHOLDS } from "../signal-thresholds.ts";
 import { disclosureLedger, pairBandHtml } from "./shared.ts";
+import { institutionalLedgerHtml, signalsInstitutionalHtml, type SignalsInstitutional } from "./signals-institutional.ts";
+import { BROAD_ACCOUNT_NAMES, CONGRESS_DETAIL_LINES, QUARTER_ENDS_TEXT } from "../congress-quarter.ts";
 
 /* ================================================================================
    D-2 — /signals surfaces. Every signal renders its EXACT rule, its magnitude
@@ -596,6 +598,10 @@ export interface SignalsPageDeps {
   /** the build's triage (`getTriage()`); absent or null → the page states
       that this view does not carry it, never an empty table */
   triage?: TriageResult | null;
+  /** signals-v4 M2 (LD1, LD2): the Institutional tab's model
+      (`getSignalsInstitutional()`); absent or null → the tab states that this
+      view does not carry it */
+  institutional?: SignalsInstitutional | null;
 }
 
 /** Inputs of the lag distribution (Methodology `#signal-lag`). */
@@ -1167,6 +1173,37 @@ function triageHtml(triage: TriageResult | null, artifact: SignalArtifact, ctx: 
   );
 }
 
+/* ---------- signals-v4 LD10: one Congress trade line ---------- */
+
+/** The ONE renderer of a Congress trade line outside the triage row: the
+    Named moves' Congress side and the Consensus detail (M2), Overlap and the
+    Playbooks "Triggers now" rows (M3). Every field always renders: the ticker
+    (with `ticker: true`), the member (linked where a page exists) with party
+    and state, the owner word (or "owner not stated"), the BUY/SELL chip, the
+    range, the trade date → the filed date with the lag, and the receipt. The
+    honesty classes are the row's own (`.owner-note`, `.si-row-traded`,
+    `.si-row-filed`, `.si-row-src`) and the range's `.cl-amt`, so the fold
+    sweep binds them here too. */
+export function congressLineHtml(t: TxnRow, ctx: RenderCtx, opts: { ticker?: boolean } = {}): string {
+  const side = sideLabel(t.side, t.flags);
+  const lag = lagOf(t);
+  const who = t.bioguide ? `<a href="${memberHrefFor(t.bioguide, ctx)}">${esc(t.name)}</a>` : esc(t.name);
+  const dates = t.traded
+    ? `<span class="si-row-traded">traded <time datetime="${esc(t.traded)}">${esc(t.traded)}</time></span> → <span class="si-row-filed">filed <time datetime="${esc(t.filed)}">${esc(t.filed)}</time></span>` +
+      (lag != null ? ` · <span class="${lag > 45 ? "si-late" : "si-lag"}">${fmtInt(lag)}d</span>` : "")
+    : `<span class="si-row-traded">trade date not disclosed</span> · <span class="si-row-filed">filed <time datetime="${esc(t.filed)}">${esc(t.filed)}</time></span>`;
+  return (
+    `<li class="cl-line">` +
+    (opts.ticker ? `<span class="mono-ticker cl-tk">${esc(t.ticker ?? "no ticker")}</span>` : "") +
+    `<span class="cl-who">${who} <span class="aff ${partyClass(t.party)}">${esc(affTextOf(t))}</span> · ${ownerWordHtml(t.owner)}</span>` +
+    `<span class="si-chip si-side-${side.cls}">${esc(side.text)}</span>` +
+    `<span class="cl-amt">${esc(amountText(t))}</span>` +
+    `<span class="cl-dates">${dates}</span>` +
+    `<span class="si-row-src cl-src">${signalReceiptHtml(t.doc, t.chamber)}</span>` +
+    `</li>`
+  );
+}
+
 /* ---------- R11: the lead cards ---------- */
 
 function cardFactsHtml(p: CardPick, ctx: RenderCtx): string {
@@ -1292,7 +1329,21 @@ export function paneSwitchHtml(panes: readonly PaneSpec[], name = "Show"): strin
 
 /* ---------- R10: the head and its "How signals work" note (LD9) ---------- */
 
-function howSignalsWorkHtml(artifact: SignalArtifact, superseded: number, unevaluated: number): string {
+/** The "How signals work" tip (LD9): v3's nine sentences, unchanged, then one
+    paragraph per tab as each lands — Institutional from M2. */
+function howSignalsWorkHtml(artifact: SignalArtifact, superseded: number, unevaluated: number, inst: SignalsInstitutional | null): string {
+  return (
+    `<span class="si-tip-p">${congressHowHtml(artifact, superseded, unevaluated)}</span>` +
+    `<span class="si-tip-p"><strong>Institutional</strong> — ${esc(
+      "13F filings are quarter-end, long-only snapshots filed up to 45 days after the quarter — never current holdings. Exits are inferred from absence in the next filing." +
+        (inst && inst.present
+          ? ` This build holds 13F filings received through ${inst.latestFiled ?? "an unstated date"}; the newest closed quarter is ${inst.period ?? "not yet available"}.`
+          : ""),
+    )}</span>`
+  );
+}
+
+function congressHowHtml(artifact: SignalArtifact, superseded: number, unevaluated: number): string {
   const withheld = artifact.withheld;
   const parts = [
     "A signal is a fact about a filing, not a forecast: no returns are computed. Never used: prices, returns, intent.",
@@ -1345,7 +1396,10 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
   const listed = active.filter(signalIsListedStock);
   const triage = d.triage ?? null;
 
-  /* --- R10: exactly three figures --- */
+  const inst = d.institutional ?? null;
+
+  /* --- R10 / LD9: exactly three figures per tab; the selected tab's group
+     shows (`tabs.ts` toggles `[data-tab-for]`), Congress without script --- */
   const ledger = disclosureLedger([
     { label: "Hits", value: fmtInt(active.length), detail: `${fmtInt(listed.length)} in listed stocks`, subKind: "count", tone: "green" },
     triage
@@ -1357,16 +1411,30 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
   const withheld = artifact.withheld
     .map((w) => withheldHtml(w, unevaluated.filter((s) => s.kind === w.kind).length))
     .join("\n");
-  const how = noteFromHtml(howSignalsWorkHtml(artifact, superseded.length, unevaluated.length), { scope: "signals-head" }, "how", { trigger: "mark", name: "How signals work" });
+  const how = noteFromHtml(howSignalsWorkHtml(artifact, superseded.length, unevaluated.length, inst), { scope: "signals-head" }, "how", { trigger: "mark", name: "How signals work" });
   const listedHits = hitsView(sortHits(active), DEFAULT_HIT_FILTER).hits;
+  /* LD8: the tabs. Every panel renders and shows without script; `tabs.ts`
+     selects one. The scroll region is the ROLE-LESS wrapper, so the tablist
+     keeps its role and name at every width. */
+  const tab = (id: string, name: string, n: string | null): string =>
+    `<a class="tk-tab sig-tab" role="tab" id="tab-${id}" href="#${id}" aria-controls="${id}">${esc(name)}${n === null ? "" : ` <span class="tk-tab-n">${esc(n)}</span>`}</a>`;
+  const tabs =
+    `<div class="sig-tabs-scroll" data-scroll-region="Signal tabs · scroll sideways">` +
+    `<div class="tk-tabs sig-tabs" role="tablist" aria-label="Signal sources">` +
+    tab("congress", "Congress", fmtInt(active.length)) +
+    tab("institutional", "Institutional", inst && inst.present && inst.period !== null ? fmtInt(inst.moves.length) : null) +
+    `</div></div>`;
 
   return (
     `<div class="page-head">` +
     `<div class="page-head-copy"><div class="kicker">Public record / Signals · rule-based · no price data</div>` +
-    `<div class="page-title-row"><h1 class="page-title">Congress signals</h1>${how}</div>` +
-    `<p class="page-lede">What stands out in Congress trades, each against the filer's own record.</p></div>` +
-    ledger +
+    `<div class="page-title-row"><h1 class="page-title">Signals</h1>${how}</div>` +
+    `<p class="page-lede">What stands out in Congress trades and 13F moves.</p></div>` +
+    `<div class="sig-ledger" data-tab-for="congress">${ledger}</div>` +
+    `<div class="sig-ledger" data-tab-for="institutional" hidden>${institutionalLedgerHtml(inst)}</div>` +
     `</div>` +
+    tabs +
+    `<section class="tk-panel sig-panel" role="tabpanel" id="congress" aria-labelledby="tab-congress">` +
     leadCardsHtml(triage, ctx) +
     /* LD7: where the band stacks (≤1080px) the client shows ONE pane at a time */
     paneSwitchHtml([
@@ -1381,7 +1449,11 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
       { primary: "left" },
     ) +
     footLinksHtml(superseded.length) +
-    withheld
+    withheld +
+    `</section>` +
+    `<section class="tk-panel sig-panel" role="tabpanel" id="institutional" aria-labelledby="tab-institutional" data-quarter="${esc(inst?.period ?? "")}">` +
+    signalsInstitutionalHtml(inst, ctx) +
+    `</section>`
   );
 }
 
@@ -1406,6 +1478,30 @@ export function signalsRankingHtml(): string {
     li(`<strong>Lead line and order.</strong> A row's meter is the strongest over its lines. Its lead line has the strongest meter, then the highest sum, then is not an exchange, then has the highest lower bound. ${esc(TIER_LABELS.stands)} and ${esc(TIER_LABELS.look)} sort by the count of strong meters, the sum, the lead lower bound and the filed date; ${esc(TIER_LABELS.routine)} by filed date.`) +
     li(`<strong>Reason sentence.</strong> Generated from the row's facts by fixed templates, without pronouns, at most ${SENTENCE_MAX} characters.`) +
     li(`<strong>Lead cards.</strong> From the ranked listed-stock lines. Committee: direct matches before broad, then the lower bound, then the filed date. Largest buy and sell, own record: filers with at least ${RECORD_MIN_PRIOR} prior disclosures spanning ${RECORD_MIN_SPAN_DAYS} days or more, lines of at least $${fmtInt(RECORD_MIN_LOW)}, ranked by brackets above the filer's largest prior disclosure; absolute: by lower bound, then filed date.`) +
+    `</ul>` +
+    `</section>`
+  );
+}
+
+/** Methodology `#signals-congress-column` (signals-v4 R27, LD10): the
+    Congress-quarter join behind the Institutional tab's Congress column —
+    the quarter, the lines, the sides, the ticker comparison and the
+    broad-account rule, every constant read from `congress-quarter.ts`. */
+export function signalsCongressColumnHtml(): string {
+  const li = (s: string): string => `<li>${s}</li>`;
+  return (
+    `<section class="si-method" id="signals-congress-column" aria-labelledby="signals-congress-column-h">` +
+    `<h3 class="section-h" id="signals-congress-column-h">The Congress column on the Institutional tab</h3>` +
+    `<p class="metho-body">Every row of the Named moves and every Consensus row on <a href="/signals/#institutional">/signals</a> counts the members of Congress who traded the same name, ` +
+    `on the same side, inside the 13F quarter. It is a co-occurrence in public filings — never coordination, never intent.</p>` +
+    `<ul class="si-method-list">` +
+    li(`<strong>Quarter.</strong> The 13F period must be a calendar quarter end (${QUARTER_ENDS_TEXT}); otherwise no line is joined and the tab says so. The Congress window is that quarter by trade date, inclusive: the first day of its first month through the quarter end. Filed dates are not bounded: every line the build knows counts.`) +
+    li(`<strong>Lines.</strong> Rows without a date anomaly, traded inside the quarter, a listed stock as filed (the House Clerk's ST or the Senate's Stock — never inferred from an asset's name), with a ticker, on a purchase or a sale; a partial sale counts as a sale. Exchanges and unparsed sides are left out.`) +
+    li(`<strong>Sides.</strong> A new stake or an add is matched with purchases; a trim or an exit with sales. A Consensus row and the Consensus card count both sides.`) +
+    li(`<strong>Tickers.</strong> Compared in the SEC spelling (upper case, "." read as "-"), so BRK.B meets BRK-B, while GOOG and GOOGL stay distinct. A 13F name that no reviewed ticker maps joins nothing, and says so.`) +
+    li(`<strong>Members.</strong> Each counted once, by congressional identifier, or by the filed name when none is on record.`) +
+    li(`<strong>Broad accounts.</strong> A member who traded more than ${fmtInt(BROAD_ACCOUNT_NAMES)} distinct tickers in the quarter matches almost any name, so the column does not count them; its tip names each one with that count. Where only broad accounts traded a name, the row, its opened body, the Consensus row, the Consensus card and the name's detail say so — never "none" — and name them; they are still not counted.`) +
+    li(`<strong>Detail.</strong> An opened row lists at most ${fmtInt(CONGRESS_DETAIL_LINES)} lines per side, each with its range, both dates and its receipt; the rest are on the ticker page.`) +
     `</ul>` +
     `</section>`
   );

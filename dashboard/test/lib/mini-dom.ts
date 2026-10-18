@@ -44,6 +44,9 @@ export class MiniElement {
   /** text nodes are kept as siblings-in-order so textContent is faithful */
   nodes: (MiniElement | string)[] = [];
   private listeners = new Map<string, ((ev?: unknown) => void)[]>();
+  /** listeners added with `{ capture: true }` (or `true`): an event that does
+      not bubble (`toggle`) still reaches them on its way down to its target */
+  private captureListeners = new Map<string, ((ev?: unknown) => void)[]>();
 
   constructor(tagName: string, attrs: Map<string, string> = new Map()) {
     this.tagName = tagName.toLowerCase();
@@ -67,6 +70,11 @@ export class MiniElement {
 
   get id(): string {
     return this.getAttribute("id") ?? "";
+  }
+
+  /** the parent element (null at the document's root element's parent) */
+  get parentElement(): MiniElement | null {
+    return this.parent;
   }
 
   /** `hidden` is a REFLECTED property: the SSR bytes carry it as an attribute
@@ -196,10 +204,12 @@ export class MiniElement {
 
   /* ---------- events ---------- */
 
-  addEventListener(type: string, fn: (ev?: any) => void): void {
-    const list = this.listeners.get(type) ?? [];
+  addEventListener(type: string, fn: (ev?: any) => void, opts?: boolean | { capture?: boolean }): void {
+    const capture = opts === true || (typeof opts === "object" && opts?.capture === true);
+    const map = capture ? this.captureListeners : this.listeners;
+    const list = map.get(type) ?? [];
     list.push(fn);
-    this.listeners.set(type, list);
+    map.set(type, list);
   }
   click(): void {
     for (const fn of this.listeners.get("click") ?? []) fn();
@@ -224,7 +234,24 @@ export class MiniElement {
       every re-render can look correct to a click test (an odd number of
       toggles nets one), so "attached exactly once" is asserted by count. */
   listenerCount(type: string): number {
-    return this.listeners.get(type)?.length ?? 0;
+    return (this.listeners.get(type)?.length ?? 0) + (this.captureListeners.get(type)?.length ?? 0);
+  }
+
+  /** A reader's click on this `<summary>`, as a browser runs it: the click
+      bubbles (`bubbleClick`), then its default action toggles the parent
+      `<details>` (`toggleDetails`), which fires `toggle` — so an island that
+      listens for the opening is exercised through the event, never by a test
+      calling the island's handler itself (codex M2 round 2, F3). */
+  activate(): void {
+    this.bubbleClick();
+    if (this.tagName === "summary" && this.parent?.tagName === "details") toggleDetails(this.parent);
+  }
+
+  /** internal: deliver `ev` to this element's listeners of `type` — the
+      capture-phase ones only (`capture`), or every one (at the target) */
+  deliver(type: string, ev: unknown, phase: "capture" | "target"): void {
+    for (const fn of [...(this.captureListeners.get(type) ?? [])]) fn(ev);
+    if (phase === "target") for (const fn of [...(this.listeners.get(type) ?? [])]) fn(ev);
   }
 
   /** internal: used by the parser */
@@ -234,6 +261,36 @@ export class MiniElement {
       n.parent = this;
       this.children.push(n);
     }
+  }
+}
+
+/** A `<details>` opened or closed the way a browser does it on a summary
+    click: the `open` attribute flips; opening one of a `name` group closes
+    the group's other open member (the exclusive accordion); each change fires
+    a NON-bubbling `toggle` ({ type, target, oldState, newState }) — capture
+    listeners on the ancestors, top down, then the target's own. */
+export function toggleDetails(details: MiniElement): void {
+  const opening = !details.hasAttribute("open");
+  const changes: [MiniElement, boolean][] = [];
+  const group = details.getAttribute("name");
+  if (opening && group) {
+    let root: MiniElement = details;
+    while (root.parent) root = root.parent;
+    for (const other of root.querySelectorAll(`details[name="${group}"]`)) if (other !== details && other.hasAttribute("open")) changes.push([other, false]);
+  }
+  changes.push([details, opening]);
+  /* the attributes change first; the `toggle` events are queued and run
+     after, in order — so a listener reads the group's final state */
+  for (const [d, open] of changes) {
+    if (open) d.setAttribute("open", "");
+    else d.removeAttribute("open");
+  }
+  for (const [d, open] of changes) {
+    const ev = { type: "toggle", target: d, oldState: open ? "closed" : "open", newState: open ? "open" : "closed" };
+    const path: MiniElement[] = [];
+    for (let n = d.parent; n; n = n.parent) path.unshift(n);
+    for (const n of path) n.deliver("toggle", ev, "capture");
+    d.deliver("toggle", ev, "target");
   }
 }
 

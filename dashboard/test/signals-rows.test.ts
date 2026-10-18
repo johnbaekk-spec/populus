@@ -16,7 +16,7 @@ import { signalsBody, triageRowHtml } from "../src/lib/ui/index.ts";
 import { tickerOnSignalsHtml, triageRowId } from "../src/lib/ui/signals.ts";
 import { buildTriage, type TriageResult } from "../src/lib/signal-triage.ts";
 import type { SignalArtifact } from "../src/lib/signals.ts";
-import { hashTargetId, initPaneSwitches, initRowLinks, revealHash, revealRow, STACKED_QUERY } from "../src/scripts/signals-client.ts";
+import { hashTargetId, initPaneSwitches, initRowLinks, revealHash, revealTarget, STACKED_QUERY } from "../src/scripts/signals-client.ts";
 import { loadTriageFixture } from "./lib/triage-fixture.ts";
 import { installDom, MiniElement } from "./lib/mini-dom.ts";
 
@@ -199,8 +199,11 @@ test("signals-v4 T1.5 (LD5): a hashchange to a row id opens that row's <details>
     assert.equal(doc.getElementById("triage")!.hasAttribute("hidden"), false, "its pane is selected");
     assert.ok(open().includes(href.slice(1)), "the card's row opens");
     assert.equal((globalThis as unknown as { location: { hash: string } }).location.hash, href, "the hash is recorded");
-    // a hash naming nothing that is a row opens nothing
-    assert.equal(revealRow(doc.getElementById("hits") as never), null);
+    /* a target that is not a row opens no row (signals-v4 M2: `revealTarget`,
+       the one reveal sequence, absorbed M1's `revealRow`) */
+    const before = open();
+    assert.equal(revealTarget(doc.getElementById("hits") as never)?.getAttribute("id"), "hits", "it is revealed");
+    assert.deepEqual(open(), before, "and no row opens");
   } finally {
     m.restore();
   }

@@ -35,9 +35,12 @@ import {
   congressRankingSection,
   addsSectionHtml,
   hitRowHtml,
-  consensusConvictionBandHtml,
   signalsBody,
+  signalsInstitutionalHtml,
 } from "../src/lib/ui/index.ts";
+import { fixtureInstitutional, fixtureTxns } from "./lib/inst-signals-fixture.ts";
+import { redactFiledNames } from "./lib/banned-scan.ts";
+import { congressLineHtml } from "../src/lib/ui/signals.ts";
 import { buildInstIndexRow, instIndexRowHtml } from "../src/lib/inst-index.ts";
 import { memberSignalsPanel, ruleBookHtml, lagBandHtml, signalsRankingHtml, committeeDirectHtml } from "../src/lib/ui/index.ts";
 import { buildTriage, type TriageResult } from "../src/lib/signal-triage.ts";
@@ -401,6 +404,28 @@ const HONESTY_SELECTORS = [
   ".tk-clock",
   ".on-signals-mark",
   ".tk-holders-more",
+  /* signals-v4 M2 (R12, R13, R16, R24, LD10, LD11): the Institutional tab's
+     honesty fields — a Congress line's range and dates (its owner, side and
+     receipt ride on `.owner-note`, `.si-chip` and `.si-row-src`); a move's
+     Δ $, filed date, 13F receipt and Congress count, and its Congress side's
+     stated absences; the page's own bound; the Consensus Congress count and
+     its qualifying count; the leaders' count and each one's largest new
+     position (or the stated absence); the provenance chips (the quarter, the
+     newest filing); /institutional/'s pointer to the moved sections. */
+  ".cl-amt",
+  ".cl-dates",
+  ".mv-dv",
+  ".mv-fil",
+  ".mv-src",
+  ".mv-cg",
+  ".mv-cong-none",
+  ".mv-bound",
+  ".cs-cg",
+  ".cs-count",
+  ".cv-count",
+  ".cv-top",
+  ".sig-pchip",
+  ".inst-moved",
   /* RUN SURFACES-LEGIBILITY, SL-R24 (T12). The note primitive is now the
      channel a large share of this site's explanations travel on — every
      `.col-why`, every footnote clause, the exclusion counts, the owner codes,
@@ -1030,7 +1055,15 @@ function renderCorpus(): string {
       }) as never),
     ),
     flowRibbon(quarterlyFlow([], "2026-07-24", 4), { twoSided: true, sourceLine: "s", emptyWindow: { latestTraded: "2024-01-02" } }),
-    consensusConvictionBandHtml('<section class="panel">c</section>', '<p class="section-note">none</p>', { consensus: false, conviction: true }),
+    /* signals-v4 M2: the tabs and the Institutional tab — populated (the
+       shared fixture: moves, Consensus, the leaders, Congress lines), and its
+       stated absences (no closed quarter's moves; the artifact-only view) */
+    signalsBody(goldenTriage().artifact, CTX, { rowsEvaluated: 2051, triage: goldenTriage().triage, institutional: fixtureInstitutional() }),
+    signalsInstitutionalHtml(fixtureInstitutional({ moves: [] }), CTX),
+    signalsInstitutionalHtml(null, CTX),
+    /* LD10: the one Congress line with its ticker (M3's Overlap detail and
+       "Triggers now" rows render it so) */
+    `<ul class="cl-list">${congressLineHtml(fixtureTxns()[0]!, CTX, { ticker: true })}</ul>`,
     // band S1's side cell (T2.6)
     signalsBody(
       {
@@ -1129,6 +1162,21 @@ const NEW_RENDERER_CLASSES = [
      timeline's gridlines, their labels and the ring on a pinned row's mark. */
   "tk-tabs", "tk-tab", "tk-tab-n", "tk-panel", "tk-clock", "tk-onsig", "tk-onsig-tier",
   "on-signals-mark", "tk-holders-more", "tl-grid", "tl-grid-label", "tl-ring",
+  /* signals-v4 M2 (R9–R17, LD6–LD12, LD18): the head's per-tab ledger
+     groups, the tab strip's role-less scroller and its tablist, the panels;
+     the Institutional provenance line and its chips; the band and its side
+     column; the Named moves — chip row, name detail, column head, each row's
+     summary cells, receipt, opened row and Congress side; the one Congress
+     line; Consensus — count, head, rows and their filter button and cells;
+     the new-position leaders' list; /institutional/'s pointer line. */
+  "sig-ledger", "sig-tabs-scroll", "sig-tabs", "sig-panel", "sig-prov", "sig-pchip", "sig-pchip-warn",
+  "sig-inst-band", "sig-inst-side",
+  "mv-chips", "mv-name-detail", "mv-name-sides", "mv-item", "mv-row", "mv-sum", "mv-head", "mv-hc", "mv-hc-r", "mv-hc-cg",
+  "mv-mgr", "mv-p", "mv-tk", "mv-iss", "mv-k", "mv-dsh", "mv-now", "mv-dv", "mv-cg", "mv-fil", "cg-on",
+  "mv-src", "mv-det", "mv-facts", "mv-cong", "mv-cong-h", "mv-cong-none", "mv-cong-more", "mv-cong-link", "mv-bank",
+  "cl-list", "cl-line", "cl-tk", "cl-amt", "cl-dates",
+  "cs-count", "cs-head", "cs-hr", "cs-hcg", "cs-row", "cs-list", "cs-pick", "cs-tk", "cs-iss", "cs-n", "cs-a", "cs-t", "cs-x", "cs-net", "cs-cg", "cs-strong", "cs-top",
+  "cv-count", "cv-list", "cv-row", "cv-rk", "cv-fl", "cv-bar", "cv-pc", "cv-top", "cv-rt",
 ];
 
 /* DESIGN-POLISH M2: classes a renderer emits as HOOKS — a root the period
@@ -1139,7 +1187,7 @@ const NEW_RENDERER_CLASSES = [
    list above, so the two lists cannot silently overlap. */
 const NEW_HOOK_CLASSES = [
   "filer-bookshape-root", "filer-provenance", "si-side", "flow-window-empty",
-  "design-member-history", "design-consensus-band", "design-filer-history",
+  "design-member-history", "design-filer-history",
   /* signals-v3 M2: the triage panel and the families panel are laid out by
      the band and `.panel`; an exchange-led row's chip keeps the neutral ink */
   "si-triage", "si-families", "si-side-neutral",
@@ -1150,6 +1198,13 @@ const NEW_HOOK_CLASSES = [
   /* signals-v4 M1: a grouped row's latest filing in the opened row's grouping
      (D21's label, read by tests; it takes the grouping's own type) */
   "si-row-latest",
+  /* signals-v4 M2: a Signals tab (styled as the `.tk-tab` beside it); the
+     three Institutional panels (laid out by `.panel` and the band); the
+     Named moves' row list and its stated bound (a `.section-note`); a
+     Congress line's member and receipt cells (the
+     receipt is the swept `.si-row-src`); the owner's reference label, which
+     the wording scan reads (LD20) */
+  "sig-tab", "sig-moves", "sig-cons", "sig-conv", "mv-list", "mv-bound", "cl-who", "cl-src", "ref-label",
 ];
 
 /* Classes a milestone RETIRED: neither styled nor emitted — by a renderer OR
@@ -1189,6 +1244,12 @@ const RETIRED_CLASSES = [
      head now), and the meter legend (the "What the bars mean" tip). */
   "si-row-main", "si-row-h", "si-row-link", "si-row-what", "si-row-when", "si-meter-head",
   "si-legend", "si-legend-levels", "si-legend-h", "si-legend-level", "si-legend-word", "si-legend-meters",
+  /* signals-v4 M2 (R17, LD18, LD21): /institutional/'s Named moves band, its
+     Consensus board and the leaders' table, band I1 that paired the two,
+     the leaders' weight bar, and the freshness foot (its text is the
+     provenance chips' tip) — all moved to /signals/#institutional or left. */
+  "design-notable-moves", "design-consensus", "design-newpositions", "design-consensus-band", "design-institutional-band",
+  "design-weight-bar", "inst-watermark-foot", "inst-method-foot",
 ];
 
 const ASTRO_ONLY_CLASSES = [
@@ -1199,6 +1260,9 @@ const ASTRO_ONLY_CLASSES = [
   "shell-title", "shell-lede", "caveat-box", "caveat-box-head", "caveat-box-body",
   "search-panel", "search-panel-foot", "search-kbd", "masthead-search-first",
   "entity-page", "footer-row", "footer-brand", "footer-nav", "footer-notice",
+  /* signals-v4 M2 (LD18): /institutional/'s pointer to the moved sections,
+     and its provenance line's hook (styled as `.design-provenance`) */
+  "inst-moved", "inst-prov",
 ];
 
 test("dead-CSS sweep: every new class is styled AND emitted", () => {
@@ -1400,6 +1464,11 @@ function ruleAppliesTo(rule: PositionedRule, classes: Set<string>): boolean {
   for (const part of rule.selector.split(",")) {
     const compound = rightmostCompound(part);
     if (STATE_PSEUDO.test(compound)) continue;
+    /* signals-v4 M2: a pseudo-ELEMENT rule (`::-webkit-details-marker`,
+       `::marker`, `::before`) styles a generated box, never the element or its
+       DOM content — `.mv-sum::-webkit-details-marker { display: none }` hides
+       Safari's disclosure triangle, not the summary row */
+    if (compound.includes("::")) continue;
     const needed = compoundClasses(compound);
     if (needed.length === 0) continue; // not a class-targeted rule
     if (needed.every((c) => classes.has(c))) return true;
@@ -1572,7 +1641,7 @@ function pageSource(rel: string): string {
     A reader receives the template's text and the frontmatter's STRING
     LITERALS (labels, notes, copy handed to renderers) — never the
     frontmatter's code. Scanning code made an object key (`{ conviction: … }`,
-    the empty-state flags `consensusConvictionBandHtml` takes) read as a banned
+    the empty-state flags band I1's renderer once took) read as a banned
     verb on the page, though no reader can ever see it. So the frontmatter
     contributes its literals only; the template half is scanned whole. Fails
     closed on a regex literal holding a quote, which could mis-pair literals. */
@@ -1685,8 +1754,26 @@ function institutionalSurfaces(): { name: string; owner: string; html: string; p
         surfaceHtml(foldHoldersPayload([foldIssuerRow()]), { view: "current", page: 0, period: "2026-03-31" }) +
         institutionalDataNoteHtml(),
     },
+    /* signals-v4 M2 (R12–R16, R24, R25, LD20): the 13F named moves,
+       Consensus and the new-position leaders moved to the Signals
+       Institutional tab, which renders the §5 note itself — so the tab is an
+       institutional surface: its folds, its §5 clauses and its wording are
+       swept as these pages are. */
+    {
+      name: "/signals#institutional",
+      owner: "signals-v4 M2",
+      page: "signals/index.astro",
+      html: pageSource("signals/index.astro") + signalsInstitutionalHtml(fixtureInstitutional(), {}),
+    },
   ];
 }
+
+test("signals-v4 M2: the drop enumeration ignores a pseudo-element's own display, and still reports the element's", () => {
+  // a <style> appended to the corpus CSS is not modelled here; the instrument is the rule matcher
+  const rule = (selector: string) => ({ selector, decls: "display: none", where: "control", min: 0, max: Infinity }) as unknown as PositionedRule;
+  assert.equal(ruleAppliesTo(rule(".mv-sum::-webkit-details-marker"), new Set(["mv-sum"])), false, "the marker is not the row");
+  assert.equal(ruleAppliesTo(rule(".mv-sum"), new Set(["mv-sum"])), true, "control: the row itself would be reported");
+});
 
 test("T14/R16: the drop enumeration itself works — known-dropped classes ARE reported", () => {
   // Guard against a silently broken sweep (measure the mechanism): if the
@@ -1727,7 +1814,7 @@ test("T14/R16: the drop enumeration itself works — known-dropped classes ARE r
   assert.deepEqual(droppedAt(abbr, 375), [], "cascade order is honoured");
 });
 
-test("T14/R16: 375 / 720 / desktop drop NOTHING honesty-bearing on the three institutional surfaces", () => {
+test("T14/R16: 375 / 720 / desktop drop NOTHING honesty-bearing on the institutional surfaces (the three pages and the Signals Institutional tab)", () => {
   // Every surface × breakpoint is enumerated before anything is asserted: a
   // sweep that stops at the first bad surface hides the other two, and a
   // concurrent run then fixes one defect at a time.
@@ -1895,8 +1982,11 @@ test("T14/R16: no banned trading verb on any institutional surface", () => {
     const rendered = surface.html.replace(pageSource(surface.page), "");
     // The user-approved reference names this fixed UI section "Conviction leaders".
     // Exempt only that literal label; all generated analytical claims remain scanned.
+    // signals-v4 LD20: the Signals tab renders it through the two markup-bound
+    // `ref-label` forms `scanBannedWording` strips — the exemption reaches
+    // /signals that way, and nowhere else.
     const text = pageText + rendered;
-    const scanned = surface.name === "/institutional" ? text.replace('"Conviction leaders"', '"New-position leaders"') : text;
+    const scanned = surface.name === "/institutional" || surface.name.startsWith("/signals") ? text.replace('"Conviction leaders"', '"New-position leaders"') : text;
     return scanBannedWording(scanned).map((hit) => `${surface.name} (owner ${surface.owner}) uses "${hit}"`);
   };
   const surfaces = institutionalSurfaces();
@@ -1917,4 +2007,24 @@ test("T14/R16: no banned trading verb on any institutional surface", () => {
   assert.ok(planted((src) => src.replace("</main>", "<p>Conviction buys this quarter</p></main>")).length > 0, "control: template text");
   // …while a code identifier (the band's empty-state key) is not reader text
   assert.deepEqual(scanBannedWording(frontmatterLiterals("const x = f(a, { conviction: true });")), []);
+});
+
+test("signals-v4 LD20 (T2.5): on /signals the label is exempt ONLY in its two markup-bound forms; a planted free-text 'conviction' still fails, and 'sold' is caught as before", () => {
+  const signals = institutionalSurfaces().find((x) => x.name === "/signals#institutional")!;
+  const tab = signalsInstitutionalHtml(fixtureInstitutional(), {});
+  // the tab renders the label in both forms, and is clean
+  assert.ok(tab.includes('<span class="ref-label">Conviction leaders</span>'), "the heading's form");
+  assert.ok(tab.includes('<span class="ref-label">Conviction</span>'), "the pane switch's form");
+  assert.deepEqual(scanBannedWording(tab), []);
+  assert.deepEqual(scanBannedWording(signals.html.replace(pageSource(signals.page), "")), []);
+  // controls: the word in free text, in an attribute a screen reader speaks, and a neighbouring banned verb
+  assert.ok(tab.includes("Every institutional figure on this tab"), "precondition: the anchor for the planted word");
+  assert.deepEqual(scanBannedWording(tab.replace("Every institutional figure on this tab", "Every conviction figure on this tab")), ["conviction"], "free text");
+  assert.ok(scanBannedWording(tab.replace('aria-label="About new-position leaders, explain"', 'aria-label="About conviction leaders, explain"')).includes("conviction"), "an aria-label");
+  assert.ok(scanBannedWording(tab.replace('<span class="ref-label">Conviction leaders</span>', "Conviction leaders")).includes("conviction"), "the label outside its markup");
+  assert.ok(scanBannedWording(tab.replace("exit inferred from absence", "position sold")).includes("sold"), "control: sold");
+  // the test-side mirror strips the same two forms and nothing more
+  assert.equal(redactFiledNames('<h2 class="section-h"><span class="ref-label">Conviction leaders</span></h2>').includes("Conviction"), false);
+  assert.equal(redactFiledNames('<span class="ref-label">Conviction</span>').includes("Conviction"), false);
+  assert.equal(redactFiledNames('<span class="ref-label">Conviction buys</span>').includes("Conviction"), true, "a different label is not exempt");
 });

@@ -198,39 +198,47 @@ function ledgerFiguresOf(html: string): { label: string; value: string; sub: str
   return out;
 }
 
-/** R9: the issuer labels a reader sees on the institutional landing — the
-    board cells, any remaining tile value, and (M2) the header ledger's
-    Consensus-add figure: its value (the ticker, or "—") and the issuer NAME,
-    which leads its sub ("NAME · N notable managers opened it"). */
+/** R9: the issuer labels a reader sees on the institutional surfaces — the
+    board cells, any remaining tile value, the Signals Institutional tab's
+    Consensus issuers (`.cs-iss`), and the ledger's Top add figure (it was
+    the /institutional/ "Consensus add"; signals-v4 M2): its value (the
+    ticker, a manager count, or "—") and, where no reviewed ticker maps the
+    name, the issuer NAME that leads its sub ("NAME · no reviewed ticker"). */
 function landingIssuerLabels(html: string): string[] {
-  const consensusAdd = ledgerFiguresOf(html).filter((f) => f.label === "Consensus add");
+  const topAdd = ledgerFiguresOf(html).filter((f) => f.label === "Top add" || f.label === "Consensus add");
   return [
     ...cells(html, "c-issuer"),
+    ...[...html.matchAll(/<span class="cs-iss"[^>]*><span class="filed-name">([^<]*)<\/span>/g)].map((m) => m[1]!),
     ...(html.match(/class="tile-value">[^<]*/g)?.map((s) => s.slice(19)) ?? []),
-    ...consensusAdd.flatMap((f) => [f.value, ...(f.sub ? [f.sub.split(" · ")[0]!] : [])]),
+    ...topAdd.flatMap((f) => [...(/ managers?$/.test(f.value) ? [] : [f.value]), ...(f.sub && / · no reviewed ticker$/.test(f.sub) ? [f.sub.split(" · ")[0]!] : [])]),
   ].map(text);
 }
 const numericOrCusip = (l: string): boolean => /^\d/.test(l) || /^[A-Z0-9]{9}$/.test(l);
 
-test("POST-BUILD R9: the issuer-label reader sees the ledger's Consensus-add figure (controls)", () => {
+test("POST-BUILD R9: the issuer-label reader sees the ledger's Top add figure and the Consensus issuers (controls)", () => {
   const fig = (value: string, sub: string): string =>
-    `<dl class="design-ledger"><div class="ledger-fig" data-tone="blue"><dt><span class="note"><button type="button" class="note-btn note-label" aria-label="Consensus add, explain">Consensus add</button><span class="note-pop" popover role="note">why</span></span></dt><dd class="ledger-value">${value}</dd><dd class="ledger-sub">${sub}</dd></div></dl>`;
-  assert.deepEqual(landingIssuerLabels(fig("NVDA", "Nvidia Corp · 3 notable managers opened it")), ["NVDA", "Nvidia Corp"]);
-  assert.deepEqual(landingIssuerLabels(fig("NVDA", "Nvidia Corp · 3 notable managers opened it")).filter(numericOrCusip), []);
+    `<dl class="design-ledger"><div class="ledger-fig" data-tone="blue"><dt><span class="note"><button type="button" class="note-btn note-label" aria-label="Top add, explain">Top add</button><span class="note-pop" popover role="note">why</span></span></dt><dd class="ledger-value">${value}</dd><dd class="ledger-sub">${sub}</dd></div></dl>`;
+  assert.deepEqual(landingIssuerLabels(fig("NVDA", "3 notable managers opened it")), ["NVDA"]);
+  assert.deepEqual(landingIssuerLabels(fig("3 managers", "Nvidia Corp · no reviewed ticker")), ["Nvidia Corp"]);
+  assert.deepEqual(landingIssuerLabels(fig("NVDA", "3 notable managers opened it")).filter(numericOrCusip), []);
   // control: a CUSIP-shaped issuer in the sub, and a numeric value, are each caught by the same predicate
-  assert.deepEqual(landingIssuerLabels(fig("—", "30233Q108 · 3 notable managers opened it")).filter(numericOrCusip), ["30233Q108"]);
-  assert.deepEqual(landingIssuerLabels(fig("594918104", "Microsoft Corp · 3 notable managers opened it")).filter(numericOrCusip), ["594918104"]);
+  assert.deepEqual(landingIssuerLabels(fig("3 managers", "30233Q108 · no reviewed ticker")).filter(numericOrCusip), ["30233Q108"]);
+  assert.deepEqual(landingIssuerLabels(fig("594918104", "3 notable managers opened it")).filter(numericOrCusip), ["594918104"]);
+  // a Consensus issuer cell
+  assert.deepEqual(landingIssuerLabels('<span class="cs-iss" id="cs-1-l"><span class="filed-name">037833100</span></span>').filter(numericOrCusip), ["037833100"]);
   // the tile read is kept for any page that still has tiles
   assert.deepEqual(landingIssuerLabels('<div class="tile-value">12345</div>').filter(numericOrCusip), ["12345"]);
 });
 
-test("POST-BUILD R9: no numeric or CUSIP-shaped issuer label on the institutional landing boards", () => {
-  const page = path.join(DIST, "institutional", "index.html");
-  if (!existsSync(page)) return;
-  const html = readFileSync(page, "utf-8");
-  assert.ok(ledgerFiguresOf(html).some((f) => f.label === "Consensus add"), "the landing ledger carries its Consensus-add figure");
-  const bad = landingIssuerLabels(html).filter(numericOrCusip);
-  assert.deepEqual(bad, [], `numeric / CUSIP-shaped issuer labels: ${bad.slice(0, 10).join(", ")}`);
+test("POST-BUILD R9: no numeric or CUSIP-shaped issuer label on the institutional landing or the Signals Institutional tab", () => {
+  for (const rel of [["institutional", "index.html"], ["signals", "index.html"]]) {
+    const page = path.join(DIST, ...rel);
+    if (!existsSync(page)) continue;
+    const html = readFileSync(page, "utf-8");
+    if (rel[0] === "signals") assert.ok(ledgerFiguresOf(html).some((f) => f.label === "Top add"), "the Institutional ledger carries its Top add figure");
+    const bad = landingIssuerLabels(html).filter(numericOrCusip);
+    assert.deepEqual(bad, [], `${rel.join("/")}: numeric / CUSIP-shaped issuer labels: ${bad.slice(0, 10).join(", ")}`);
+  }
 });
 
 /* ---------- Milestone 2 ---------- */
@@ -278,11 +286,21 @@ test("POST-BUILD R13: no 'render bound' copy anywhere in dist", () => {
   assert.deepEqual(hits, [], `render bound on ${hits.length} surface(s)`);
 });
 
-test("POST-BUILD R14: every notable-moves shard is ≤ 1 MiB and the landing leads with the band, then the directory, then consensus", () => {
+test("POST-BUILD R14 → signals-v4 R17: every notable-moves shard is ≤ 1 MiB; the landing leads with the pointer, then the directory, then recent activity — the moves, the board and the leaders are on /signals/#institutional", () => {
   const dir = path.join(DIST, "institutional", "data", "notable-moves");
   const landing = readFileSync(path.join(DIST, "institutional", "index.html"), "utf-8");
+  /* signals-v4 R17 (LD18): the landing keeps none of the moved sections, and
+     points to them */
+  for (const gone of ['id="inst-notable-moves"', 'id="inst-consensus"', "design-consensus-band", "design-newpositions", 'class="planned-line"', ">Consensus add<"]) {
+    assert.ok(!landing.includes(gone), `the landing no longer renders ${gone}`);
+  }
+  const pointer = landing.indexOf('<p class="inst-moved">');
+  assert.ok(pointer > 0, "the one-line pointer");
+  assert.match(landing.slice(pointer, pointer + 400), /<a href="\/signals\/#institutional">Open →<\/a>/);
+  const signals = readFileSync(path.join(DIST, "signals", "index.html"), "utf-8");
+  for (const id of ["named-moves", "consensus", "new-position-leaders"]) assert.match(signals, new RegExp(`id="${id}"`), `/signals/ renders #${id}`);
   if (!existsSync(dir)) {
-    assert.ok(!landing.includes('id="inst-notable-moves"') || landing.includes("No closed quarter"), "no shards only when no closed quarter exists");
+    assert.ok(signals.includes("no closed quarter"), "no shards only when no closed quarter exists");
     return;
   }
   for (const f of readdirSync(dir)) {
@@ -292,11 +310,10 @@ test("POST-BUILD R14: every notable-moves shard is ≤ 1 MiB and the landing lea
     assert.equal(shard.v, 1);
     assert.equal(shard.truncated, shard.rows.length < shard.total, `${f}: truncation is stated exactly`);
   }
-  const band = landing.indexOf('id="inst-notable-moves"');
   const directory = landing.indexOf('id="inst-managers-section"');
-  const consensus = landing.indexOf('id="inst-consensus"');
   const activity = landing.indexOf("Recent activity");
-  assert.ok(band > 0 && directory > band && consensus > directory && activity > consensus, "R14 order: band → directory → consensus → activity");
+  const supplement = landing.indexOf('class="design-supplement"');
+  assert.ok(pointer > 0 && directory > pointer && activity > directory && supplement > activity, "R17 order: pointer → directory → recent activity → the collapsed supplement");
   assert.doesNotMatch(landing, /Position discovery/, "the explainer cards are gone");
   assert.match(landing, /data-mgr-type="hedge_fund" aria-pressed="true"/, "Hedge funds selected by default");
 });
@@ -386,6 +403,8 @@ test("POST-BUILD R15/R16/R18: filer 1067983 leads with identity → stats → ch
   const home = readFileSync(path.join(DIST, "index.html"), "utf-8");
   assert.match(home, /id="home-claim"/);
   for (const id of ["home-congress", "home-moves", "home-signals"]) assert.match(home, new RegExp(`id="${id}"`));
+  // signals-v4 R17: the moves tile's "all moves" link follows the moves to /signals/#institutional
+  assert.match(home, /<a class="section-link" href="\/signals\/#institutional">all moves ↗<\/a>/);
   assert.doesNotMatch(home, /returned to the people/);
   const methodology = readFileSync(path.join(DIST, "methodology", "index.html"), "utf-8");
   for (const anchor of ["principles", "published-dataset", "ranges", "13f-method", "position-grain", "ticker-mapping", "site-weight", "coverage"]) {

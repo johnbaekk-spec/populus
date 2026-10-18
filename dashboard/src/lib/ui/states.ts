@@ -107,9 +107,17 @@ export function s7Banner(window: FilingWindow): string {
   return (
     `<div class="s7-banner" role="note">` +
     `<span class="s7-chip">FILING WINDOW OPEN</span>` +
-    `<div class="s7-copy">Quarter <strong>${esc(window.quarterEnd)}</strong>: the 13F window is open until <strong>${esc(
-      window.deadline,
-    )}</strong>. Rankings and QoQ moves that touch this quarter are <strong>provisional by construction</strong> — filers who have not yet reported are not zeros.</div>` +
+    `<div class="s7-copy">${s7CopyHtml(window)}</div>` +
     `</div>`
+  );
+}
+
+/** The banner's sentence, phrasing markup only — ONE text for the banner
+    and for /institutional/'s provenance tip, which carries it in place of the
+    banner block (signals-v4 LD18). */
+export function s7CopyHtml(window: FilingWindow): string {
+  return (
+    `Quarter <strong>${esc(window.quarterEnd)}</strong>: the 13F window is open until <strong>${esc(window.deadline)}</strong>. ` +
+    `Rankings and QoQ moves that touch this quarter are <strong>provisional by construction</strong> — filers who have not yet reported are not zeros.`
   );
 }

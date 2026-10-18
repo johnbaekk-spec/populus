@@ -144,6 +144,23 @@ the full record is `docs/frontend/signals-v4.md`.
    width. Only the name shrinks; party and state, owner, ×N, tags and LATE keep their
    width, a cluster's member count never shrinks, and the full name stays in the DOM
    and the opened row (no `title=`). Filer cell ≥283px at 1081px, 348px at 1440px.
+- **LD22-4.** **Every Congress line on the Institutional tab shows both dates** —
+   "traded {date} → filed {date} · {lag}d" — with its range, owner word and receipt,
+   through the one `congressLineHtml`; the mock's moves showed the trade date only.
+- **LD22-5.** **Banned wording replaced:** the mock's "Both bought / Both sold",
+   "▼ sold" and "highest-conviction" are side nouns and counts here (purchase, sale,
+   ▲/▼ with their words for assistive technology); "Conviction leaders" renders only
+   through its markup-bound reference label, and its anchor is
+   `#new-position-leaders` (the §0 gate reads raw bytes, ids included).
+- **LD22-6.** **Listed stock is the filed ST / Stock only** in the Congress column; the
+   mock also counted untyped rows, so its counts are not this build's.
+- **LD22-9.** **The opened move row carries only what the row does not say** — the
+   manager type, the filing and quarter, the ticker's verification, the filer page and
+   the Congress side — not the mock's sentence repeating the row's numbers.
+- **LD22-10.** **The mock's "Mock only" moves-file tip is the page's real bound:** the
+   page carries the first 30 moves of every filter (20 when the page would pass its
+   1.5 MiB budget) and every move on a Consensus or lead-card name; where a filter
+   runs past them the count keeps the build's true total and says so.
 
 Design-side reconciliation is still owed for each.
 
