@@ -285,6 +285,50 @@ tbody[data-collapsed="true"] tr[data-compact-extra] {
   }
 }
 
+/* signals-v4 R1 (LD3): at ≤720px an OPEN note is a bottom sheet — fixed to
+   the viewport's bottom, full width less the gutters, over a scrim. It is the
+   one component, so this holds wherever `note()` renders. Top-layer and
+   placement rules only: `.note-pop` never receives display:none or
+   visibility:hidden (§4). Without JavaScript the sheet still opens
+   (`popovertarget`) and a tap on the scrim light-dismisses it; with it,
+   `notes.ts` stops anchoring the panel at this width and appends one Close
+   button. Screen only: paper lays every panel out in flow (below). */
+@media screen and (max-width: 720px) {
+  .note-pop:popover-open {
+    position: fixed;
+    inset: auto 10px 10px 10px;
+    width: auto;
+    max-width: none;
+    max-height: 70vh;
+    overflow: auto;
+    translate: none;
+    padding: 14px 16px 12px;
+    font-size: var(--fs-body);
+    box-shadow: 0 -10px 40px rgb(0 0 0 / 50%);
+  }
+  .note-pop::backdrop { background: rgb(0 0 0 / 55%); }
+}
+/* The sheet's Close button, appended once by `notes.ts` (never server
+   markup); above the fold a panel closes on hover-out, Escape or outside
+   click, so the button is not drawn there. */
+.note-close {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  min-height: var(--hit-min);
+  margin: 12px 0 0;
+  border: 1px solid var(--rule2);
+  border-radius: 4px;
+  background: none;
+  color: var(--ink);
+  font: 500 var(--fs-small)/1 var(--sans);
+  cursor: pointer;
+}
+@media (min-width: 721px) {
+  .note-close { display: none; }
+}
+
 /* --- the non-supporting-engine fallback, and its test seam.
 
    The declarations are authored ONCE and emitted into two selectors: the real
@@ -332,7 +376,8 @@ tbody[data-collapsed="true"] tr[data-compact-extra] {
    by rendering under emulated print media and measuring a non-zero box, not by
    grepping for this rule. */
 @media print {
-  .note-btn:not(.note-label):not(.note-mark) {
+  .note-btn:not(.note-label):not(.note-mark),
+  .note-close {
     display: none;
   }
   .note-label {
@@ -681,6 +726,18 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 .si-bar-tick { position: absolute; top: -4px; bottom: -4px; width: 1px; background: var(--amber); opacity: .6; }
 .site-nav a[aria-current="page"] { position: relative; }
 
+/* signals-v4 M1 (LD6): the band's cells do not stretch — each column is as
+   tall as its content, so neither paints an empty stretched area. The column
+   fit (scripts/column-fit.ts) measures content, never a cell box, so it does
+   not depend on this rule. */
+.design-signals-band { align-items: start; }
+/* signals-v4 R1 (LD3): the head's "How signals work" tip sits beside the h1. */
+.page-title-row { display: flex; align-items: center; gap: 10px; }
+/* A tip's paragraphs: phrasing spans laid out as blocks, so a tip can sit
+   inside a heading row or a paragraph and stay valid markup. */
+.si-tip-p { display: block; }
+.si-tip-p + .si-tip-p { margin-top: 6px; }
+
 /* R11 / LD6: the lead cards. ONE segmented control ranks the buy and sell
    cards; it is two radio inputs and these `:checked ~` rules — no script.
    Without CSS both variants show. The inputs are clipped, never removed, so
@@ -711,9 +768,10 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 #si-rank-absolute:checked ~ .si-cards .si-variant[data-rank="record"] { display: none; }
 #si-rank-absolute:checked ~ .si-cards .si-variant[data-rank="absolute"] { display: block; }
 .si-cards { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); }
-.si-card { --card-tone: var(--tone-blue); padding: 14px 28px 18px; min-width: 0; }
+.si-card { --card-tone: var(--tone-blue); position: relative; padding: 14px 28px 18px; min-width: 0; }
 .si-card:first-child { padding-left: 0; }
 .si-card + .si-card { border-left: 1px solid var(--story-divider); }
+.si-card:has(.si-card-open):hover { background: var(--raised); }
 .si-card[data-tone="amber"] { --card-tone: var(--tone-gold); }
 .si-card[data-tone="green"] { --card-tone: var(--tone-green); }
 .si-card[data-tone="red"] { --card-tone: var(--kind-sell-text); }
@@ -727,52 +785,124 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 .si-card-src { margin: 6px 0 0; }
 .si-card-src .cell-src { display: inline; text-align: left; }
 .si-card-context { font: 400 var(--fs-note)/1.5 var(--sans); color: var(--ink3); margin: 8px 0 0; }
+/* signals-v4 LD5: the card's "open the row" link stretches over the card,
+   UNDER the card's own links and notes, which sit above it. */
+.si-card-open::after { content: ""; position: absolute; inset: 0; }
+.si-card-open:focus-visible::after { outline: 2px solid var(--accent); outline-offset: -2px; }
+.si-card :is(a:not(.si-card-open), .note, .cell-src) { position: relative; z-index: 1; }
 
-/* R12 / LD7: "Filings to read". A row is an <article>: its heading link
-   stretches over the row, and the receipt and every note sit above it. */
-.si-legend { margin: 6px 0 8px; font: 400 var(--fs-note)/1.5 var(--sans); color: var(--ink3); }
-.si-legend-levels { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin: 0 0 6px; }
-.si-legend-h { font: 500 var(--fs-meta)/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-meta); }
-.si-legend-level { display: inline-flex; align-items: flex-end; gap: 6px; }
-.si-legend-word { font: 400 var(--fs-note)/1 var(--sans); color: var(--ink2); }
-.si-legend-meters { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 2px 18px; margin: 0; }
-.si-legend-meters > div { display: flex; gap: 6px; min-width: 0; }
-.si-legend-meters dt { font: 500 var(--fs-meta)/1.5 var(--mono); color: var(--ink2); white-space: nowrap; }
-.si-legend-meters dd { margin: 0; min-width: 0; }
-.si-cmte-context { color: var(--ink2); }
-.si-tier { border-top: 1px solid var(--rule); padding: 10px 0 4px; }
-.si-tier-h { font: 600 var(--fs-body)/1.4 var(--sans); color: var(--ink); margin: 0 0 4px; }
-details.si-tier > summary { cursor: pointer; }
-details.si-tier > summary > .si-tier-h { display: inline; }
-.si-tier-n { font: 500 var(--fs-meta) var(--mono); color: var(--ink3); margin-left: 6px; }
-.si-row, .si-meter-head { display: grid; grid-template-columns: minmax(0,1fr) auto 160px; gap: 4px 16px; align-items: start; }
-.si-row { position: relative; padding: 10px 0; border-bottom: 1px solid var(--rule-row); }
-.si-meter-head { padding: 2px 0; font: 500 var(--fs-label)/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-meta); }
-.si-meter-col { text-align: center; }
-.si-row-main { min-width: 0; }
-.si-row-h { margin: 0; font: 600 var(--fs-cell)/1.4 var(--sans); overflow-wrap: anywhere; }
-.si-row-h .mono-ticker { margin-right: 8px; }
-.si-row-link { color: var(--ink); text-decoration: none; }
-.si-row-link::after { content: ""; position: absolute; inset: 0; }
-.si-row-link:hover .si-row-member, .si-row-link:focus-visible .si-row-member { text-decoration: underline; }
-.si-row-member { color: var(--accent); }
-.si-row-what, .si-row-why { margin: 2px 0 0; font: 400 var(--fs-small)/1.5 var(--sans); color: var(--ink2); overflow-wrap: anywhere; }
-.si-row-why { color: var(--ink); }
-.si-row-amt { font: 500 var(--fs-cell) var(--mono); color: var(--ink); }
+/* signals-v4 R2 / LD4: "Filings to read". A row is an <article> holding a
+   <details>: the <summary> is the row — two lines at ≥721px — and the body is
+   the opened row. The receipt is outside the summary, laid over its reserved
+   cell (`.si-row-slot`), above the summary's own box. */
+.si-row { position: relative; border-bottom: 1px solid var(--rule-row); }
+.si-row-sum, .si-row-head {
+  display: grid;
+  grid-template-columns: 52px minmax(0,1fr) 92px 104px 108px 34px;
+  column-gap: 10px;
+}
+.si-row-sum {
+  grid-template-areas: "tk who amt met fil src" "sd why why trd trd chv";
+  row-gap: 2px;
+  align-items: baseline;
+  padding: 8px 6px;
+  cursor: pointer;
+  list-style: none;
+}
+.si-row-sum::-webkit-details-marker { display: none; }
+.si-row-sum:hover, .si-row-d[open] { background: var(--raised); }
+.si-row-sum:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.si-row-head {
+  grid-template-areas: "tk who amt met fil src";
+  align-items: center;
+  padding: 6px 6px 5px;
+  border-bottom: 1px solid var(--rule2);
+  font: 500 var(--fs-label)/1.2 var(--mono);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--ink-meta);
+}
+.si-row-head > :nth-child(1) { grid-area: tk; }
+.si-row-head > :nth-child(2) { grid-area: who; }
+.si-row-hc-amt { grid-area: amt; text-align: right; }
+.si-meter-cols { grid-area: met; display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 0 4px; min-width: 0; text-align: center; letter-spacing: 0; }
+.si-meter-col { overflow: hidden; }
+.si-row-hc-fil { grid-area: fil; text-align: right; }
+.si-row-htip { grid-area: src; justify-self: end; }
+.si-row-tk { grid-area: tk; font: 600 var(--fs-body)/1.5 var(--mono); color: var(--ink); overflow-wrap: anywhere; }
+.si-row-sum > .si-chip { grid-area: sd; }
+.si-row-who { grid-area: who; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 5px; min-width: 0; }
+.si-row-member { font: 500 var(--fs-name)/1.5 var(--sans); color: var(--accent); overflow-wrap: anywhere; }
+.si-row-n { font: 500 var(--fs-note) var(--mono); color: var(--ink3); white-space: nowrap; }
+.si-row-amt { grid-area: amt; font: 500 var(--fs-cell) var(--mono); color: var(--ink); text-align: right; white-space: nowrap; }
+.si-row-sum > .si-meters { grid-area: met; align-self: center; }
+.si-row-filed { grid-area: fil; font: 400 var(--fs-control) var(--mono); color: var(--ink2); text-align: right; white-space: nowrap; }
+.si-row-slot { grid-area: src; }
+.si-row-why { grid-area: why; font: 400 var(--fs-small)/1.5 var(--sans); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.si-row-traded { grid-area: trd; font: 400 var(--fs-control) var(--mono); color: var(--ink3); text-align: right; white-space: nowrap; }
+.si-row-chv { grid-area: chv; justify-self: end; align-self: center; width: 7px; height: 7px; margin-right: 4px; border-right: 1.5px solid var(--ink3); border-bottom: 1.5px solid var(--ink3); transform: translateY(-2px) rotate(45deg); }
+.si-row-d[open] > .si-row-sum > .si-row-chv { transform: translateY(2px) rotate(225deg); }
+.si-row-src { position: absolute; top: 8px; right: 6px; z-index: 1; font: 400 var(--fs-control)/1.5 var(--mono); }
+.si-row-src .cell-src { display: inline; text-align: right; }
 .si-side-buy { color: var(--kind-buy-text); }
 .si-side-sell { color: var(--kind-sell-text); }
-.si-chip { font: 600 var(--fs-meta) var(--mono); letter-spacing: .08em; }
+.si-chip { font: 600 var(--fs-meta) var(--mono); letter-spacing: .08em; white-space: nowrap; }
 .si-group-tag { font: 500 var(--fs-label)/1 var(--mono); letter-spacing: .08em; color: var(--ink3); border: 1px solid var(--rule2); border-radius: 3px; padding: 1px 4px; white-space: nowrap; }
 .si-late-tag { font-family: var(--mono); font-size: var(--fs-label); letter-spacing: .04em; white-space: nowrap; }
-.si-row-when { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font: 400 var(--fs-note)/1.4 var(--mono); color: var(--ink3); text-align: right; }
-.si-row-filed { color: var(--ink2); }
-.si-row-traded { white-space: nowrap; }
-.si-row-src, .si-row a:not(.si-row-link), .si-row .note { position: relative; z-index: 1; }
-.si-row-src .cell-src { display: inline; text-align: right; }
-.si-meters { display: inline-grid; grid-template-columns: repeat(4, 44px); gap: 0 6px; align-items: end; }
+/* signals-v4 R2 / LD4 (codex M1 round 1, F1): above the fold the row stays
+   two lines at EVERY width, as the mock's `.a-who` does — the filer cell is
+   one line that never wraps, and only the filer's (or the cluster's) NAME
+   gives way, cut by an ellipsis. The party and state, the owner word, the
+   ×N count and every tag keep their full width (flex: none) and are never
+   cut; the full name stays in the DOM and in the opened row. The ticker never
+   wraps either: its track grows past 52px for the rare long one ("no
+   ticker"). */
+@media (min-width: 721px) {
+  .si-row-sum { grid-template-columns: minmax(52px, max-content) minmax(0,1fr) 92px 104px 108px 34px; }
+  .si-row-tk { white-space: nowrap; overflow-wrap: normal; }
+  .si-row-who { flex-wrap: nowrap; overflow: hidden; }
+  .si-row-who > * { flex: none; }
+  .si-row-who > .si-row-member { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+  /* a cluster's "N members" is a count, not a name: it never gives way */
+  .si-row[data-grouping="cluster"] .si-row-who > .si-row-member { flex: none; }
+  /* an opened row shows the filer whole: its cell wraps again */
+  .si-row-d[open] > .si-row-sum > .si-row-who { flex-wrap: wrap; overflow: visible; }
+  .si-row-d[open] > .si-row-sum > .si-row-who > .si-row-member { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+}
+/* Where Filings to read is narrower than the fixed tracks allow (the stacked
+   band at 721–1080px, and its 1.5fr share of the split band below 1440px),
+   the meters move to line 2, between the reason and the trade date, and the
+   gaps, the range's and the meters' tracks narrow. The filer cell is then
+   ≥283px at 1081px, the narrowest split width (the widest real fixed part,
+   Tuberville's late batch without its name, is 238px; the widest cluster
+   line, 281px), and ≥354px from 1200px, which holds the widest real line
+   (≈339px) in full. Every field keeps its own cell;
+   nothing is dropped or cut but a name. The column head's meter labels sit
+   over the meters' column. From 1440px the meters stay on line 1 and the
+   filer cell (348px) holds the widest real line. */
+@media (min-width: 721px) and (max-width: 1439px) {
+  .si-row-sum, .si-row-head { grid-template-columns: minmax(52px, max-content) minmax(0,1fr) 88px 80px 104px 34px; column-gap: 6px; }
+  .si-row-sum { grid-template-areas: "tk who who amt fil src" "sd why met trd trd chv"; padding: 8px 4px; }
+  .si-row-head { grid-template-areas: "tk who met amt fil src"; padding: 6px 4px 5px; }
+  .si-row-src { right: 4px; }
+}
+/* The opened row: the full reason, its facts, every meter in words, links. */
+.si-row-det { display: grid; grid-template-columns: minmax(0,1.3fr) minmax(0,1fr); align-items: start; gap: 10px 32px; padding: 4px 6px 16px 62px; }
+.si-row-reason { grid-column: 1 / -1; margin: 0; font: 400 var(--fs-body)/1.55 var(--sans); color: var(--ink); }
+.si-row-facts, .si-row-mw { display: grid; grid-template-columns: 82px minmax(0,1fr); align-content: start; gap: 5px 12px; margin: 0; font: 400 var(--fs-small)/1.5 var(--sans); color: var(--ink2); }
+.si-row-facts > div, .si-row-mw > div { display: contents; }
+.si-row-facts dt, .si-row-mw dt { font: 500 var(--fs-meta)/1.8 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-meta); }
+.si-row-facts dd, .si-row-mw dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.si-mw-word { font-weight: 600; color: var(--ink); }
+.si-mw-word[data-level="3"] { color: var(--amber); }
+.si-mw-word[data-level="2"], .si-mw-word[data-level="1"] { color: var(--accent); }
+.si-mw-word[data-level="-1"] { font-style: italic; color: var(--ink3); }
+.si-mw-def { color: var(--ink3); }
+.si-row-links { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px 18px; font: 400 var(--fs-small)/1.6 var(--sans); }
+.si-meters { display: inline-grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 0 4px; align-items: end; justify-items: center; }
 .si-meter { display: inline-flex; flex-direction: column; align-items: center; gap: 3px; }
-/* The meter's visible label is clipped at desktop, where the tier's meter
-   head names the columns, and shows inline on phones (R23) — clipped, never
+/* The meter's visible label is clipped at desktop, where the column head
+   names the meters, and shows inline on phones (R23) — clipped, never
    removed: the meter's accessible name ("Size: strong") never depends on it. */
 .si-meter-label { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .si-meter-bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 13px; }
@@ -783,6 +913,17 @@ details.si-tier > summary > .si-tier-h { display: inline; }
 .si-meter[data-level="2"] .si-mbar:nth-child(-n+2) { background: var(--accent); }
 .si-meter[data-level="3"] .si-mbar { background: var(--amber); }
 .si-meter[data-level="-1"] .si-mbar { background: var(--hatch); }
+.si-cmte-context { color: var(--ink2); }
+/* Tiers: a heading with its count and a tip at the line's end. Routine's
+   heading rides in its <summary>; its tip sits beside the summary, never in it. */
+.si-tier { position: relative; border-top: 1px solid var(--rule); padding: 10px 0 4px; }
+.si-tier-wrap { position: relative; }
+.si-tier-h { font: 600 var(--fs-body)/1.4 var(--sans); color: var(--ink); margin: 0 0 4px; padding-right: 28px; }
+details.si-tier > summary { cursor: pointer; padding-right: 28px; }
+details.si-tier > summary > .si-tier-h { display: inline; }
+.si-tier-n { font: 500 var(--fs-meta) var(--mono); color: var(--ink3); margin-left: 6px; }
+.si-tier-tip { position: absolute; top: 10px; right: 6px; z-index: 2; line-height: 1.4; }
+#triage .panel-head .note, .si-row-htip .note { z-index: 2; }
 
 /* R13: Hit rate by family — each row a filter button — above the slim hits. */
 .si-family-list { display: flex; flex-direction: column; margin: 6px 0 0; }
@@ -811,6 +952,21 @@ details.si-tier > summary > .si-tier-h { display: inline; }
 #hits { min-width: 0; }
 #hits .panel-head { flex-wrap: wrap; gap: 8px; }
 
+/* signals-v4 LD7: the pane switch — shown by the client only while the band
+   stacks (≤1080px); it never hides a pane by itself (the `hidden` attribute
+   does, set by the client, and no media rule touches a pane). */
+.pane-switch { display: flex; width: 100%; margin: 16px 0 0; }
+.pane-switch > button { flex: 1 1 0; gap: 6px; font: 600 var(--fs-small)/1 var(--sans); }
+.pane-n { font: 500 var(--fs-control)/1 var(--mono); color: var(--ink3); }
+
+/* signals-v4 LD19: the foot's link row (the v3 Methodology-links paragraph
+   and the superseded foot's link) and the one-line withheld kinds. */
+.si-foot { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 24px 0 0; padding: 14px 0 0; border-top: 1px solid var(--rule); font: 400 var(--fs-note)/1.6 var(--mono); }
+.si-foot a { color: var(--ink3); text-decoration: none; }
+.si-foot a:hover, .si-foot a:focus-visible { color: var(--accent); }
+.si-withheld-line { margin: 12px 0 0; font: 400 var(--fs-small)/1.6 var(--sans); color: var(--ink2); }
+.si-withheld-carried { color: var(--ink3); }
+
 /* R14: Methodology's signal sections. */
 .si-method { margin: 24px 0 0; }
 .si-method-list { margin: 8px 0 0; padding-left: 18px; font: 400 var(--fs-body)/1.7 var(--sans); color: var(--ink2); }
@@ -819,25 +975,50 @@ details.si-tier > summary > .si-tier-h { display: inline; }
 
 @media (max-width: 1080px) {
   .design-signals-band { grid-template-columns: minmax(0,1fr); }
-  .si-cards { grid-template-columns: minmax(0,1fr); }
-  .si-card, .si-card:first-child { padding: 14px 0 16px; }
-  .si-card + .si-card { border-left: 0; border-top: 1px solid var(--rule); }
+  /* R4 / LD5: the cards swipe sideways in their own strip; the page never does */
+  .si-cards { display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x mandatory; padding: 2px 0 10px; }
+  .si-card, .si-card:first-child { flex: 0 0 86%; scroll-snap-align: start; padding: 12px 14px 14px; border: 1px solid var(--rule2); border-radius: 4px; }
+  .si-card + .si-card { border-left: 1px solid var(--rule2); }
+  .si-cards:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 }
 @media (max-width: 720px) {
   .si-lags li { grid-template-columns: 110px minmax(0,1fr) 48px; }
   .si-rate-row { grid-template-columns: 90px minmax(0,1fr) 60px; }
   .si-table { min-width: 720px; }
-  .si-legend-meters { grid-template-columns: minmax(0,1fr); }
-  /* R23: a row folds to one column; the meters name themselves inline and
-     the decorative meter head is clipped (it is aria-hidden; each meter
-     carries its own name). Nothing here is removed from the page. */
-  .si-row { grid-template-columns: minmax(0,1fr); }
-  .si-meter-head { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
-  .si-meters { grid-template-columns: repeat(4, auto); justify-content: start; gap: 4px 14px; }
-  .si-meter { flex-direction: row; align-items: flex-end; gap: 5px; }
+  .si-card, .si-card:first-child { flex-basis: 88%; }
+  /* R3 / LD4: a row is three lines — ticker, side, range, filed date and the
+     receipt's cell; the filer, party and state, owner and tags beside the
+     meters, which name themselves; the reason, the trade date and lag, the
+     chevron. Each line takes its own widths, so the summary is a wrapping
+     flex row broken into three by its two zero-height pseudo-elements; the
+     DOM (reading) order is unchanged. The filer wraps rather than dropping a
+     field. */
+  .si-row-sum { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 6px; row-gap: 0; padding: 10px 2px; }
+  .si-row-sum::before, .si-row-sum::after { content: ""; flex: 0 0 100%; height: 0; }
+  .si-row-sum > .si-row-tk { order: 1; }
+  .si-row-sum > .si-chip { order: 2; }
+  .si-row-sum > .si-row-amt { order: 3; flex: 1 1 0; min-width: 0; white-space: normal; text-align: left; }
+  .si-row-sum > .si-row-filed { order: 4; }
+  .si-row-sum > .si-row-slot { order: 5; flex: 0 0 36px; }
+  .si-row-sum::before { order: 6; }
+  .si-row-sum > .si-row-who { order: 7; flex: 1 1 0; margin-top: 4px; }
+  .si-row-sum > .si-meters { order: 8; align-self: center; margin-top: 4px; }
+  .si-row-sum::after { order: 9; }
+  .si-row-sum > .si-row-why { order: 10; flex: 1 1 0; margin-top: 4px; }
+  .si-row-sum > .si-row-traded { order: 11; margin-top: 4px; }
+  .si-row-sum > .si-row-chv { order: 12; }
+  .si-row-src { top: 10px; right: 2px; }
+  /* each meter names itself, its short name over its bars as the desktop
+     column head names them — clipped at desktop, shown here, never removed */
+  .si-meters { grid-template-columns: repeat(4, auto); gap: 0 6px; }
   .si-meter-label { position: static; width: auto; height: auto; margin: 0; overflow: visible; clip: auto; white-space: nowrap; font: 500 var(--fs-label)/1 var(--mono); color: var(--ink-meta); }
-  .si-row-when { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; text-align: left; }
-  .si-row-traded { white-space: normal; }
+  /* the column labels fold away visually (clipped, aria-hidden decoration);
+     the "What the bars mean" tip stays on screen at the line's end */
+  .si-row-head { display: flex; justify-content: flex-end; border-bottom: 0; padding: 4px 2px; }
+  .si-row-head > .si-row-hc, .si-meter-cols { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  .si-row-det { grid-template-columns: minmax(0,1fr); padding: 4px 2px 14px; }
+  .si-row-facts, .si-row-mw { grid-template-columns: 74px minmax(0,1fr); }
+  .si-tier-tip { right: 2px; }
 }
 /* cluster board + new-position leaders + benchmarked book shape (the bars and
    the cell roles are in the ledger region) */

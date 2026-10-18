@@ -5,6 +5,8 @@
    module adds what the declarative path cannot do — placement outside the
    `.table-scroll` clip, hover-open, Escape, outside-click, re-placement on
    scroll. Its absence degrades a note to click-to-open; never to unreachable.
+   At or below the fold (signals-v4 R1, LD3) an open note is a CSS bottom
+   sheet: this module then stops anchoring it and adds a Close button.
 
    DELEGATED, NOT PER-ELEMENT. Five roots replace their contents with
    innerHTML after page setup — table-sort's paint(), and entity-client's txn
@@ -52,10 +54,51 @@ function place(btn: HTMLElement, pop: HTMLElement): void {
   pop.style.left = `${Math.round(left)}px`;
 }
 
+/* signals-v4 R1 (LD3): at or below the fold an OPEN note is a bottom sheet,
+   laid out entirely by CSS (late-additions.css). The script then stops
+   anchoring: it never calls place(), and it clears the inline coordinates an
+   anchored opening may have left, so the stylesheet's sheet wins. Above the
+   fold, placement is exactly as before. */
+export const SHEET_QUERY = "(max-width: 720px)";
+
+function sheetMode(): boolean {
+  return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(SHEET_QUERY).matches;
+}
+
+/** Anchor the panel to its button, or — in sheet mode — leave it to the CSS
+    sheet. Returns which it did. */
+export function positionPanel(btn: HTMLElement, pop: HTMLElement): "sheet" | "anchored" {
+  if (sheetMode()) {
+    pop.style.top = "";
+    pop.style.left = "";
+    pop.style.translate = "";
+    return "sheet";
+  }
+  place(btn, pop);
+  return "anchored";
+}
+
+/** The sheet's Close button: appended ONCE, by the script only, so the server
+    markup (and every parity capture) is unchanged. It hides its own panel
+    through `popovertargetaction`, which needs no further script. CSS draws it
+    only at or below the fold. Returns whether it appended one. */
+export function ensureCloseButton(pop: HTMLElement): boolean {
+  if (!pop.id || pop.querySelector(".note-close")) return false;
+  const b = pop.ownerDocument.createElement("button");
+  b.type = "button";
+  b.className = "note-close";
+  b.setAttribute("popovertarget", pop.id);
+  b.setAttribute("popovertargetaction", "hide");
+  b.textContent = "Close";
+  pop.appendChild(b);
+  return true;
+}
+
 function show(btn: HTMLElement, pop: HTMLElement): void {
   if (!supported(pop)) return; // the @supports CSS fallback owns this engine
   if (!pop.matches(":popover-open")) (pop as unknown as { showPopover(): void }).showPopover();
-  place(btn, pop);
+  ensureCloseButton(pop);
+  positionPanel(btn, pop);
 }
 
 function hide(pop: HTMLElement): void {
@@ -146,6 +189,9 @@ export function initNotes(): void {
   document.addEventListener("click", (ev) => {
     const btn = (ev.target as Element | null)?.closest?.(".note-btn") as HTMLElement | null;
     if (!btn) {
+      /* signals-v4 LD3: a tap INSIDE an open sheet (its text, while reading)
+         is not an outside click; the scrim, Escape and Close dismiss it */
+      if (sheetMode() && (ev.target as Element | null)?.closest?.(".note-pop")) return;
       closeAll();
       return;
     }
@@ -159,7 +205,8 @@ export function initNotes(): void {
       pointerActive = false;
       if (pop.matches(":popover-open")) {
         pop.setAttribute(PINNED, "true");
-        place(btn, pop);
+        ensureCloseButton(pop);
+        positionPanel(btn, pop);
       } else {
         pop.removeAttribute(PINNED);
       }
@@ -171,6 +218,11 @@ export function initNotes(): void {
     if (!btn) return;
     const pop = popOf(btn);
     if (!pop || pop.hasAttribute(PINNED) || pointerActive) return;
+    /* signals-v4 LD3: at or below the fold a note is a bottom sheet over the
+       page, opened by activation only — a hover-opened sheet would cover the
+       content under the pointer (and, covering the trigger, close and reopen
+       as the pointer leaves and returns). */
+    if (sheetMode()) return;
     /* Hover opens only when the pointer is NOT pressed. A
        hover-opened panel plus `popovertarget`'s toggle raced every mouse click:
        whichever ran last decided, and the note ended shut. Letting the native
@@ -182,6 +234,8 @@ export function initNotes(): void {
   document.addEventListener("pointerout", (ev) => {
     const btn = (ev.target as Element | null)?.closest?.(".note-btn") as HTMLElement | null;
     if (!btn) return;
+    /* a sheet covers its own trigger: leaving the trigger is not leaving it */
+    if (sheetMode()) return;
     const pop = popOf(btn);
     if (pop && !pop.hasAttribute(PINNED)) hide(pop);
   });
@@ -194,6 +248,9 @@ export function initNotes(): void {
        not — it would re-open the panel the pointerdown retraction just closed,
        and the native toggle would then shut it. */
     if (pointerActive) return;
+    /* …and focus alone does not raise a sheet (signals-v4 LD3): Enter or
+       Space on the focused trigger opens it, through the click channel. */
+    if (sheetMode()) return;
     const pop = popOf(btn);
     if (pop) show(btn, pop);
   });
@@ -201,9 +258,27 @@ export function initNotes(): void {
   document.addEventListener("focusout", (ev) => {
     const btn = (ev.target as Element | null)?.closest?.(".note-btn") as HTMLElement | null;
     if (!btn) return;
+    /* a tap on the sheet's own text moves focus off the trigger */
+    if (sheetMode()) return;
     const pop = popOf(btn);
     if (pop && !pop.hasAttribute(PINNED)) hide(pop);
   });
+
+  /* Every opening, whatever opened it — the native `popovertarget` toggle
+     (touch, keyboard, a click), hover or focus: the panel gets its Close
+     button and its placement once it IS open. `toggle` does not bubble, so it
+     is caught in the capture phase. */
+  document.addEventListener(
+    "toggle",
+    (ev) => {
+      const pop = ev.target as HTMLElement | null;
+      if (!pop?.classList?.contains("note-pop") || (ev as Event & { newState?: string }).newState !== "open") return;
+      ensureCloseButton(pop);
+      const btn = document.querySelector<HTMLElement>(`.note-btn[popovertarget="${pop.id}"]`);
+      if (btn) positionPanel(btn, pop);
+    },
+    true,
+  );
 
   document.addEventListener("keydown", (ev) => {
     if ((ev as KeyboardEvent).key === "Escape") closeAll();
@@ -215,7 +290,7 @@ export function initNotes(): void {
     document.querySelectorAll<HTMLElement>(".note-pop").forEach((pop) => {
       if (!pop.matches(":popover-open")) return;
       const btn = document.querySelector<HTMLElement>(`.note-btn[popovertarget="${pop.id}"]`);
-      if (btn) place(btn, pop);
+      if (btn) positionPanel(btn, pop);
     });
   };
   window.addEventListener("scroll", replace, { passive: true, capture: true });

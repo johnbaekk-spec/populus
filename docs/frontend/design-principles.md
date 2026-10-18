@@ -102,6 +102,17 @@ shipped implementation locked:
   fallback; `.note-pop` must never receive `display:none` or
   `visibility:hidden` — it is opacity- and top-layer-driven, which keeps the
   fold guard honest.
+- **At ≤720px an open note is a bottom sheet** (signals-v4 M1, record SV4-M1
+  below): fixed to the viewport's bottom, full width less 10px gutters, at
+  most 70vh, over a scrim — placement and top-layer rules only, in the one
+  stylesheet, so it holds wherever `note()` renders. It opens by activation
+  (a tap, a click, Enter or Space; with no script through `popovertarget`)
+  and closes on the scrim, Escape, its Close button (appended once by
+  `notes.ts`, never server markup) or the trigger; hover and focus do not
+  raise a sheet, which would cover its own trigger. Above 720px a note is
+  anchored beside its trigger, as before. On the v4 surfaces every
+  explanation is the ⓘ (mark) trigger; live control state stays on the
+  page.
 - Capped lists end in an honest terminus ("showing N of M positions — the
   rest are in the source filing, linked"); the terminus row is content, not
   chrome, and stays even where an expand control duplicates its count.
@@ -207,7 +218,8 @@ four-figure ledger on the right → provenance strip → three data-derived
 summary cards → dense content bands that share one-pixel seams → footer.
 (Where the design-polish run departs from this order, the departure is recorded
 below: L13 for the cards, L14 for the Signals rule book, SV3-M2 for the
-Signals triage, SV3-M3 for the ticker page.)
+Signals triage, SV3-M3 for the ticker page, SV4-M1 for the Signals rows,
+tips and pane switch.)
 `/signals` is a triage page (signals-v3 M2, record SV3-M2 below): three lead
 cards, then "Filings to read" in three tiers beside the hit rate by family and
 a slim hits table. Its rule book (every kind, its exact rule, hits, status —
@@ -311,11 +323,13 @@ takes its content's width above the fold and a full ledger row at it.
   with the period and kind segments on its band head, band F1 — Reported
   positions (1.7fr) │ Book shape + Filing history (1fr) — the Planned line, the
   EDGAR and notes disclosures, and the §5 data note as the page's foot line.
-- **Signals** (signals-v3 M2, record SV3-M2): the head beside its
-  three-figure ledger (Hits, Stand out, Window) with the "How signals work"
-  note in the lede, the lead cards, band S1 — Filings to read (1.5fr, the
-  primary) │ Hit rate by family above the slim hits (1fr) — the Methodology
-  links, the changes foot and the withheld panels.
+- **Signals** (signals-v3 M2, record SV3-M2; signals-v4 M1, record SV4-M1):
+  the head beside its three-figure ledger (Hits, Stand out, Window) with the
+  "How signals work" ⓘ beside the h1, the lead cards, the pane switch (shown
+  only where the band stacks), band S1 — Filings to read (1.5fr, the primary)
+  │ Hit rate by family above the slim hits (1fr), its cells unstretched and
+  the hits filled to the height of Filings to read — the foot's link row and
+  the one-line withheld kinds.
 - **Ticker** (signals-v3 M3, record SV3-M3): the head beside its five-figure
   ledger, the provenance strip, the "On Signals" block when the ticker has an
   active signal, then the sticky Congress │ Institutional tab bar over two
@@ -374,7 +388,9 @@ from the filings themselves:
   slim hits table is Kind (its exact rule a note) · Ticker · Who (last name,
   the full name its link's name) · Traded → Filed · Size · Src, 10 lines and
   "Show 10 more". A non-stock hit keeps its asset-type chip beside the
-  member.
+  member. (Superseded in part by SV4-M1: the row is a two-line `<details>`
+  with its receipt outside the summary, the legend is the "What the bars
+  mean" tip, and the hits fill to the height of Filings to read.)
 - **Moved, not deleted (LD9).** Every caveat that left the visible page is
   in the head note (fact not forecast; never prices, returns or intent;
   recomputed every build; the lag caveat; the lifecycle note; withheld and
@@ -435,6 +451,50 @@ page.** `/tickers/<T>/` is two real tabs, Congress and Institutional:
   per-kind signals table. The ticker page carries no PLANNED markup: an
   overlap band that cannot read its notable-manager side states that absence
   and its reason in plain words (the holders page keeps the badge).
+
+**Record SV4-M1 (signals-v4 M1, owner-approved mock 2026-10-17) — the Signals
+rows, tips, fit and pane switch.** Decision record: `docs/frontend/signals-v4.md`.
+
+- **The row (LD4).** A "Filings to read" row is an `<article>` holding a
+  `<details>`: the `<summary>` is the row, the body the opened row, and the
+  receipt a sibling of the `<details>` laid over the summary's reserved cell,
+  so no link is nested in the disclosure button. Above 720px it is two
+  lines at every width on a six-column grid (from 1440px
+  `minmax(52px, max-content) minmax(0,1fr) 92px 104px 108px 34px`):
+  ticker · filer (party and state, owner, tags) · range · meters · filed ·
+  receipt, then side · the reason (one line, ellipsis) · traded and lag
+  (spanning the meters and filed columns) · chevron. Below 1440px the
+  meters move to line 2, beside the reason. The filer cell is one line:
+  only the NAME gives way to an ellipsis — party and state, owner, ×N and
+  every tag keep their width, a cluster's member count never shrinks, and
+  the full name stays in the DOM and the opened row (no `title=`). One column head labels
+  them once (Ticker, Filer · why, Range, Size Patt Oth Cmte, Filed · traded)
+  and carries the "What the bars mean" tip. At ≤720px it is three lines — a
+  flex row broken by two zero-height pseudo-elements: ticker · side · range
+  · filed · receipt; filer · meters (each short name over its bars); reason
+  · traded and lag · chevron. A filer that needs more room wraps; nothing is
+  folded away (`css-fold.test.ts` sweeps `.si-row-filed`, `.si-row-traded`,
+  `.si-row-src`, `.owner-note`, `.si-late-tag`, `.si-meter-label`,
+  `.si-cmte-context` and `.si-row-why`). The opened row gives the full
+  reason, the lead line's chronology, the grouping, the owner, the LATE
+  detail, every meter in words with its definition, and the ticker, member
+  and receipt links. One row is open at a time (`details[name]`); the ticker
+  page renders the same row opened.
+- **Tips.** One ⓘ per explanation: the head's "How signals work" beside the
+  h1, "About lead cards", "About filings to read", "What the bars mean", one
+  per tier (Routine's beside its summary, never inside it), "About hit
+  rates", "About hits", and a withheld kind's reason. The sheet is §4's.
+- **The fit (LD6).** The filled column's CONTENT ends within one row of its
+  neighbour's content (`scripts/column-fit.ts`: `contentBottom`, never a cell
+  box); the band's cells do not stretch (`align-items: start`). "Show more"
+  extends past the neighbour by design; a filter change drops the extension.
+- **The pane switch (LD7).** A `.seg` of two buttons, server-`hidden`; the
+  client shows it and hides the unselected pane with the `hidden` attribute
+  only while `(max-width: 1080px)` matches. No media rule hides a pane.
+- **Lead cards (LD5).** Each pick opens its row through a stretched link
+  under the card's own links; at ≤1080px the cards swipe in their own strip
+  (`scroll-snap-type: x mandatory`), a named scroll region while it
+  overflows.
 
 **Record L15 (reversal of a Sep-10 SRC §5 ban) — the HOUSE PARSE label (D2).**
 The Sep-10 copy pass banned "HOUSE PARSE" in visible text. D2 restores the
