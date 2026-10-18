@@ -52,7 +52,7 @@ import {
   type InstData,
 } from "./inst.ts";
 import { filingWindow } from "./derive.ts";
-import { boundQoqDeltas, selectTopFilers, type FilerBudgetState } from "./holdings.ts";
+import { boundQoqDeltas, filerHref, selectTopFilers, type FilerBudgetState } from "./holdings.ts";
 import { resolveServingDbPath } from "./activity.ts";
 import {
   assembleFilerPayload,
@@ -72,11 +72,12 @@ import { sicCode } from "./committee-direct.ts";
 import { planFeedParts, type FeedPartsPlan } from "./feed-parts.ts";
 import { pathSafeTicker } from "./format.ts";
 import { notableMoves, offeredMovePeriods } from "./notable-moves-derive.ts";
-import type { NotableMove } from "./notable-moves.ts";
+import { NAMED_MOVES_SLICE_ROWS, type NotableMove } from "./notable-moves.ts";
 import { rankedTickerHolders, tickerFor, tickerTotalsFor, typingFor } from "./inst.ts";
 import { activityFeed } from "./activity.ts";
-import { concentrationPeriods } from "./inst-analytics.ts";
-import { closedPeriods, corpusAsOf } from "./inst-adds.ts";
+import { concentrationPeriods, newPositionLeaders } from "./inst-analytics.ts";
+import { closedPeriods, corpusAsOf, instFreshnessText } from "./inst-adds.ts";
+import { buildSignalsInstitutional, type SignalsInstitutional } from "./ui/signals-institutional.ts";
 
 export type { StatTile, MemberEntity, TickerEntity };
 
@@ -1705,6 +1706,56 @@ export function notableMovesFor(build: BuildData, period: string): NotableMove[]
     byPeriod.set(period, rows);
   }
   return rows;
+}
+
+/* ---------- signals-v4 M2 (LD1): the Institutional tab of /signals/ ---------- */
+
+const signalsInstCache = new Map<number, SignalsInstitutional>();
+
+/** The Institutional tab's model, once per build (LD1): the analytics period
+    — the newest closed quarter of the concentration table, judged against the
+    corpus (the period /institutional/'s bands read before M2) — its FULL
+    in-build moves (`notableMovesFor`), the Consensus board, the new-position
+    leaders with their largest new position (LD12), the Congress-quarter join
+    (LD10), the lead cards (LD13) and the Named-moves DOM set and slice totals
+    (LD11). Build memory only: never serialized, never written onto a shared
+    object (R23). One model per per-slice bound: the page asks for LD11's
+    fallback bound only when the default would exceed its byte budget. */
+export function getSignalsInstitutional(sliceRows: number = NAMED_MOVES_SLICE_ROWS): SignalsInstitutional {
+  const cached = signalsInstCache.get(sliceRows);
+  if (cached) return cached;
+  const build = getBuildData();
+  const inst = build.inst;
+  if (!inst.present) {
+    const absent = buildSignalsInstitutional({
+      present: false, absentReason: inst.reason, period: null, latestFiled: null, freshness: "", notableManagers: 0,
+      moves: [], leaders: null, txns: build.txns, filerHref: (cik) => filerHref(cik, filerTier(build, cik)), filerTier: (cik) => filerTier(build, cik), sliceRows,
+    });
+    signalsInstCache.set(sliceRows, absent);
+    return absent;
+  }
+  const asOf = corpusAsOf(build.generatedAtDate, inst.watermarks.latest_filed_date);
+  const period = closedPeriods(concentrationPeriods(inst), asOf)[0] ?? null;
+  const notableCiks = new Set<string>([...inst.typingByCik.values()].filter((t) => t.notable).map((t) => t.cik));
+  const leaders =
+    period === null
+      ? null
+      : newPositionLeaders(inst, period, notableCiks, { limit: 5, tickerOf: (issuer, cls) => tickerFor(inst, issuer, cls)?.ticker ?? null });
+  const model = buildSignalsInstitutional({
+    present: true,
+    period,
+    latestFiled: inst.watermarks.latest_filed_date ?? null,
+    freshness: instFreshnessText(inst.watermarks.latest_filed_date ?? null, inst.watermarks.latest_period_of_report ?? null, asOf),
+    notableManagers: notableCiks.size,
+    moves: period === null ? [] : notableMovesFor(build, period),
+    leaders,
+    txns: build.txns,
+    filerHref: (cik) => filerHref(cik, filerTier(build, cik)),
+    filerTier: (cik) => filerTier(build, cik),
+    sliceRows,
+  });
+  signalsInstCache.set(sliceRows, model);
+  return model;
 }
 
 /* ---------- R20: the holders-page set, bounded by the R19 file self-cap ---------- */

@@ -219,7 +219,8 @@ summary cards → dense content bands that share one-pixel seams → footer.
 (Where the design-polish run departs from this order, the departure is recorded
 below: L13 for the cards, L14 for the Signals rule book, SV3-M2 for the
 Signals triage, SV3-M3 for the ticker page, SV4-M1 for the Signals rows,
-tips and pane switch.)
+tips and pane switch, SV4-M2 for the Signals tabs, the Institutional tab and
+the reduced `/institutional/`.)
 `/signals` is a triage page (signals-v3 M2, record SV3-M2 below): three lead
 cards, then "Filings to read" in three tiers beside the hit rate by family and
 a slim hits table. Its rule book (every kind, its exact rule, hits, status —
@@ -302,7 +303,7 @@ reason in the table foot. Every page header renders its figures through the
 one header ledger (`disclosureLedger`: valid `<dl>`, a tone per figure, values
 on one line, subs of at most two lines, never cut). A figure whose value runs
 past a 150px figure's 10 characters, or whose sub would take a third line of
-its 23 characters (a long issuer name in the Consensus add), is `data-wide`: it
+its 23 characters (a long issuer name in a no-ticker Top add), is `data-wide`: it
 takes its content's width above the fold and a full ledger row at it.
 
 - **Congress:** the head beside the four-figure ledger, the provenance strip,
@@ -313,23 +314,33 @@ takes its content's width above the fold and a full ledger row at it.
   — Net flow by ticker │ Trading profile + Sector mix — all disclosed
   transactions, band M2 — Filing history │ Signals — the Planned line, then the
   context disclosures.
-- **Institutional:** the head beside the ledger, the provenance and freshness
-  lines, notable managers, the filer directory, band I1 — Consensus (1.3fr,
-  the primary) │ Conviction leaders (1fr), as the approved preview draws it
-  (CD-5) — Recent activity at full width, the Planned line, the collapsed
-  "Recently added issuers".
+- **Institutional** (signals-v4 M2, record SV4-M2): the head (h1 with its
+  "About this page" ⓘ) beside a three-figure ledger (Filers tracked, Tracked
+  value, Notable managers), the provenance chips (closed quarter, newest
+  filing in amber, an open filing window in amber) with their one ⓘ, the
+  one-line pointer to `/signals/#institutional`, the filer directory, Recent
+  activity at full width, the collapsed "Recently added issuers", and the
+  methodology link as the foot. The notable managers' named moves,
+  Consensus and the new-position leaders (band I1) moved to the Signals
+  Institutional tab.
 - **Filer:** DOM order is the visual order (no `order` or `:has()` grid rules):
   the head beside its period ledger, the provenance strip, Position changes
   with the period and kind segments on its band head, band F1 — Reported
   positions (1.7fr) │ Book shape + Filing history (1fr) — the Planned line, the
   EDGAR and notes disclosures, and the §5 data note as the page's foot line.
-- **Signals** (signals-v3 M2, record SV3-M2; signals-v4 M1, record SV4-M1):
-  the head beside its three-figure ledger (Hits, Stand out, Window) with the
-  "How signals work" ⓘ beside the h1, the lead cards, the pane switch (shown
-  only where the band stacks), band S1 — Filings to read (1.5fr, the primary)
-  │ Hit rate by family above the slim hits (1fr), its cells unstretched and
-  the hits filled to the height of Filings to read — the foot's link row and
-  the one-line withheld kinds.
+- **Signals** (signals-v3 M2, record SV3-M2; signals-v4 M1, record SV4-M1;
+  signals-v4 M2, record SV4-M2): the head — h1 "Signals" with the "How
+  signals work" ⓘ beside it — beside ONE three-figure ledger group per tab
+  (the selected tab's shows; Congress's without script), then the sticky tab
+  strip (Congress │ Institutional) over the panels. Congress: the lead cards,
+  the pane switch (shown only where the band stacks), band S1 — Filings to
+  read (1.5fr, the primary) │ Hit rate by family above the slim hits (1fr),
+  its cells unstretched and the hits filled to the height of Filings to read
+  — the foot's link row and the one-line withheld kinds. Institutional: the
+  provenance chips, three lead cards, a three-pane switch, band S2 — Named
+  moves (1.6fr, the primary) │ Consensus above the new-position leaders
+  (1fr), unstretched, the moves filled to the side column's height — the
+  foot's link row and the §5 data note.
 - **Ticker** (signals-v3 M3, record SV3-M3): the head beside its five-figure
   ledger, the provenance strip, the "On Signals" block when the ticker has an
   active signal, then the sticky Congress │ Institutional tab bar over two
@@ -495,6 +506,45 @@ rows, tips, fit and pane switch.** Decision record: `docs/frontend/signals-v4.md
   under the card's own links; at ≤1080px the cards swipe in their own strip
   (`scroll-snap-type: x mandatory`), a named scroll region while it
   overflows.
+
+**Record SV4-M2 (signals-v4 M2, owner-approved mock 2026-10-17) — the Signals
+tabs, the Institutional tab and the reduced `/institutional/`.** Decision
+record: `docs/frontend/signals-v4.md` §M2.
+
+- **The tabs (LD8).** One `role="tablist"` (`.tk-tabs.sig-tabs`, bound by
+  `scripts/tabs.ts` like the ticker page's) inside a ROLE-LESS scroll wrapper
+  (`.sig-tabs-scroll`, sticky): the wrapper is the named "scroll sideways"
+  region while the strip overflows, so the tablist keeps its role and name at
+  every width. Every `[data-scroll-region]` goes on an element with no role
+  or name of its own; the client refuses to re-role one that has (a console
+  error) and a render test scans for the pair. Every panel renders and shows
+  without script (stacked); print shows every panel. Each head ledger group
+  is `[data-tab-for]` and toggles with its panel; every value in a hidden
+  group is also stated inside its panel. Every in-page navigation (a hash, a
+  card, a Consensus row) runs ONE reveal sequence (`revealTarget`): its tab,
+  its pane, its filter and its row, then scroll and focus.
+- **The Institutional tab.** Provenance chips (the closed quarter; the
+  newest filing in amber) with one ⓘ holding the 13F snapshot caveats; three
+  lead cards (Consensus row 1, the largest new stake, the largest exit) each
+  stating its quarter, the single-filing two with their 13F receipt; the
+  Named moves — kind and manager-type chips (the site's segmented groups) in
+  a row that scrolls sideways at the fold, a removable name pill, one row per
+  move as a `<details>` with its 13F receipt laid over the summary's last
+  track (as SV4-M1's row) — the first fifteen carry their opened body, a
+  held row only the data its body is rendered from on first opening, by the
+  same renderer (the page's byte budget) — "Show 15 more", the count against the build's
+  whole population and the page's own bound stated where it cuts; Consensus
+  — ten rows, "Show all", each row a filter (a stretched button over its
+  cells), the Congress count on its second line; the new-position leaders,
+  each naming its largest new position. The Congress column (LD10) is a
+  count with its words for assistive technology; an opened row lists its
+  side's lines (each with range, both dates and receipt), copied from ONE
+  per-name block in the closed "Congress lines behind the counts"
+  disclosure, so a popular name's lines are never repeated per move.
+- **The owner's label (LD20).** "Conviction leaders" renders only in its
+  exempt heading, ARIA and caption forms or through
+  `<span class="ref-label">…</span>`; its anchor is `#new-position-leaders`
+  (the §0 gate reads raw bytes, ids included).
 
 **Record L15 (reversal of a Sep-10 SRC §5 ban) — the HOUSE PARSE label (D2).**
 The Sep-10 copy pass banned "HOUSE PARSE" in visible text. D2 restores the

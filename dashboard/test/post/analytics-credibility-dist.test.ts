@@ -2,7 +2,8 @@
    BUILT closed quarter. Every entry must match an issuer name filed in that
    quarter — any filer's position, from the serving artifact the build read —
    so a stale entry fails here instead of accumulating. The quarter is the one
-   the built /institutional/ page names. Runs after a data build. */
+   the built Signals Institutional tab names (signals-v4 M2: the board moved
+   there from /institutional/). Runs after a data build. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
@@ -14,13 +15,13 @@ import { FUND_WRAPPER_ISSUERS, staleFundWrapperEntries } from "../../src/lib/not
 const DIST = path.join(process.cwd(), "dist");
 
 test("T4.3 (R28): no reviewed fund-wrapper entry is stale on the built closed quarter", (t) => {
-  const page = path.join(DIST, "institutional", "index.html");
+  const page = path.join(DIST, "signals", "index.html");
   const db = resolveServingDbPath();
   if (!existsSync(page) || !db || !existsSync(db)) {
-    t.skip("no data build: dist/ has no /institutional/ page or the serving artifact is absent");
+    t.skip("no data build: dist/ has no /signals/ page or the serving artifact is absent");
     return;
   }
-  const period = /id="inst-notable-moves"[^>]*data-moves-period="([^"]*)"/.exec(readFileSync(page, "utf-8"))?.[1] ?? "";
+  const period = /<section [^>]*id="institutional"[^>]*data-quarter="([^"]*)"/.exec(readFileSync(page, "utf-8"))?.[1] ?? "";
   assert.notEqual(period, "", "the built page names its closed quarter");
   const conn = new DatabaseSync(db, { readOnly: true });
   try {

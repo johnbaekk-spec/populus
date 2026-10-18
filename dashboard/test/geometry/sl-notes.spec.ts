@@ -527,7 +527,9 @@ test("CODE-REVIEW F9 / L9: REAL member and filer renderer output hit-tests to --
 test("R-2/C-2: under PRINT media a mark trigger's panel spans its cell (≥ 200px where the cell allows)", async ({ page }) => {
   const squeezed = () =>
     page.evaluate(() =>
-      Array.from(document.querySelectorAll(".note:has(> .note-mark) > .note-pop"))
+      /* the property is about a TABLE CELL's slot: a mark trigger beside a
+         heading or a chip (signals-v4 M2's /institutional/ head) has no cell */
+      Array.from(document.querySelectorAll(":is(th, td) .note:has(> .note-mark) > .note-pop"))
         .map((p) => {
           const cell = p.closest("th, td")!;
           const cs = getComputedStyle(cell);

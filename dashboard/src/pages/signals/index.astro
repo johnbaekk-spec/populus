@@ -5,10 +5,14 @@
 // reason. The head carries three figures and the "How signals work" note; the
 // lead cards; then "Filings to read" beside the hit rate by family and the
 // slim hits table. The rule book and the lag distribution are on Methodology.
+// signals-v4 M2 (R9, R10, LD8, LD9): the page is "Signals", in tabs — Congress
+// (the above) and Institutional (the notable managers' named moves,
+// Consensus and the new-position leaders, moved here from /institutional/).
 import Base from "../../layouts/Base.astro";
-import { getBuildData, getSignalArtifact, getTriage } from "../../lib/data";
+import { getBuildData, getSignalArtifact, getSignalsInstitutional, getTriage } from "../../lib/data";
 import { signalsBody, type SignalsPageDeps } from "../../lib/ui/index.ts";
 import type { RenderCtx } from "../../lib/format";
+import { NAMED_MOVES_FALLBACK_ROWS, SIGNALS_PAGE_BYTES, SIGNALS_PAGE_CHROME_BYTES } from "../../lib/notable-moves";
 
 const build = getBuildData();
 const artifact = getSignalArtifact();
@@ -23,25 +27,37 @@ const ctx: RenderCtx = {
 const rowsEvaluated = build.txns.filter(
   (t) => t.filed >= artifact.coverageFrom && t.filed <= artifact.coverageTo,
 ).length;
-// LD1: the triage is computed once per build, in memory, and never serialized.
-const deps: SignalsPageDeps = { rowsEvaluated, triage: getTriage() };
-const body = signalsBody(artifact, ctx, deps);
-// R7 (SIGNALS-CLARITY M2): the page is Congress signals in its title, h1 and
-// description; the masthead nav label stays "Signals".
+// LD1: the triage and the Institutional tab are computed once per build, in
+// memory, and never serialized.
+const deps: SignalsPageDeps = { rowsEvaluated, triage: getTriage(), institutional: getSignalsInstitutional() };
+let body = signalsBody(artifact, ctx, deps);
+/* LD11's budget: a page over 1.5 MiB carries the Named moves' locked
+   fallback bound (20 per filter, not 30); the tab states the bound it uses. */
+if (Buffer.byteLength(body) > SIGNALS_PAGE_BYTES - SIGNALS_PAGE_CHROME_BYTES) {
+  body = signalsBody(artifact, ctx, { ...deps, institutional: getSignalsInstitutional(NAMED_MOVES_FALLBACK_ROWS) });
+}
+// signals-v4 LD9 (reversing SIGNALS-CLARITY M2's R7): the page holds Congress
+// AND 13F tabs, so its title, h1 and description name both sources — the
+// property kept is that the title names what is on the page.
 const description =
-  "Congress signals: the filings to read first, each measured against the filer's own record, with the " +
-  "rule-based hits that flagged them — every hit with its exact rule, interval magnitude, both dates and " +
-  "receipt; uncalibrated or out-of-envelope kinds are withheld and say so.";
+  "Signals from Congress trades and 13F filings: the Congress filings to read first, each measured against the filer's " +
+  "own record, with the rule-based hits that flagged them — every hit with its exact rule, interval magnitude, both " +
+  "dates and receipt — and the notable 13F managers' named moves, consensus and largest new positions for the newest " +
+  "closed quarter, each with its 13F receipt and the members of Congress on the same side.";
 ---
 
-<Base title="Congress signals — Public Filings" description={description} active="signals">
+<Base title="Signals — Congress and 13F — Public Filings" description={description} active="signals">
   <main class="shell page design-page" id="signals-page">
     <Fragment set:html={body} />
   </main>
   <script>
     import { initSignalsPage } from "../../scripts/signals-client";
+    import { initDomDisclosures } from "../../scripts/inst-index-client";
     import { initNotes } from "../../scripts/notes";
     initSignalsPage();
+    /* Consensus's DOM-backed "Show all" (LD12): the one binder every such
+       disclosure on the site uses */
+    initDomDisclosures();
     initNotes();
   </script>
 </Base>

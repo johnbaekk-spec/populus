@@ -1,5 +1,10 @@
-/* R14 (SRC §6-i, §6-iii) — the notable-manager moves band and the consensus
-   board on /institutional/, plus the per-period shard behind "Show 50 more".
+/* R14 (SRC §6-i, §6-iii) — the notable-manager moves and the consensus
+   board, plus the per-period shard. signals-v4 M2 (R11, R12, R14, LD11, LD13):
+   the moves and the board render on /signals/#institutional
+   (`ui/signals-institutional.ts`) from the FULL in-build population; this
+   module keeps their model — the board, the Named-moves DOM set and its slice
+   totals, the lead-card picks — and the shard stays a public file with no
+   page consumer (debt TD-3).
 
    Population: the registry's `notable` managers, ONE closed quarter, kinds
    new / add / trim / exit — classified by SHARES (R8) — with the producer's
@@ -16,7 +21,7 @@
    `notable-moves-derive.ts` (server only). */
 import type { ManagerType } from "./manager-directory.ts";
 import type { LedgerItem } from "./ui/shared.ts";
-import { compactDisclosure, displayIssuerName, esc, fmtInt, fmtUsd, hangMark, kindWordHtml, note, rangeOfTotal, slug, thHtml } from "./format.ts";
+import { displayIssuerName, esc, fmtInt, fmtUsd, slug } from "./format.ts";
 
 export type MoveKind = "new" | "add" | "trim" | "exit";
 
@@ -55,122 +60,23 @@ export interface NotableMovesShard {
 /** New > Exit > Add > Trim (SRC §6-i). */
 export const MOVE_KIND_PRIORITY: Record<MoveKind, number> = { new: 0, exit: 1, add: 2, trim: 3 };
 
-/** Rows rendered on the server; the shard carries the rest. */
-export const NOTABLE_MOVES_SSR_ROWS = 15;
-export const NOTABLE_MOVES_STEP = 50;
-
-export function notableMovesHref(period: string): string {
-  return `/institutional/data/notable-moves/${encodeURIComponent(period)}.v1.json`;
-}
-
 /** The filer-page anchor of one position's change row (institutional.ts
     renders `id="pos-<slug(position_key)>"` on every changes row). */
 export function positionAnchor(positionKey: string): string {
   return `pos-${slug(positionKey)}`;
 }
 
-export function classifyNotableMovesShard(body: unknown): NotableMovesShard | null {
-  if (typeof body !== "object" || body === null) return null;
-  const b = body as Record<string, unknown>;
-  if (b.v !== 1 || typeof b.period !== "string" || !Array.isArray(b.rows)) return null;
-  return { v: 1, period: b.period, total: Number(b.total), truncated: Boolean(b.truncated), rows: b.rows as NotableMove[] };
-}
+/* ---------- the signed figures every move surface prints ---------- */
 
-/* ---------- rendering ---------- */
-
-function signedUsd(v: number | null): string {
+/** "+$1.2M" / "−$1.2M", or "—" for an undisclosed value. */
+export function signedUsd(v: number | null): string {
   if (v == null) return "—";
   return v < 0 ? `−${fmtUsd(Math.abs(v))}` : `+${fmtUsd(v)}`;
 }
-function signedShares(v: number | null): string {
+/** "+1,234" / "−1,234" shares, or "—". */
+export function signedShares(v: number | null): string {
   if (v == null) return "—";
   return v < 0 ? `−${fmtInt(Math.abs(v))}` : `+${fmtInt(v)}`;
-}
-
-export interface MoveRowOpts {
-  filerHref: (cik: string) => string;
-}
-
-export function notableMoveRowHtml(m: NotableMove, opts: MoveRowOpts): string {
-  const href = `${opts.filerHref(m.cik)}#${positionAnchor(m.key)}`;
-  const who = `<a href="${esc(href)}">${esc(m.manager)}</a>${m.principal ? ` <span class="c-muted">(${esc(m.principal)})</span>` : ""}`;
-  // LD6: a Tier C ticker always carries its verification note — the ticker
-  // itself is the trigger (DESIGN-POLISH M1, R6: the label form).
-  const tick = m.ticker
-    ? note(`ticker verified against the SEC company list${m.ticker_verified ? ` on ${m.ticker_verified}` : ""}`, { scope: "notable-moves" }, `${m.cik}-${m.key}`, {
-        trigger: "label",
-        textHtml: `<span class="mono-ticker">${esc(m.ticker)}</span>`,
-        name: m.ticker,
-      }) + " "
-    : "";
-  const dir = m.delta_value == null ? "c-muted" : m.delta_value < 0 ? "c-sell" : "c-buy";
-  return (
-    `<tr data-mv-kind="${m.kind}" data-mv-type="${esc(m.type)}" data-mv-cik="${esc(m.cik)}" data-edge="${m.kind}">` +
-    `<td class="c-filer">${who}</td>` +
-    `<td class="c-issuer c-flex">${tick}<span class="filed-name">${esc(m.issuer)}</span></td>` +
-    `<td class="c-chip c-kind">${kindWordHtml(m.kind)}</td>` +
-    `<td class="c-num">${esc(signedShares(m.delta_shares))}</td>` +
-    `<td class="c-num">${m.curr_value == null ? "—" : esc(fmtUsd(m.curr_value))}</td>` +
-    `<td class="c-num ${dir}">${esc(signedUsd(m.delta_value))}</td>` +
-    `<td class="c-filed c-num">${esc(m.filed ?? "—")}</td>` +
-    `<td class="c-src">${m.doc ? `<a href="${esc(m.doc)}" rel="noopener" target="_blank">EDGAR ↗</a>` : "—"}</td></tr>`
-  );
-}
-
-export const NOTABLE_MOVES_COLUMNS = ["Manager", "Ticker · Issuer", "Change", "Δ shares", "Now $", "Δ $", "Filed", "Src"] as const;
-/** The ledger role of each column above (DESIGN-POLISH M1, R2). */
-const NOTABLE_MOVES_CLASSES = ["c-filer", "c-issuer c-flex", "c-chip c-kind", "c-num", "c-num", "c-num", "c-num", "c-src"] as const;
-
-/** The band's count — the range grammar (R8): "1–15 of 40 moves". The server
-    and the island both build it here. */
-export function notableMovesCountText(shown: number, total: number): string {
-  return rangeOfTotal(1, shown, total, "moves");
-}
-
-export interface NotableMovesBandOpts extends MoveRowOpts {
-  /** closed periods offered by the selector, newest first */
-  periods: readonly string[];
-  period: string | null;
-  /** SSR rows (defaults to NOTABLE_MOVES_SSR_ROWS) */
-  ssrRows?: number;
-}
-
-/** The band. Fifteen rows SSR; the chips and "Show 50 more" run on the shard. */
-export function notableMovesBandHtml(rows: readonly NotableMove[], opts: NotableMovesBandOpts): string {
-  const ssr = opts.ssrRows ?? NOTABLE_MOVES_SSR_ROWS;
-  const shown = rows.slice(0, ssr);
-  const periodChips = opts.periods
-    .map((p) => `<button type="button" class="mgr-chip" data-moves-period="${esc(p)}" aria-pressed="${p === opts.period}">${esc(p)}</button>`)
-    .join("");
-  const kindChips = (["new", "exit", "add", "trim"] as MoveKind[])
-    .map((k) => `<button type="button" class="mgr-chip" data-moves-kind="${k}" aria-pressed="false">${k === "new" ? "New stakes" : k === "exit" ? "Exits" : k === "add" ? "Adds" : "Trims"}</button>`)
-    .join("");
-  const typeChips = `<button type="button" class="mgr-chip" data-moves-type="hedge_fund" aria-pressed="false">Hedge funds</button>` +
-    `<button type="button" class="mgr-chip" data-moves-type="family_office" aria-pressed="false">Family offices</button>`;
-  const body = shown.length === 0
-    ? `<tr><td colspan="${NOTABLE_MOVES_COLUMNS.length}" class="design-unavailable-message">${opts.period ? `No notable-manager moves are on record for the quarter ended ${esc(opts.period)}.` : "No closed quarter is available yet."}</td></tr>`
-    : shown.map((m) => notableMoveRowHtml(m, opts)).join("\n");
-  return (
-    `<section class="panel panel-wide design-notable-moves" id="inst-notable-moves" aria-label="Notable managers — latest named moves"` +
-    ` data-moves-period="${esc(opts.period ?? "")}" data-moves-total="${rows.length}" data-moves-shown="${shown.length}">` +
-    `<div class="panel-head"><h2 class="section-h">Notable managers — latest named moves</h2>` +
-    `<span class="panel-note" id="inst-notable-moves-window">${opts.period ? `quarter ended ${esc(opts.period)}` : "no closed quarter"} · by shares · largest $ change first within New › Exit › Add › Trim</span></div>` +
-    `<div class="range-control control-row">` +
-    `<div class="filter-group" role="group" aria-label="Reporting quarter"><span class="filter-label">Quarter</span><div class="chips">${periodChips}</div></div>` +
-    `<div class="filter-group" role="group" aria-label="Kind of change"><span class="filter-label">Change</span><div class="chips">${kindChips}</div></div>` +
-    `<div class="filter-group" role="group" aria-label="Manager type"><span class="filter-label">Type</span><div class="chips">${typeChips}</div></div>` +
-    `</div>` +
-    `<div class="table-scroll"><table class="etable" data-sticky-first><caption class="visually-hidden">Notable managers' position changes${opts.period ? ` into the quarter ended ${esc(opts.period)}` : ""}</caption>` +
-    `<thead><tr>${NOTABLE_MOVES_COLUMNS.map((c, i) => thHtml({ label: c, cls: NOTABLE_MOVES_CLASSES[i] })).join("")}</tr></thead>` +
-    `<tbody id="inst-notable-moves-tbody">${body}</tbody></table></div>` +
-    `<p class="section-note" id="inst-notable-moves-count">${rows.length === 0 ? "" : esc(notableMovesCountText(shown.length, rows.length))}` +
-    (rows.length > shown.length ? ` · <button type="button" class="linklike" id="inst-notable-moves-more">Show ${fmtInt(NOTABLE_MOVES_STEP)} more</button>` : "") +
-    (opts.period ? ` · <a href="${esc(notableMovesHref(opts.period))}">every row for this quarter (JSON)</a>` : "") + `</p>` +
-    `<p class="caveat-line" id="inst-notable-moves-status" role="status" aria-live="polite"></p>` +
-    `<p class="section-note">Moves are classified by share count between the two quarters; a dollar change alone is not a position change. ` +
-    `Exit is inferred from absence in the next filing. Tickers appear only where the reviewed mapping names one.</p>` +
-    `</section>`
-  );
 }
 
 /* ---------- the consensus board (SRC §6-iii) ---------- */
@@ -298,14 +204,13 @@ export function staleFundWrapperEntries(issuerNames: Iterable<string>, list: rea
   return list.filter((e) => !names.has(e.key));
 }
 
-/** The /institutional/ header's "Consensus add" figure (R15, DESIGN-POLISH
-    M2 review R2-3). The value is the name's reviewed TICKER; a name no
-    reviewed ticker maps has the count of notable managers who opened it as its
-    value — a figure, never "—", which on this ledger reads as "no consensus
-    add" on a quarter that has one. The issuer's filed name leads the sub
-    either way (R15, long names; a name that would wrap the sub to a third
-    line makes the figure wide — `ledgerFigureWide`), and only a quarter with
-    no qualifying name shows "—". */
+/** The Institutional tab's "Top add" figure (signals-v4 LD9; it was the
+    /institutional/ header's "Consensus add", R15, DESIGN-POLISH M2 review
+    R2-3). The value is the name's reviewed TICKER, its sub the count of
+    notable managers who opened it; a name no reviewed ticker maps has that
+    count as its value — a figure, never "—", which on this ledger reads as
+    "no top add" on a quarter that has one — and its filed name leads the
+    sub. Only a quarter with no qualifying name shows "—". */
 export function consensusAddLedgerItem(consensus: ConsensusRow | null, period: string | null, wrappersExcluded = 0): LedgerItem {
   /* R28: the figure is row 1 of the board, so it excludes the reviewed fund
      wrappers too, and its note says how many. */
@@ -314,7 +219,7 @@ export function consensusAddLedgerItem(consensus: ConsensusRow | null, period: s
     : "";
   if (!consensus) {
     return {
-      label: "Consensus add",
+      label: "Top add",
       value: "—",
       /* the closed quarter is stated beside it (the provenance strip and the
          other figures' subs), so the absence fits two lines */
@@ -327,15 +232,15 @@ export function consensusAddLedgerItem(consensus: ConsensusRow | null, period: s
   const n = consensus.newStakes;
   const managers = `${fmtInt(n)} ${n === 1 ? "manager" : "managers"}`;
   return {
-    label: "Consensus add",
+    label: "Top add",
     value: consensus.ticker ?? managers,
-    detail: consensus.ticker ? `${consensus.issuer} · ${fmtInt(n)} notable ${n === 1 ? "manager" : "managers"} opened it` : `${consensus.issuer} · no reviewed ticker`,
+    detail: consensus.ticker ? `${fmtInt(n)} notable ${n === 1 ? "manager" : "managers"} opened it` : `${consensus.issuer} · no reviewed ticker`,
     subKind: consensus.ticker ? "count" : "absence",
     tone: "blue",
     noteHtml:
-      `The issuer the most notable managers opened a new stake in during the closed quarter ${esc(period ?? "")}` +
+      `${esc(consensus.ticker ? `${consensus.ticker} ${consensus.issuer}` : consensus.issuer)}: the issuer the most notable managers opened a new stake in during the closed quarter ${esc(period ?? "")}` +
       (consensus.ticker ? "" : `; no reviewed ticker maps it, so the figure is the number of notable managers who opened it`) +
-      `. Ranked in Consensus below.${wrappers}`,
+      `. The first row of Consensus.${wrappers}`,
   };
 }
 
@@ -365,7 +270,7 @@ export interface ConsensusBoard {
   rows: ConsensusRow[];
   qualifying: number;
   /** R28: issuer keys that would qualify but are on the reviewed fund-wrapper
-      list — excluded from the board and from the "Consensus add" figure */
+      list — excluded from the board and from the "Top add" figure */
   wrappersExcluded: number;
   /** R28: moves that carry no issuer key and so cannot be grouped */
   unkeyedMoves: number;
@@ -466,63 +371,109 @@ function disambiguateConsensusLabels(rows: ConsensusRow[]): void {
   }
 }
 
-/** Band I1 (DESIGN-POLISH M2, R10; coordinator decision CD-5): Consensus is
-    the PRIMARY cell (1.3fr) beside Conviction leaders (1fr, the side panel),
-    and shows a FIXED 10 rows — the approved preview's board — whatever its
-    partner holds. No row count here depends on the other cell (the paired-rows
-    estimate of M2F-D1 is withdrawn). The rest stay in the DOM behind the named
-    binder, one Show-all away. */
-export const CONSENSUS_COMPACT_ROWS = 10;
+/* ---------- signals-v4 M2 (R11, R12, LD11, LD13): the Named moves model ---------- */
 
-export function consensusBoardHtml(board: ConsensusBoard | null, opts: MoveRowOpts): string {
-  const compact = CONSENSUS_COMPACT_ROWS;
-  const columns = ["Ticker · Issuer", "New stakes", "Adds", "Trims", "Exits", "Net $", "Top mover"];
-  const head = `<div class="panel-head"><h2 class="section-h">Consensus</h2><span class="panel-note">${board ? `≥${fmtInt(board.minFilers)} notable managers moved the same name · ${esc(board.period)} · ranked by new stakes` : "notable managers · no closed quarter"}</span></div>`;
-  if (board === null || board.rows.length === 0) {
-    return (
-      /* `data-empty-state`: the board is ONE stated line, so band I1
-         collapses rather than pairing it with the Conviction table (R10). */
-      `<section class="panel design-consensus" id="inst-consensus" aria-label="Consensus" data-empty-state>${head}` +
-      `<p class="section-note">${board ? `No issuer was moved by ${fmtInt(board.minFilers)} or more notable managers in the quarter ended ${esc(board.period)}. Absence is stated, never simulated. ${consensusExclusionText(board)}` : "No closed quarter is available to group over yet."}</p></section>`
-    );
+/** Moves the DOM carries per filter slice (LD11). */
+export const NAMED_MOVES_SLICE_ROWS = 30;
+/** LD11's locked fallback: the per-slice bound when 30 would carry the page
+    past `SIGNALS_PAGE_BYTES` (the page applies it, `pages/signals`). */
+export const NAMED_MOVES_FALLBACK_ROWS = 20;
+/** LD11: the Signals page's byte budget, 1.5 MiB (a post-build test holds it). */
+export const SIGNALS_PAGE_BYTES = 1_572_864;
+/** What the page's layout adds around the rendered body (head, masthead,
+    footer, script and style links): the body must leave this much of the
+    budget. Measured on the build and recorded in signals-v4.md. */
+export const SIGNALS_PAGE_CHROME_BYTES = 65_536;
+/** The Named moves' visible floor: the server shows this many, and the
+    column fit never shows fewer (LD6). */
+export const NAMED_MOVES_MIN = 15;
+/** "Show 15 more". */
+export const NAMED_MOVES_STEP = 15;
+
+/** The kind chips, in their order (New, Exits, Adds, Trims). */
+export const NAMED_MOVE_KINDS: readonly MoveKind[] = ["new", "exit", "add", "trim"];
+/** The manager-type chips (LD11). Other types are reached through "any". */
+export const NAMED_MOVE_TYPES: readonly ManagerType[] = ["hedge_fund", "family_office", "asset_manager", "insurer", "alt_manager"];
+
+/** One filter slice's key in `data-mv-totals`: "{kind|any}|{type|any}". */
+export function namedMovesSliceKey(kind: string | null, type: string | null): string {
+  return `${kind ?? "any"}|${type ?? "any"}`;
+}
+
+/** The ONE slice predicate the server's totals and DOM set and the client's
+    chips share. */
+export function namedMoveMatches(m: Pick<NotableMove, "kind" | "type">, kind: string | null, type: string | null): boolean {
+  return (kind === null || m.kind === kind) && (type === null || m.type === type);
+}
+
+/** Every slice: kind ∈ {any, …kinds} × type ∈ {any, …types}. */
+export function namedMovesSlices(): { kind: MoveKind | null; type: ManagerType | null }[] {
+  const out: { kind: MoveKind | null; type: ManagerType | null }[] = [];
+  for (const kind of [null, ...NAMED_MOVE_KINDS]) for (const type of [null, ...NAMED_MOVE_TYPES]) out.push({ kind, type });
+  return out;
+}
+
+/** The 30 slice totals over the FULL population — the counts the page states
+    when a filter cuts the list (LD11). */
+export function namedMovesSliceTotals(moves: readonly NotableMove[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const { kind, type } of namedMovesSlices()) out[namedMovesSliceKey(kind, type)] = 0;
+  for (const m of moves) {
+    for (const kind of [null, m.kind]) {
+      for (const type of [null, m.type]) {
+        const k = namedMovesSliceKey(kind, type);
+        if (k in out) out[k]!++;
+      }
+    }
   }
-  const rows = board.rows
-    .map((r, i) =>
-      `<tr${i >= compact ? " data-compact-extra" : ""}>` +
-      `<td class="c-issuer c-flex">${r.ticker ? `<span class="mono-ticker">${esc(r.ticker)}</span> ` : ""}<span class="filed-name">${esc(r.issuer)}</span>` +
-      `${r.disambiguator ? ` <span class="c-muted">${esc(r.disambiguator)}</span>` : ""}</td>` +
-      `<td class="c-num c-strong">${fmtInt(r.newStakes)}</td><td class="c-num">${fmtInt(r.adds)}</td><td class="c-num">${fmtInt(r.trims)}</td><td class="c-num">${fmtInt(r.exits)}</td>` +
-      `<td class="c-num has-marks ${r.netDeltaUsd == null ? "c-muted" : r.netDeltaUsd < 0 ? "c-sell" : "c-buy"}">${esc(signedUsd(r.netDeltaUsd))}${r.netDeltaPartial ? hangMark("≈") : ""}</td>` +
-      `<td class="c-filer c-secondary">${r.topMover ? `<a href="${esc(opts.filerHref(r.topMover.cik))}">${esc(r.topMover.manager)}</a> ${kindWordHtml(r.topMover.kind)}` : "—"}</td></tr>`,
-    )
-    .join("\n");
-  const collapsed = board.rows.length > compact;
-  return (
-    `<section class="panel design-consensus" id="inst-consensus" aria-label="Consensus">${head}` +
-    `<div class="table-scroll"><table class="etable etable-compact" data-sticky-first><caption class="visually-hidden">Issuers moved by ${fmtInt(board.minFilers)} or more notable managers in ${esc(board.period)}</caption>` +
-    `<thead><tr>${columns.map((c, i) => thHtml({ label: c, cls: i === 0 ? "c-issuer c-flex" : i === 6 ? "c-filer c-secondary" : i === 5 ? "c-num has-marks" : "c-num" })).join("")}</tr></thead>` +
-    `<tbody id="inst-consensus-tbody"${collapsed ? ' data-collapsed="true"' : ""}>${rows}</tbody></table></div>` +
-    `<p class="section-note">${fmtInt(board.qualifying)} issuers qualify · counts are distinct notable managers · ≈ = a contributing change disclosed no value, so the sum is partial.` +
-    (board.qualifying > board.rows.length ? ` The ${fmtInt(board.rows.length)} highest-ranked are listed.` : "") +
-    (board.rows.some((r) => r.disambiguator) ? ` #n tells apart issuers filed under one name: the order of their stable issuer keys.` : "") +
-    ` ${consensusExclusionText(board)}</p>` +
-    /* The one disclosure primitive and its range count (R8) — it was hand-built
-       here with a second grammar, a bare count of the held-back rows. A board
-       holding nothing back renders its hidden SHELL, so the table always
-       carries its own count (`data-compact-total` ≤ `data-compact-shown`):
-       G9 reads it to know a short primary is COMPLETE, not cut (M2 delta
-       review). */
-    compactDisclosure({
-      rootId: "inst-consensus-tbody",
-      total: board.rows.length,
-      shown: Math.min(compact, board.rows.length),
-      noun: "issuers",
-      /* when more issuers qualify than the board lists, its total is the
-         board's own bound — "1–10 of the 50 highest-ranked issuers" — never
-         the count of qualifying issuers (review R-4) */
-      ...consensusBoundNoun(board),
-      domBacked: true,
-    }) +
-    `</section>`
-  );
+  return out;
+}
+
+/** The identity a name filter groups by: the producer's issuer key, or — for
+    a move no issuer key groups — its own position key, so a lead card on an
+    unkeyed name still filters to every move on that security. */
+export function moveNameKey(m: Pick<NotableMove, "ikey" | "key">): string {
+  return m.ikey ?? `pos:${m.key}`;
+}
+
+/** LD11: the moves the page carries, in population order — for each slice
+    its first `sliceRows`, plus every move on a named key (the listed
+    Consensus rows and the lead cards), so a name filter lists every move on
+    its key. */
+export function namedMovesDomSet(moves: readonly NotableMove[], nameKeys: ReadonlySet<string>, sliceRows = NAMED_MOVES_SLICE_ROWS): NotableMove[] {
+  const keep = new Set<number>();
+  for (const { kind, type } of namedMovesSlices()) {
+    let n = 0;
+    for (let i = 0; i < moves.length && n < sliceRows; i++) {
+      if (namedMoveMatches(moves[i]!, kind, type)) {
+        keep.add(i);
+        n++;
+      }
+    }
+  }
+  moves.forEach((m, i) => {
+    if (nameKeys.has(moveNameKey(m))) keep.add(i);
+  });
+  return moves.filter((_, i) => keep.has(i));
+}
+
+/** LD13: the Institutional lead cards' picks. */
+export interface InstLeadCards {
+  /** the Consensus board's first row */
+  consensus: ConsensusRow | null;
+  /** the new stake with the largest Δ $ (ties: population order, `cmpMoves`) */
+  newStake: NotableMove | null;
+  /** the exit with the most negative Δ $ (ties: population order) */
+  exit: NotableMove | null;
+}
+
+export function instLeadCards(board: Pick<ConsensusBoard, "rows"> | null, moves: readonly NotableMove[]): InstLeadCards {
+  let newStake: NotableMove | null = null;
+  let exit: NotableMove | null = null;
+  for (const m of moves) {
+    if (m.delta_value == null) continue;
+    if (m.kind === "new" && (newStake === null || m.delta_value > newStake.delta_value!)) newStake = m;
+    if (m.kind === "exit" && (exit === null || m.delta_value < exit.delta_value!)) exit = m;
+  }
+  return { consensus: board?.rows[0] ?? null, newStake, exit };
 }

@@ -440,6 +440,15 @@ export async function renderParitySurfaces(): Promise<Record<string, string>> {
   out["lagBandHtml"] = ui.lagBandHtml({ latestBatch: [TXNS[0]], latestBatchFiled: TXNS[0].filed });
   out["signalsRankingHtml"] = ui.signalsRankingHtml();
   out["committeeDirectHtml"] = ui.committeeDirectHtml();
+  /* signals-v4 M2: the page with its Institutional tab (the shared fixture:
+     moves, Consensus, the leaders, Congress lines), the tab alone, the S7
+     sentence /institutional/'s provenance tip carries, and Methodology's
+     Congress-column section */
+  const { fixtureInstitutional } = await import("./inst-signals-fixture.ts");
+  out["signalsBody.institutional"] = ui.signalsBody(SIGNAL_ARTIFACT, CTX, { rowsEvaluated: 1000, triage, institutional: fixtureInstitutional() });
+  out["signalsInstitutionalHtml"] = ui.signalsInstitutionalHtml(fixtureInstitutional(), CTX);
+  out["s7CopyHtml"] = ui.s7CopyHtml(WINDOW);
+  out["signalsCongressColumnHtml"] = ui.signalsCongressColumnHtml();
   out["memberSignalsPanel"] = ui.memberSignalsPanel(SIGNAL_ARTIFACT, "T000001", CTX);
   out["memberSignalsPanel.empty"] = ui.memberSignalsPanel(SIGNAL_ARTIFACT, "Z999999", CTX);
 

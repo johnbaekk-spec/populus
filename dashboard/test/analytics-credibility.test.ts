@@ -6,16 +6,17 @@
    that lost the rule. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { MIN_BOOK_POSITIONS, newPositionLeaders, type NewPositionLeaders } from "../src/lib/inst-analytics.ts";
-import { newPositionLeadersHtml } from "../src/lib/ui/institutional.ts";
+/* signals-v4 M2 (LD12, LD21): the leaders and Consensus render on
+   /signals/#institutional; their rules and statements are pinned here on the
+   new renderers. The rule and count sentences are the panel's tip (LD19),
+   the qualifying count stays visible. */
+import { buildSignalsInstitutional, consensusPanelHtml, convictionLeadersHtml, institutionalLedgerItems } from "../src/lib/ui/signals-institutional.ts";
 import { unavailableDesignPanel } from "../src/lib/ui/shared.ts";
 import { activityFeedHtml, notableActivity, scanBannedWording, NOTABLE_FEED_PER_FILER, type ActivityFeed, type ActivityFeedRecord, type ActivityRecord } from "../src/lib/activity.ts";
 import {
   consensusAddLedgerItem,
   consensusBoard,
-  consensusBoardHtml,
   consensusRowLabel,
   FUND_WRAPPER_ISSUERS,
   normalizedIssuerName,
@@ -28,7 +29,6 @@ import type { ConcentrationRow, InstData, QoqDeltaRow } from "../src/lib/inst.ts
 import { domOf, visibleText } from "./lib/ledger-dom.ts";
 
 const P = "2026-06-30";
-const SRC = path.resolve(import.meta.dirname, "..", "src");
 
 /* ============================================================ R26 conviction */
 
@@ -94,14 +94,16 @@ test("T4.1 (R26): notable managers only, a complete book of at least 20 position
   assert.deepEqual(l.excluded, { notNotable: 1, smallBook: 1, missingValue: 1, belowThreshold: 1 }, "A not notable · B under the floor · C a missing value · D below 2%");
   assert.deepEqual(convictionProblems(l, inst, NOTABLE), []);
 
-  // the note states the rule, the evaluated and qualifying counts and each exclusion
-  const note = visibleText(domOf(newPositionLeadersHtml(l, () => "top", P)).querySelectorAll("p.section-note")[0]!);
+  // the tip states the rule, the evaluated and qualifying counts and each exclusion; the qualifying count stays visible
+  const panel = domOf(convictionLeadersHtml(l, () => "top", P));
+  const note = panel.querySelector(".note-pop")!.textContent.replace(/\s+/g, " ");
   assert.match(note, /notable managers whose complete 13F long book has at least 20 positions, every one with a value/);
   assert.match(note, /5 filers opened positions in 2026-06-30; 1 qualifies\./);
   assert.match(note, /Excluded: 1 not notable · 1 book under 20 positions · 1 a position without a value · 1 no new position at 2% or more/);
+  assert.match(visibleText(panel.querySelector("p.cv-count")!), /1 filer qualifies/);
 
-  // fewer than five qualify: the band lists only those
-  assert.equal((newPositionLeadersHtml(l, () => "top", P).match(/<tr><td class="c-rank/g) ?? []).length, 1);
+  // fewer than five qualify: the panel lists only those
+  assert.equal(panel.querySelectorAll("li.cv-row").length, 1);
 
   // control: DROPPING THE NOTABLE FILTER ranks A (one position, 100%) first and fails the property
   const everyone = new Set(FILERS.map((f) => f.cik));
@@ -131,19 +133,19 @@ test("T4.1 (R26): zero qualifying renders the computed-zero line with the rule a
   const inst = instOf(FILERS.filter((f) => f.cik !== "E"));
   const l = newPositionLeaders(inst, P, NOTABLE)!;
   assert.equal(l.rows.length, 0);
-  const html = newPositionLeadersHtml(l, () => "top", P);
+  const html = convictionLeadersHtml(l, () => "top", P);
   assert.deepEqual(computedZeroProblems(html), []);
-  // the line carries the band's fixed heading, and that UI name passes the wording scan
-  assert.match(html, /^<section class="panel design-newpositions" aria-label="Conviction leaders" data-empty-state><div class="panel-head"><h2 class="section-h">Conviction leaders<\/h2>/);
+  // the line carries the panel's fixed heading — the markup-bound reference label (LD20) — and that UI name passes the wording scan
+  assert.match(html, /^<section class="panel sig-conv" id="new-position-leaders" aria-labelledby="new-position-leaders-h" data-empty-state><div class="panel-head"><h2 class="section-h" id="new-position-leaders-h"><span class="ref-label">Conviction leaders<\/span><\/h2>/);
   assert.deepEqual(scanBannedWording(html), []);
   assert.deepEqual(scanBannedWording(html.replace("Zero is the computed answer", "a high-conviction answer")), ["conviction", "high-conviction"], "control: the word outside the UI name is still caught");
   // a registry that marks no notable manager is stated
   assert.doesNotMatch(html, /marks no notable manager/);
-  const noRegistry = newPositionLeadersHtml(newPositionLeaders(inst, P, new Set())!, () => "top", P);
+  const noRegistry = convictionLeadersHtml(newPositionLeaders(inst, P, new Set())!, () => "top", P);
   assert.match(noRegistry, /This build's manager registry marks no notable manager, so no filer is eligible\./);
   assert.match(visibleText(domOf(html)), /4 filers opened positions in 2026-06-30; 0 qualify\. Excluded: 1 not notable · 1 book under 20 positions · 1 a position without a value · 1 no new position at 2% or more/);
   // the unavailable surface stays for a MISSING input
-  assert.match(newPositionLeadersHtml(null, () => "top", null), /not available in this build/);
+  assert.match(convictionLeadersHtml(null, () => "top", null), /not available in this build/);
   // control: the pre-M4 rendering of a computed zero fails
   const old = unavailableDesignPanel("Conviction leaders", "", [], "No filer opened a position at 2% or more of a complete, fully valued book in 2026-06-30. Zero is the computed answer.", "design-newpositions");
   assert.ok(computedZeroProblems(old).includes("a computed zero rendered as 'not available in this build'"));
@@ -238,15 +240,25 @@ test("T4.3 (R28): reviewed fund wrappers are excluded and counted; operating iss
   assert.equal(b.wrappersExcluded, 2, "two issuer keys named ISHARES TR, counted");
   assert.equal(b.rows[0]!.issuer, "NVIDIA CORP", "the operating issuer leads");
   assert.equal(b.unkeyedMoves, 2);
-  const html = consensusBoardHtml(b, { filerHref: (c) => `/f/${c}` });
-  assert.match(visibleText(domOf(html)), /2 fund-wrapper registrants on the reviewed list are excluded · 2 moves carry no issuer identity and are outside this board\./);
+  const html = consensusPanelHtml(b, null);
+  // the exclusions are the panel's tip (LD19); the qualifying count stays visible
+  assert.match(domOf(html).querySelector(".note-pop")!.textContent.replace(/\s+/g, " "), /2 fund-wrapper registrants on the reviewed list are excluded · 2 moves carry no issuer identity and are outside this board\./);
+  assert.match(visibleText(domOf(html).querySelector("p.cs-count")!), /^3 issuers qualify$/);
 
-  // the header's "Consensus add" figure is row 1 of this board and states the exclusion
+  // the Institutional tab's "Top add" figure (signals-v4 LD9; it was the
+  // /institutional/ "Consensus add") is row 1 of this board and states the exclusion
   const fig = consensusAddLedgerItem(b.rows[0]!, P, b.wrappersExcluded);
+  assert.equal(fig.label, "Top add");
   assert.equal(fig.value, "NVDA");
   assert.match(fig.noteHtml ?? "", /2 fund-wrapper registrants on the reviewed list are excluded/);
-  const page = readFileSync(path.join(SRC, "pages", "institutional", "index.astro"), "utf-8");
-  assert.match(page, /consensusAddLedgerItem\(consensus, analyticsPeriod, board\?\.wrappersExcluded \?\? 0\)/, "the page passes the board's exclusion count to the figure");
+  // the tab's ledger passes the board's exclusion count to the figure (it reads the build's real list)
+  const model = buildSignalsInstitutional({
+    present: true, period: P, latestFiled: "2026-08-14", freshness: "f", notableManagers: 4, moves: MOVES, leaders: null, txns: [],
+    filerHref: (c) => `/f/${c}`, filerTier: () => "top",
+  });
+  const top = institutionalLedgerItems(model).find((f) => f.label === "Top add")!;
+  assert.equal(top.value, "NVDA");
+  assert.match(top.noteHtml ?? "", /2 fund-wrapper registrants on the reviewed list are excluded/, "the ledger passes the board's exclusion count");
 
   // control: without the list the wrapper leads the board and the figure
   const unfiltered = consensusBoard(P, MOVES, { minFilers: 3, wrappers: [] });
@@ -263,7 +275,7 @@ test("T4.3 (R28): no two rows share a label — a ticker tells keys apart, else 
   // a shared name with distinct tickers is told apart by the ticker alone
   const tick = consensusBoard(P, [...three("iss:40", "TWIN CORP", { ticker: "TWA" }), ...three("iss:41", "TWIN CORP", { ticker: "TWB" })], { wrappers: [] });
   assert.deepEqual(tick.rows.map((r) => consensusRowLabel(r)).sort(), ["TWA TWIN CORP", "TWB TWIN CORP"]);
-  assert.match(consensusBoardHtml(b, { filerHref: (c) => `/f/${c}` }), /#n tells apart issuers filed under one name/);
+  assert.match(consensusPanelHtml(b, null), /#n tells apart issuers filed under one name/);
   // control: without the disambiguator the two ACME rows collide
   const stripped = { ...b, rows: b.rows.map((r) => ({ ...r, disambiguator: null })) };
   assert.deepEqual(labelProblems(stripped), ["ACME HOLDINGS INC ×2"]);

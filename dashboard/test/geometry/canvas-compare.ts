@@ -849,8 +849,8 @@ export interface TableMap {
       (data-bound); a bodyless table without it fails */
   empty?: string;
   /** why the gutters are not compared: the canvas twin sits in another cell
-      position (the Conviction table, I1's right side cell, against the
-      Cluster board, the canvas's left cell) */
+      position (a band's right side cell measured against the canvas's left
+      cell) */
   noGutters?: string;
   /** a mapped column whose role differs from its canvas twin under a
       recorded deviation: route label → ALLOWED_DEVIATIONS id */

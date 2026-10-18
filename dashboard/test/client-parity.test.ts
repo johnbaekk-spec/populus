@@ -24,7 +24,10 @@ import {
   type RenderCtx,
   type TxnRow,
 } from "../src/lib/format.ts";
-import { notableMovesBandHtml, notableMovesCountText, consensusBoardHtml, type ConsensusBoard, type NotableMove } from "../src/lib/notable-moves.ts";
+import { type ConsensusBoard, type NotableMove } from "../src/lib/notable-moves.ts";
+/* signals-v4 M2: the board and the Named moves render on /signals/#institutional */
+import { buildSignalsInstitutional, consensusPanelHtml, namedMovesRangeText, signalsInstitutionalHtml } from "../src/lib/ui/signals-institutional.ts";
+import { initNamedMoves } from "../src/scripts/signals-client.ts";
 import { CONGRESS_ROOTS, congressRankingSection, hitsRangeText, SIGNAL_HITS_PAGE_SIZE, addsSectionHtml, type BuildStamps } from "../src/lib/ui/index.ts";
 import { holdingsRangeText, HOLDINGS_PAGE_SIZE } from "../src/lib/holdings.ts";
 import { congressTickersRollup } from "../src/lib/derive.ts";
@@ -207,7 +210,7 @@ test("R-4: the consensus board's count names its bound when more issuers qualify
     netDeltaUsd: 1000 - i, netDeltaPartial: false, topMover: null,
   });
   const board = (listed: number, qualifying: number): ConsensusBoard => ({ period: "2026-03-31", minFilers: 3, rows: Array.from({ length: listed }, (_, i) => row(i)), qualifying, wrappersExcluded: 0, unkeyedMoves: 0 });
-  const count = (b: ConsensusBoard) => countOf(parse(consensusBoardHtml(b, { filerHref: (c) => `/f/${c}` })), "inst-consensus-tbody");
+  const count = (b: ConsensusBoard) => countOf(parse(consensusPanelHtml(b, null)), "consensus-list");
   assert.equal(count(board(50, 71)), "1–10 of the 50 highest-ranked issuers", "a bounded board names its bound");
   assert.equal(count(board(24, 24)), "1–10 of 24 issuers", "a complete board states its total");
   // control: the pre-fix wording reads as the count of qualifying issuers
@@ -232,17 +235,30 @@ test("R-9: the count clause is plain text; the server escapes it once, where it 
 
 /* ---------------------------------- the notable band, hits and holdings */
 
-test("notable moves: the band's server count equals the island's first restatement", () => {
+test("notable moves (signals-v4 LD11): the Named moves' server count equals the island's first restatement", () => {
   const move = (i: number): NotableMove => ({
     cik: `${i}`, manager: `M${i}`, principal: null, type: "hedge_fund", issuer: `I${i}`, ticker: null,
     ticker_verified: null, kind: "add", delta_shares: 1, curr_value: 1, delta_value: 1, filed: "2026-05-15",
     doc: null, key: `k${i}`, ikey: null,
   });
   const rows = Array.from({ length: 40 }, (_, i) => move(i));
-  const html = notableMovesBandHtml(rows, { periods: ["2026-03-31"], period: "2026-03-31", filerHref: (c) => `/f/${c}` });
-  const server = parse(html).querySelector("#inst-notable-moves-count")!.nodes.filter((n) => typeof n === "string").join("").split(" · ")[0]!;
-  assert.equal(server, notableMovesCountText(15, 40));
+  const model = buildSignalsInstitutional({
+    present: true, period: "2026-03-31", latestFiled: "2026-07-31", freshness: "f", notableManagers: 40, moves: rows, leaders: null, txns: [],
+    filerHref: (c) => `/f/${c}`, filerTier: () => "top",
+  });
+  const html = signalsInstitutionalHtml(model, {});
+  const server = parse(html).querySelector("#mv-range")!.textContent;
+  assert.equal(server, namedMovesRangeText(15, 40));
   assert.equal(server, "1–15 of 40 moves");
+  // the island's first render restates it (a sentinel proves the island wrote it)
+  const { doc, restore } = installDom(html);
+  try {
+    doc.getElementById("mv-range")!.textContent = "SENTINEL";
+    initNamedMoves();
+    assert.equal(doc.getElementById("mv-range")!.textContent, server);
+  } finally {
+    restore();
+  }
 });
 
 test("signal hits and holdings: the range is one function on both sides", () => {
@@ -336,7 +352,9 @@ test("T2.7 / signals-v4 T1.6: the island's repaint equals the server body (40 he
   const fresh = installDom(html);
   fetches = 0;
   g.fetch = async () => (fetches++, { ok: true, json: async () => JSON.parse(JSON.stringify(artifact)) });
-  g.window = { addEventListener() {} };
+  /* signals-v4 M2: the page binds its tabs first (`tabs.ts` reads the
+     address bar and history), so the fake window carries them */
+  g.window = { addEventListener() {}, location: { hash: "" }, history: null };
   const fbody = () => fresh.doc.getElementById("signal-hits-body")!.innerHTML;
   const fvisible = () => fresh.doc.querySelectorAll("#signal-hits-body tr.si-hit").filter((r) => !r.hasAttribute("hidden")).length;
   try {

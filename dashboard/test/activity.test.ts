@@ -516,6 +516,27 @@ test("R16: no banned trading verb on the rendered feed, in any change kind", () 
   assert.deepEqual(scanBannedWording(html), [], "banned wording on the activity surface");
 });
 
+test("signals-v4 LD20 (T2.5): the reference label is exempt in exactly its markup-bound forms — the heading, the ARIA name, the caption and the two ref-label spans; free text, another label and a banned verb beside it are still caught", () => {
+  const exempt = [
+    '<h2 class="section-h">Conviction leaders</h2>',
+    '<section aria-label="Conviction leaders"></section>',
+    '<caption class="visually-hidden">Conviction leaders — data availability</caption>',
+    '<h2 class="section-h" id="new-position-leaders-h"><span class="ref-label">Conviction leaders</span></h2>',
+    '<button type="button"><span class="ref-label">Conviction</span></button>',
+  ];
+  for (const html of exempt) assert.deepEqual(scanBannedWording(html), [], html);
+  // free text, an aria-label naming it otherwise, a near-miss of the markup, a longer label: all caught
+  for (const html of [
+    "<p>the conviction leaders this quarter</p>",
+    '<button aria-label="Conviction, explain">i</button>',
+    '<span class="ref-label">Conviction buys</span>',
+    '<span class="ref-label" data-x>Conviction</span>',
+    '<span class="ref-label">conviction leaders</span>',
+  ]) assert.ok(scanBannedWording(html).includes("conviction"), html);
+  // control: a banned verb beside the exempt label is still caught
+  assert.deepEqual(scanBannedWording('<h2 class="section-h"><span class="ref-label">Conviction leaders</span></h2><p>the fund sold it</p>'), ["sold"]);
+});
+
 test("the wording scanner reads attribute channels too, and does not fire on substrings", () => {
   assert.ok(scanBannedWording(`<p title="a high-conviction call">x</p>`).includes("conviction"));
   assert.deepEqual(scanBannedWording(`<p aria-label="just bought more">x</p>`), ["just bought"]);

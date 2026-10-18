@@ -680,8 +680,6 @@ th:is([aria-sort="ascending"], [aria-sort="descending"]) .note-label {
 .design-cluster-bar:after { display: none; }
 .design-cluster-bar > span { left: 0; }
 .design-cluster-bar > .sale { left: auto; right: 0; }
-.design-weight-bar { display: block; position: relative; height: 3px; min-width: 90px; background: var(--bar-track); }
-.design-weight-bar > span { position: absolute; inset: 0 auto 0 0; background: var(--bar-buy); }
 .book-track { display: block; position: relative; height: 4px; background: var(--bar-track); }
 .book-track > span { display: block; height: 100%; background: var(--bar-buy); }
 /* the hot (≥85%) segment is the gold bar token: the late EDGE token is a row
@@ -854,8 +852,6 @@ th:is([aria-sort="ascending"], [aria-sort="descending"]) .note-label {
 .design-directory-type { display: inline; margin-left: 8px; }
 .etable td .mgr-person { font: 400 var(--fs-note)/1.2 var(--sans); color: var(--ink3); margin-left: 6px; }
 .etable td .mono-note.filed-name { font: 400 var(--fs-note)/1.2 var(--sans); color: var(--ink3); }
-.design-newpositions .c-rank { font: 600 var(--fs-note) var(--mono); color: var(--ink3); width: 14px; }
-.design-newpositions .c-accent { color: var(--accent); font-weight: 600; }
 /* signals */
 .si-table .si-family { font: 500 var(--fs-meta) var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-meta); white-space: nowrap; }
 .si-table .si-kind { font: 600 var(--fs-meta) var(--mono); letter-spacing: .08em; white-space: nowrap; color: var(--kind-color, var(--ink2)); }

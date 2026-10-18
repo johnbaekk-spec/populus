@@ -21,7 +21,14 @@
 
    `/e/` renders the same body on the client and dispatches
    `populus:rerender` after every render; its route re-binds through the same
-   function (`runGenericRoute`). Re-binding the same tablist is a no-op. */
+   function (`runGenericRoute`). Re-binding the same tablist is a no-op.
+
+   signals-v4 M2 (R9, LD8): the Signals page binds through the same selector
+   (its list carries `.tk-tabs`), with up to four tabs. Every `[data-tab-for]`
+   element under the bound root — the head's per-tab ledger groups — shows
+   exactly when its panel does. `selectTabFor(el)` selects the tab whose panel
+   holds `el`: the first step of every in-page navigation
+   (`signals-client.ts` `revealTarget`). */
 
 /** What the binder reads and writes outside the tab list — the browser by
     default; a test passes its own. */
@@ -45,14 +52,20 @@ function browserEnv(): TabsEnv {
 interface TabSet {
   tabs: Element[];
   panels: (Element | null)[];
+  /** the `[data-tab-for]` elements under the bound root */
+  linked: Element[];
 }
 
 const BOUND = "data-tabs-bound";
 const TABLIST = '.tk-tabs[role="tablist"]';
 
-function tabSetOf(list: Element, env: TabsEnv): TabSet {
+function tabSetOf(list: Element, env: TabsEnv, root: ParentNode): TabSet {
   const tabs = Array.from(list.querySelectorAll('[role="tab"]'));
-  return { tabs, panels: tabs.map((t) => env.getElementById(t.getAttribute("aria-controls") ?? "")) };
+  return {
+    tabs,
+    panels: tabs.map((t) => env.getElementById(t.getAttribute("aria-controls") ?? "")),
+    linked: Array.from(root.querySelectorAll("[data-tab-for]")),
+  };
 }
 
 function setHidden(el: Element, hidden: boolean): void {
@@ -70,6 +83,13 @@ function select(set: TabSet, i: number): void {
     const panel = set.panels[j];
     if (panel) setHidden(panel, !on);
   });
+  /* LD8: an element linked to a panel (`data-tab-for`) toggles with it */
+  const selected = set.tabs[i]?.getAttribute("aria-controls") ?? null;
+  const ids = new Set(set.tabs.map((t) => t.getAttribute("aria-controls")));
+  for (const el of set.linked) {
+    const forId = el.getAttribute("data-tab-for");
+    if (forId !== null && ids.has(forId)) setHidden(el, forId !== selected);
+  }
 }
 
 /** The id a hash names, or null for an empty hash. */
@@ -115,7 +135,7 @@ const KEYS: Readonly<Record<string, (i: number, n: number) => number>> = {
 
 /** Every root bound so far, re-read on `hashchange` (a re-rendered `/e/`
     body replaces the tab list under the same root). */
-const roots = new Set<ParentNode>();
+const roots = new Map<ParentNode, TabsEnv>();
 const subscribed = new WeakSet<TabsEnv>();
 let defaultEnv: TabsEnv | null = null;
 
@@ -124,7 +144,7 @@ let defaultEnv: TabsEnv | null = null;
 export function initTabs(root: ParentNode = document, env?: TabsEnv): void {
   const e = env ?? (defaultEnv ??= browserEnv());
   for (const list of Array.from(root.querySelectorAll(TABLIST))) {
-    const set = tabSetOf(list, e);
+    const set = tabSetOf(list, e, root);
     if (set.tabs.length === 0) continue;
     if (!list.hasAttribute(BOUND)) {
       list.setAttribute(BOUND, "");
@@ -150,11 +170,37 @@ export function initTabs(root: ParentNode = document, env?: TabsEnv): void {
     }
     applyHash(set, e);
   }
-  roots.add(root);
+  roots.set(root, e);
   if (!subscribed.has(e)) {
     subscribed.add(e);
     e.onHashChange(() => {
-      for (const r of roots) for (const list of Array.from(r.querySelectorAll(TABLIST))) applyHash(tabSetOf(list, e), e);
+      for (const [r, re] of roots) if (re === e) for (const list of Array.from(r.querySelectorAll(TABLIST))) applyHash(tabSetOf(list, e, r), e);
     });
   }
+}
+
+/** LD8 step 1: select the tab whose panel holds `el` (through the same
+    `select()`), and — unless the address bar already names an element inside
+    that panel — write the panel's hash with `replaceState`, as a tab click
+    does. Returns whether a bound tab set holds `el`. */
+export function selectTabFor(el: Element | null): boolean {
+  if (!el) return false;
+  const panel = el.closest('[role="tabpanel"]');
+  if (!panel) return false;
+  for (const [r, e] of roots) {
+    for (const list of Array.from(r.querySelectorAll(TABLIST))) {
+      const set = tabSetOf(list, e, r);
+      const i = set.panels.indexOf(panel);
+      if (i < 0) continue;
+      if (set.tabs[i]!.getAttribute("aria-selected") !== "true") select(set, i);
+      const id = hashId(e.location.hash);
+      const named = id === null ? null : e.getElementById(id);
+      if (!named || named.closest('[role="tabpanel"]') !== panel) {
+        const pid = panel.getAttribute("id");
+        if (pid) e.history?.replaceState(null, "", `#${pid}`);
+      }
+      return true;
+    }
+  }
+  return false;
 }

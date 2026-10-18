@@ -335,13 +335,11 @@ test("R12/R19: a FILTER loads the WHOLE corpus — every part, once — never a 
 import type { InstData, QoqDeltaRow } from "../src/lib/inst.ts";
 import type { ActivityFeed, ActivityRecord } from "../src/lib/activity.ts";
 import type { ManagerTyping } from "../src/lib/manager-directory.ts";
-import {
-  notableMovesBandHtml,
-  consensusBoard,
-  consensusBoardHtml,
-  classifyNotableMovesShard,
-  NOTABLE_MOVES_SSR_ROWS,
-} from "../src/lib/notable-moves.ts";
+import { consensusBoard, NAMED_MOVES_MIN } from "../src/lib/notable-moves.ts";
+/* signals-v4 M2 (R12, R14, LD11, LD12): the band and the board render on
+   /signals/#institutional; their R14 properties are pinned here on the new
+   renderers */
+import { buildSignalsInstitutional, consensusPanelHtml, signalsInstitutionalHtml } from "../src/lib/ui/signals-institutional.ts";
 import { notableMoves, notableMovesShard, offeredMovePeriods } from "../src/lib/notable-moves-derive.ts";
 import { tierCKey } from "../src/lib/format.ts";
 
@@ -466,31 +464,34 @@ test("R14: the shard is ≤ the 1 MiB ceiling, states its truncation, and round-
   const { body, shard } = notableMovesShard("2026-03-31", moves);
   assert.ok(Buffer.byteLength(body) <= SHARD_RESPONSE_CEILING_BYTES);
   assert.equal(shard.truncated, false);
-  assert.equal(classifyNotableMovesShard(JSON.parse(body))!.rows.length, moves.length);
+  assert.equal((JSON.parse(body) as { v: number; rows: unknown[] }).v, 1);
+  assert.equal((JSON.parse(body) as { rows: unknown[] }).rows.length, moves.length, "the body round-trips every row");
   const tight = notableMovesShard("2026-03-31", moves, 700);
   assert.ok(Buffer.byteLength(tight.body) <= 700, `${Buffer.byteLength(tight.body)} B`);
   assert.equal(tight.shard.truncated, true);
   assert.ok(tight.shard.rows.length < moves.length);
   assert.match(tight.body, /"truncated":true/);
   assert.equal(JSON.parse(tight.body).total, moves.length, "the full population is stated");
-  assert.equal(classifyNotableMovesShard({ v: 2, period: "x", rows: [] }), null);
 });
 
-test("R14: the band renders 15 rows SSR with the period, kind and type chips, a Show 50 more and the JSON link; rows anchor into the filer page", () => {
+test("R14 → signals-v4 LD11: the Named moves show 15 rows with the kind and type chips and a Show 15 more; rows anchor into the filer page; the count is the range grammar", () => {
   const inst = instFixture();
   const many = Array.from({ length: 40 }, (_, i) => rec({ cik: "0000000003", position_key: `sid:sec:${i}`, issuer_name: `ISSUER ${i}`, change_kind: "add", delta_shares: 1, delta_value_usd: 1000 - i }));
   const moves = notableMoves({ feed: feedOf(many), inst, period: "2026-03-31" });
-  const html = notableMovesBandHtml(moves, { periods: ["2026-03-31", "2025-12-31"], period: "2026-03-31", filerHref: (cik) => `/institutional/filers/${Number(cik)}/` });
-  assert.equal((html.match(/<tr data-mv-kind=/g) ?? []).length, NOTABLE_MOVES_SSR_ROWS);
-  assert.match(html, /data-moves-period="2025-12-31" aria-pressed="false"/);
-  assert.match(html, /data-moves-period="2026-03-31" aria-pressed="true"/);
-  for (const k of ["new", "exit", "add", "trim"]) assert.match(html, new RegExp(`data-moves-kind="${k}"`));
-  assert.match(html, /data-moves-type="hedge_fund"/);
-  assert.match(html, /data-moves-type="family_office"/);
-  assert.match(html, /id="inst-notable-moves-more">Show 50 more</);
-  assert.match(html, /href="\/institutional\/data\/notable-moves\/2026-03-31\.v1\.json"/);
-  assert.match(html, /href="\/institutional\/filers\/3\/#pos-sid-sec-0"/, "row click lands on the issuer's change row");
-  assert.match(html, /id="inst-notable-moves-count">1–15 of 40 moves/, "DESIGN-POLISH M1 (R8): the range grammar");
+  const model = buildSignalsInstitutional({
+    present: true, period: "2026-03-31", latestFiled: "2026-07-31", freshness: "f", notableManagers: 3, moves, leaders: null, txns: [],
+    filerHref: (cik) => `/institutional/filers/${Number(cik)}/`, filerTier: () => "top",
+  });
+  const html = signalsInstitutionalHtml(model, {});
+  assert.equal((html.match(/<article class="mv-item"/g) ?? []).length, 30, "the DOM set: the slice's first 30 (LD11)");
+  assert.equal((html.match(/<article class="mv-item"(?![^>]*\shidden)[^>]*>/g) ?? []).length, NAMED_MOVES_MIN, "15 show");
+  assert.doesNotMatch(html, /data-moves-period=/, "no quarter selector on Signals (plan non-goal)");
+  for (const k of ["new", "exit", "add", "trim"]) assert.match(html, new RegExp(`data-mv-kind="${k}"`));
+  for (const t of ["hedge_fund", "family_office", "asset_manager", "insurer", "alt_manager"]) assert.match(html, new RegExp(`data-mv-type="${t}"`));
+  assert.match(html, /id="mv-more"[^>]*>Show 15 more</);
+  assert.doesNotMatch(html, /notable-moves\/2026-03-31\.v1\.json/, "the truncated shard is not offered as every row (debt TD-3)");
+  assert.match(html, /href="\/institutional\/filers\/3\/#pos-sid-sec-0"/, "a row lands on the issuer's change row");
+  assert.match(html, /id="mv-range"[^>]*>1–15 of 40 moves</, "DESIGN-POLISH M1 (R8): the range grammar");
   assert.doesNotMatch(html, /render bound/);
 });
 
@@ -511,20 +512,31 @@ test("R14: the consensus board counts DISTINCT notable filers per issuer, needs 
   assert.equal(board.qualifying, 2, "APPLE INC has two notable filers (the ordinary one does not count) and does not qualify");
   assert.equal(board.rows[0]!.netDeltaUsd, 400);
   assert.equal(board.rows[0]!.topMover!.kind, "new");
-  const html = consensusBoardHtml(board, { filerHref: (cik) => `/f/${cik}` }, );
-  // DESIGN-POLISH M1 (R2): the ledger roles — the issuer takes the slack, counts are numeric.
-  assert.match(html, /<th scope="col" class="c-issuer c-flex">Ticker · Issuer<\/th><th scope="col" class="c-num">New stakes<\/th>/);
+  const html = consensusPanelHtml(board, null);
+  // signals-v4 LD12: the board's columns, the issuer takes the slack, the counts are numeric
+  assert.match(html, /<div class="cs-head" aria-hidden="true"><span>Ticker<\/span><span>Issuer<\/span><span class="cs-hr">New<\/span>/);
   assert.match(html, /NVIDIA CORP/);
   assert.doesNotMatch(html, /Nvidia Corp/, "no title-cased filed name");
   assert.doesNotMatch(html, /render bound/);
-  // the landing's hero tile is row 1 of this board
+  /* signals-v4 M2 (LD9, LD12, LD13): the Top add figure and the Consensus
+     card are row 1 of this board, built on Signals from the same moves with
+     the same rule */
+  const model = buildSignalsInstitutional({
+    present: true, period: "2026-03-31", latestFiled: "2026-07-31", freshness: "f", notableManagers: 3, moves, leaders: null, txns: [],
+    filerHref: (cik) => `/f/${cik}`, filerTier: () => "top",
+  });
+  assert.deepEqual(model.board?.rows.map((r) => r.issuerKey), board.rows.map((r) => r.issuerKey), "the Signals board is consensusBoard(…, { minFilers: 3, limit: 50 })");
+  assert.equal(model.cards.consensus?.issuerKey, board.rows[0]!.issuerKey);
   const page = readFileSync(path.join(SRC, "pages", "institutional", "index.astro"), "utf-8");
-  assert.match(page, /const consensus = board\?\.rows\[0\] \?\? null;/);
-  assert.match(page, /consensusBoard\(analyticsPeriod, moves, \{ minFilers: 3, limit: 50 \}\)/);
   assert.match(page, /DEFAULT_TYPES = new Set<string>\(\["hedge_fund"\]\)/, "Hedge funds selected by default");
-  assert.ok(page.indexOf("notableMovesBandHtml(") < page.indexOf('id="inst-managers-section"'), "band before directory");
-  assert.ok(page.indexOf('id="inst-managers-section"') < page.indexOf("consensusBoardHtml("), "directory before consensus");
-  assert.ok(page.indexOf("consensusBoardHtml(") < page.indexOf("activitySectionHtml("), "recent activity below the fold");
+  /* signals-v4 R17 (LD18): the band, the board and the leaders left
+     /institutional/; the pointer leads to them, before the directory, then
+     recent activity */
+  for (const gone of ["notableMovesBandHtml(", "consensusBoardHtml(", "consensusConvictionBandHtml(", "newPositionLeadersHtml(", "consensusAddLedgerItem(", "plannedLine("]) {
+    assert.ok(!page.includes(gone), `${gone} is gone from the page`);
+  }
+  assert.ok(page.indexOf('href="/signals/#institutional"') < page.indexOf('id="inst-managers-section"'), "the pointer before the directory");
+  assert.ok(page.indexOf('id="inst-managers-section"') < page.indexOf("activitySectionHtml("), "recent activity below the directory");
   assert.doesNotMatch(page, /Position discovery/, "the three cards are gone (one methodology footnote remains)");
   assert.match(page, /\/methodology\/#13f-method/);
 });

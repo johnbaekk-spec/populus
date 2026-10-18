@@ -738,11 +738,17 @@ function visibleTextOf(html: string): string {
 }
 
 /** The user's exact reference section label is a UI name, not a claim of intent.
- * Keep this exemption restricted to the generated heading/ARIA/caption forms. */
+ * Keep this exemption restricted to the generated heading/ARIA/caption forms,
+ * and (signals-v4 LD20) the two markup-bound forms the Signals Institutional
+ * tab renders the label through — `ui/signals-institutional.ts`
+ * `CONVICTION_LABEL_HTML` and its pane-switch short form. Free text carrying
+ * the word is still caught. */
 export function stripReferenceLabelsForWordingScan(html: string): string {
   return html.replaceAll('<h2 class="section-h">Conviction leaders</h2>', '<h2 class="section-h">New-position leaders</h2>')
     .replaceAll('aria-label="Conviction leaders"', 'aria-label="New-position leaders"')
-    .replaceAll('<caption class="visually-hidden">Conviction leaders — data availability</caption>', '<caption class="visually-hidden">New-position leaders — data availability</caption>');
+    .replaceAll('<caption class="visually-hidden">Conviction leaders — data availability</caption>', '<caption class="visually-hidden">New-position leaders — data availability</caption>')
+    .replaceAll('<span class="ref-label">Conviction leaders</span>', '<span class="ref-label">New-position leaders</span>')
+    .replaceAll('<span class="ref-label">Conviction</span>', '<span class="ref-label">New positions</span>');
 }
 
 /** The banned labels present in `html`. Empty is the only passing result. */

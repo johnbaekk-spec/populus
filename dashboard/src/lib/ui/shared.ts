@@ -180,8 +180,9 @@ export const LEDGER_VALUE_NARROW_MAX = 10;
 /** The characters one line of a NARROW figure's sub holds: the figure's 150px
     floor at the sub's 10.5px mono, 6.3px a character (the fold's half column is
     wider: 156px at 360). A sub that would take a THIRD line there — a long
-    issuer name in the /institutional/ "Consensus add", "MICROSOFT CORP · 8
-    notable managers opened it" — makes the figure WIDE too (DESIGN-POLISH M2
+    issuer name in the Signals Institutional "Top add" of a name no reviewed
+    ticker maps (it was /institutional/'s "Consensus add", "MICROSOFT CORP · 8
+    notable managers opened it") — makes the figure WIDE too (DESIGN-POLISH M2
     delta review), the C2-2 mechanism: its sub sizes the figure above the fold
     and it takes a full row at it, so the sub keeps the two-line rule. */
 export const LEDGER_SUB_NARROW_CHARS = 23;

@@ -11,7 +11,7 @@
    that: it captures this island's output and asserts it is unchanged. */
 
 import { type InstIndexRow, type InstSortKey } from "../lib/inst-index.ts";
-import { COMPACT_ROWS, compactBoundCountFor, esc, fmtInt, parseDataColumns, syncCompactDisclosure } from "../lib/format.ts";
+import { COMPACT_ROWS, compactBoundCountFor, esc, parseDataColumns, syncCompactDisclosure } from "../lib/format.ts";
 import { initSortableTable } from "./table-sort.ts";
 import {
   addsBoundNoun,
@@ -24,19 +24,6 @@ import {
   type AddsSortKey,
 } from "../lib/inst-adds.ts";
 import { addsRowsHtml } from "../lib/inst-adds-render.ts";
-import {
-  classifyNotableMovesShard,
-  notableMoveRowHtml,
-  notableMovesCountText,
-  notableMovesHref,
-  NOTABLE_MOVES_COLUMNS,
-  NOTABLE_MOVES_SSR_ROWS,
-  NOTABLE_MOVES_STEP,
-  type MoveKind,
-  type NotableMove,
-  type NotableMovesShard,
-} from "../lib/notable-moves.ts";
-import { filerHref } from "../lib/holdings.ts";
 
 /* `instIndexBodyHtml` and `instDefaultDir` MOVED to `lib/inst-index.ts`.
 
@@ -463,127 +450,47 @@ function bindDomDisclosures(): void {
         btn.addEventListener("click", () => {
           const s = readDomDisclosure(wrap);
           if (!s || s.hidden <= 0) return; // an inert control discloses nothing
-          const expanded = !s.expanded;
-          s.root.setAttribute("data-collapsed", String(!expanded));
-          if (expanded) wrap.setAttribute("data-compact-expanded", "1");
-          else {
-            wrap.removeAttribute("data-compact-expanded");
-            /* A disclosure opened inside a row that is now held back closes
-               with it (review R2-2): a held signal hit's evidence row must
-               never stay open under the visible hits, where its receipts
-               would read as another hit's. The stylesheet hides it as well. */
-            s.root.querySelectorAll("tr[data-compact-extra] details[open]").forEach((d) => d.removeAttribute("open"));
-          }
-          syncDomDisclosure(wrap);
+          setDomDisclosure(wrap, !s.expanded);
         });
       }
       syncDomDisclosure(wrap);
     });
 }
 
-
-/* ---------- R14: the notable-manager moves band ---------- */
-
-/** Period, kind and type chips plus "Show 50 more", all over the per-period
-    shard. The server rendered the first fifteen rows of the newest closed
-    quarter; the shard is fetched on the FIRST interaction and never before.
-    Every visible claim commits together, after the shard arrives — the same
-    rule the adds selector follows. */
-export function initNotableMoves(): void {
-  const section = document.getElementById("inst-notable-moves");
-  const tbody = document.getElementById("inst-notable-moves-tbody");
-  const countEl = document.getElementById("inst-notable-moves-count");
-  const statusEl = document.getElementById("inst-notable-moves-status");
-  const windowEl = document.getElementById("inst-notable-moves-window");
-  if (!section || !tbody) return;
-
-  let period = section.dataset.movesPeriod ?? "";
-  const kinds = new Set<MoveKind>();
-  const mgrTypes = new Set<string>();
-  let limit = NOTABLE_MOVES_SSR_ROWS;
-  let token = 0;
-  const shards = new Map<string, Promise<NotableMovesShard>>();
-
-  function loadShard(p: string): Promise<NotableMovesShard> {
-    let pr = shards.get(p);
-    if (!pr) {
-      pr = fetch(notableMovesHref(p))
-        .then((r) => {
-          if (!r.ok) throw new Error(`notable moves ${r.status}`);
-          return r.json();
-        })
-        .then((body) => {
-          const shard = classifyNotableMovesShard(body);
-          if (!shard) throw new Error("notable moves: unrecognised shard");
-          return shard;
-        });
-      pr.catch(() => shards.delete(p));
-      shards.set(p, pr);
-    }
-    return pr;
+/** The ONE state change of a DOM-backed disclosure — the "Show all" button
+    and `expandDomDisclosureFor` both run it, so the rows, the control's
+    label and `aria-expanded`, and `data-compact-expanded` move together. */
+function setDomDisclosure(wrap: HTMLElement, expanded: boolean): void {
+  const s = readDomDisclosure(wrap);
+  if (!s || s.hidden <= 0) return;
+  s.root.setAttribute("data-collapsed", String(!expanded));
+  if (expanded) wrap.setAttribute("data-compact-expanded", "1");
+  else {
+    wrap.removeAttribute("data-compact-expanded");
+    /* A disclosure opened inside a row that is now held back closes
+       with it (review R2-2): a held signal hit's evidence row must
+       never stay open under the visible hits, where its receipts
+       would read as another hit's. The stylesheet hides it as well. */
+    s.root.querySelectorAll("tr[data-compact-extra] details[open]").forEach((d) => d.removeAttribute("open"));
   }
+  syncDomDisclosure(wrap);
+}
 
-  function matches(m: NotableMove): boolean {
-    if (kinds.size > 0 && !kinds.has(m.kind)) return false;
-    if (mgrTypes.size > 0 && !mgrTypes.has(m.type)) return false;
-    return true;
+/** signals-v4 LD8 (codex M2 round 2, F4): an in-page navigation to an element
+    a DOM-backed disclosure holds back — inside a `[data-compact-extra]` row
+    of a collapsed root (a Consensus row past ten) — expands that disclosure
+    first, through the same state change as its "Show all" button. Returns
+    whether it expanded one. */
+export function expandDomDisclosureFor(el: Element): boolean {
+  if (!el.closest("[data-compact-extra]")) return false;
+  let changed = false;
+  for (const wrap of Array.from(document.querySelectorAll<HTMLElement>(".compact-disclosure[data-compact-dom]"))) {
+    const s = readDomDisclosure(wrap);
+    if (!s || s.expanded || s.hidden <= 0) continue;
+    const extra = el.closest("[data-compact-extra]");
+    if (!extra || !s.root.id || extra.closest(`#${s.root.id}`) !== s.root) continue;
+    setDomDisclosure(wrap, true);
+    changed = true;
   }
-
-  function setStatus(text: string): void {
-    if (statusEl) statusEl.textContent = text;
-  }
-
-  async function paint(): Promise<void> {
-    const mine = ++token;
-    let shard: NotableMovesShard;
-    try {
-      shard = await loadShard(period);
-    } catch (err) {
-      if (mine !== token) return;
-      console.error("populus: notable moves failed", err);
-      setStatus(`Couldn't load the moves for the quarter ended ${period}. The rows shown are unchanged.`);
-      return;
-    }
-    if (mine !== token) return;
-    const rows = shard.rows.filter(matches);
-    const shown = rows.slice(0, limit);
-    tbody!.innerHTML =
-      shown.length === 0
-        ? `<tr><td colspan="${NOTABLE_MOVES_COLUMNS.length}" class="design-unavailable-message">No moves match — a computed answer over every notable manager's changes this quarter.</td></tr>`
-        : shown.map((m) => notableMoveRowHtml(m, { filerHref: (cik) => filerHref(cik, "top") })).join("\n");
-    if (windowEl) windowEl.textContent = `quarter ended ${shard.period} · by shares · largest $ change first within New › Exit › Add › Trim`;
-    if (countEl) {
-      const more = rows.length > shown.length;
-      countEl.innerHTML =
-        esc(notableMovesCountText(shown.length, rows.length)) +
-        (shard.truncated ? ` (the ${fmtInt(shard.rows.length)} largest of ${fmtInt(shard.total)} are in the published file)` : "") +
-        (more ? ` · <button type="button" class="linklike" id="inst-notable-moves-more">Show ${fmtInt(NOTABLE_MOVES_STEP)} more</button>` : "") +
-        ` · <a href="${esc(notableMovesHref(shard.period))}">every row for this quarter (JSON)</a>`;
-    }
-    setStatus(`${notableMovesCountText(shown.length, rows.length)} for the quarter ended ${shard.period}.`);
-  }
-
-  section.addEventListener("click", (ev) => {
-    const t = (ev.target as Element | null)?.closest?.<HTMLElement>("[data-moves-period],[data-moves-kind],[data-moves-type],#inst-notable-moves-more") ?? null;
-    if (!t) return;
-    if (t.id === "inst-notable-moves-more") {
-      limit += NOTABLE_MOVES_STEP;
-    } else if (t.dataset.movesPeriod) {
-      period = t.dataset.movesPeriod;
-      limit = NOTABLE_MOVES_SSR_ROWS;
-      section.querySelectorAll<HTMLElement>("[data-moves-period]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.movesPeriod === period)));
-      section.dataset.movesPeriod = period;
-    } else if (t.dataset.movesKind) {
-      const k = t.dataset.movesKind as MoveKind;
-      if (kinds.has(k)) kinds.delete(k); else kinds.add(k);
-      t.setAttribute("aria-pressed", String(kinds.has(k)));
-      limit = NOTABLE_MOVES_SSR_ROWS;
-    } else if (t.dataset.movesType) {
-      const ty = t.dataset.movesType;
-      if (mgrTypes.has(ty)) mgrTypes.delete(ty); else mgrTypes.add(ty);
-      t.setAttribute("aria-pressed", String(mgrTypes.has(ty)));
-      limit = NOTABLE_MOVES_SSR_ROWS;
-    }
-    void paint();
-  });
+  return changed;
 }

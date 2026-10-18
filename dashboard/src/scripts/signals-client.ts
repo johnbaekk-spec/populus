@@ -10,14 +10,23 @@
      "Filings to read" (`column-fit.ts`), revealing the rows the server holds
      `hidden`, and past them the memoised artifact;
    - signals-v4 R7 (LD7): the pane switch where the band stacks;
-   - signals-v4 R4 (LD5): a lead card, or a hash naming a row, opens the row.
+   - signals-v4 R4 (LD5): a lead card, or a hash naming a row, opens the row;
+   - signals-v4 M2 (R9, R12, R14, LD8, LD11): the tabs (`tabs.ts`), the Named
+     moves' chips, name filter and "Show 15 more" over the rows the server
+     holds, the Consensus rows and lead cards that set the name filter, the
+     Named moves' column fit, and `revealTarget` — the ONE sequence every
+     in-page navigation runs (a hash, a card, a Consensus row).
 
    Nothing is stored and nothing leaves the device. */
 
 import { fmtInt, parseDataColumns, type RenderCtx } from "../lib/format.ts";
 import { hitsBodyHtml, hitsRangeText, sortHits, SIGNAL_HITS_PAGE_SIZE, SIGNAL_HITS_COMPACT_ROWS, hitsView, hitsHiddenText, type HitFilter } from "../lib/ui/index.ts";
 import type { Signal, SignalArtifact } from "../lib/signals.ts";
+import { NAMED_MOVES_MIN, NAMED_MOVES_STEP, namedMovesSliceKey } from "../lib/notable-moves.ts";
+import { moveDetailHtml, namedMovesBoundText, namedMovesRangeText, parseNamedMovesTotals, type MoveDetail } from "../lib/ui/signals-institutional.ts";
 import { bindFit, type FitBinding, type FitElement, type FitTarget } from "./column-fit.ts";
+import { initTabs, selectTabFor, type TabsEnv } from "./tabs.ts";
+import { expandDomDisclosureFor } from "./inst-index-client.ts";
 
 /** An empty row spans the table's own header — the column list the server
     rendered — never a literal count (DESIGN-POLISH M1, section E). */
@@ -310,6 +319,8 @@ export function initPaneSwitches(): void {
     of M2's `revealTarget`). Returns whether it changed anything. */
 export function selectPaneFor(el: Element): boolean {
   for (const s of switches) {
+    /* a switch whose panes left the document (a re-render) is skipped */
+    if (s.panes.some((p) => p !== null && document.getElementById(p.id) !== p)) continue;
     const i = s.panes.findIndex((p) => p !== null && p.id !== "" && el.closest(`#${p.id}`) !== null);
     if (i >= 0 && s.panes[i]!.hidden) {
       s.select(i);
@@ -319,25 +330,292 @@ export function selectPaneFor(el: Element): boolean {
   return false;
 }
 
-/* ---------------------------------------------------------------- LD5: a card or a hash opens its row */
+/* ---------------------------------------------------------------- LD11: the Named moves */
 
-/** Open a "Filings to read" row from anywhere: the steps M2's `revealTarget`
-    generalises — select the pane that holds it, open Routine when it sits in
-    the closed tier, open the row's own `<details>` (one open at a time, by
-    its `name`), scroll it into view and focus its summary. Returns the row,
-    or null when `el` is not in one. */
-export function revealRow(el: Element | null): HTMLElement | null {
-  const row = el?.closest<HTMLElement>("article.si-row") ?? null;
-  if (!row) return null;
-  selectPaneFor(row);
-  const routine = row.closest<HTMLElement>("details#routine");
-  if (routine && !routine.hasAttribute("open")) routine.setAttribute("open", "");
-  const details = row.querySelector<HTMLElement>("details.si-row-d");
+/** The Named moves the fit and `revealTarget` drive. */
+export interface MovesPager {
+  /** the column fit's view of the list (LD6) */
+  fitTarget: FitTarget;
+  /** apply a name filter (a Consensus row, a lead card) — it clears the
+      kind and type chips, which then refine within the name — or clear it */
+  setName(key: string | null): void;
+  /** make a held move row visible: clear the filter that hides it (or set
+      the name filter to `name`), then extend the page until it shows */
+  reveal(item: Element, name?: string | null): void;
+  /** LD10: copy the bank's Congress lines into the sides under `root` (an
+      opened row, a shown name detail) — each (ticker, side) is rendered once */
+  fill(root: Element): void;
+  /** the active filter */
+  state(): { kind: string | null; type: string | null; name: string | null; base: number; extra: number };
+  /** called after a filter change (the fit re-runs) */
+  onFilter: (() => void) | null;
+  /** called after an in-column height change the fit's observer cannot see
+      — a move row or the Congress-lines bank opening or closing, a held
+      row's body and its Congress lines inserted — once per `toggle` (the fit
+      re-runs, keeping the "Show more" extension and every open row) */
+  onLayout: (() => void) | null;
+}
+
+export function initNamedMoves(): MovesPager | null {
+  const section = document.getElementById("named-moves");
+  const list = document.getElementById("mv-list");
+  if (!section || !list) return null;
+  const rangeEl = document.getElementById("mv-range");
+  const more = document.getElementById("mv-more");
+  const bound = document.getElementById("mv-bound");
+  const empty = document.getElementById("mv-empty");
+  const status = document.getElementById("mv-status");
+  const pillRow = document.getElementById("mv-name-row");
+  const pill = document.getElementById("mv-name-pill");
+  const pillLabel = document.getElementById("mv-name-label");
+  const totals = parseNamedMovesTotals(section.getAttribute("data-mv-totals"));
+  const step = Number(section.getAttribute("data-mv-step")) || NAMED_MOVES_STEP;
+  const min = Number(section.getAttribute("data-mv-min")) || NAMED_MOVES_MIN;
+  /* LD6's contract: visible = min(matching, base + extra) */
+  let base = min;
+  let extra = 0;
+  let kind: string | null = null;
+  let type: string | null = null;
+  let name: string | null = null;
+
+  const items = (): HTMLElement[] => Array.from(list.querySelectorAll<HTMLElement>("article.mv-item"));
+  const matchesNow = (el: Element): boolean =>
+    (kind === null || el.getAttribute("data-kind") === kind) &&
+    (type === null || el.getAttribute("data-type") === type) &&
+    (name === null || el.getAttribute("data-ikey") === name);
+  const matching = (): HTMLElement[] => items().filter(matchesNow);
+  /** The TRUE in-build total for the filter: the slice total for the chips;
+      for a name filter the DOM's own count, which is complete for that key. */
+  const total = (): number => (name !== null ? matching().length : Number(totals[namedMovesSliceKey(kind, type)] ?? 0));
+  const bank = document.getElementById("mv-bank");
+  /** LD11: a held row's opened body, from the row's own data and its
+      section's — the server's renderer, so the two cannot differ */
+  const detailOf = (row: Element): MoveDetail => {
+    const tk = row.querySelector(".mv-tk .mono-ticker")?.textContent?.trim() || null;
+    const filed = row.querySelector(".mv-fil time")?.textContent?.trim() || null;
+    return {
+      type: row.getAttribute("data-type") ?? "",
+      kind: (row.getAttribute("data-kind") ?? "new") as MoveDetail["kind"],
+      filed,
+      period: section!.getAttribute("data-mv-period") || "—",
+      quarter: section!.getAttribute("data-mv-q"),
+      ticker: tk,
+      verified: row.hasAttribute("data-tv") ? row.getAttribute("data-tv") || null : section!.getAttribute("data-mv-tv"),
+      filerPage: row.getAttribute("data-fp") ?? "",
+      congress: Number(row.getAttribute("data-cg")) || 0,
+    };
+  };
+  /** LD10: an opened row's (or a shown name's) Congress side lists its lines:
+      the bank's block for that (ticker, side), copied in once — after a held
+      row's body is rendered (LD11) */
+  function fill(root: Element): void {
+    for (const det of Array.from(root.querySelectorAll<HTMLElement>(".mv-det"))) {
+      const row = det.closest("article.mv-item");
+      if (row && row.hasAttribute("data-fp") && det.innerHTML === "") det.innerHTML = moveDetailHtml(detailOf(row));
+    }
+    for (const ref of Array.from(root.querySelectorAll<HTMLElement>(".mv-cong[data-cong]"))) {
+      if (ref.hasAttribute("data-cong-filled") || ref.closest("#mv-bank")) continue;
+      const block = bank?.querySelector<HTMLElement>(`[data-cong="${ref.getAttribute("data-cong") ?? ""}"]`) ?? null;
+      if (!block) continue;
+      ref.innerHTML = block.innerHTML;
+      ref.setAttribute("data-cong-filled", "");
+    }
+  }
+  /** the name the filter shows, read off the first row that carries it */
+  const labelOf = (key: string): string => {
+    const row = items().find((el) => el.getAttribute("data-ikey") === key);
+    return (row?.querySelector(".mv-tk")?.textContent ?? key).replace(/\s+/g, " ").trim();
+  };
+
+  function render(say = false): void {
+    const want = base + extra;
+    let shown = 0;
+    let m = 0;
+    for (const el of items()) {
+      const on = matchesNow(el);
+      if (on) m++;
+      const show = on && shown < want;
+      el.hidden = !show;
+      if (show) shown++;
+    }
+    const t = total();
+    const range = namedMovesRangeText(shown, t);
+    if (rangeEl) rangeEl.textContent = range;
+    if (more) {
+      const unavailable = shown >= m;
+      more.setAttribute("aria-disabled", String(unavailable));
+      more.classList.toggle("is-unavailable", unavailable);
+    }
+    /* the page's own bound, where the DOM runs out before the total (LD11) */
+    const cut = shown === m && m < t;
+    if (bound) {
+      bound.hidden = !cut;
+      bound.textContent = namedMovesBoundText(m);
+    }
+    if (empty) empty.hidden = m > 0;
+    section!.setAttribute("data-mv-shown", String(shown));
+    for (const b of Array.from(section!.querySelectorAll<HTMLElement>("button[data-mv-kind]"))) b.setAttribute("aria-pressed", String(b.getAttribute("data-mv-kind") === kind));
+    for (const b of Array.from(section!.querySelectorAll<HTMLElement>("button[data-mv-type]"))) b.setAttribute("aria-pressed", String(b.getAttribute("data-mv-type") === type));
+    if (pillRow) pillRow.hidden = name === null;
+    if (pillLabel) pillLabel.textContent = name === null ? "" : labelOf(name);
+    /* the name's Congress detail (LD10), and the Consensus row it came from */
+    for (const d of Array.from(section!.querySelectorAll<HTMLElement>("[data-mv-detail-for]"))) {
+      d.hidden = d.getAttribute("data-mv-detail-for") !== name;
+      if (!d.hidden) fill(d);
+    }
+    for (const b of Array.from(document.querySelectorAll<HTMLElement>("button.cs-pick"))) b.setAttribute("aria-pressed", String(name !== null && b.getAttribute("data-mv-name") === name));
+    if (say && status) status.textContent = `${range}${name !== null ? ` · ${labelOf(name)}` : ""}${kind !== null ? ` · ${kind}` : ""}${type !== null ? ` · ${type.replace(/_/g, " ")}` : ""}.`;
+  }
+
+  const pager: MovesPager = {
+    fitTarget: {
+      list: () => list as unknown as FitElement,
+      rows: () => matching() as unknown as FitElement[],
+      matching: () => matching().length,
+      visible: () => items().filter((el) => !el.hidden).length,
+      extra: () => extra,
+      apply: (n: number) => {
+        base = n;
+        render(false);
+      },
+      /* LD6 + codex M2 round 2, F1: a refit never hides an OPEN row — the
+         base stays at least the last open matching row's place + 1, less the
+         extension (visible = base + extra) */
+      floor: () => {
+        let last = -1;
+        matching().forEach((el, i) => {
+          if (el.querySelector("details.mv-row")?.hasAttribute("open")) last = i;
+        });
+        return Math.max(0, last + 1 - extra);
+      },
+    },
+    setName(key: string | null): void {
+      name = key;
+      kind = null;
+      type = null;
+      extra = 0;
+      render(true);
+      pager.onFilter?.();
+    },
+    reveal(item: Element, nameKey?: string | null): void {
+      if (!matchesNow(item)) {
+        kind = null;
+        type = null;
+        name = nameKey ?? null;
+        if (!matchesNow(item)) name = null;
+        extra = 0;
+      }
+      const at = matching().indexOf(item as HTMLElement);
+      if (at >= base + extra) extra = at + 1 - base;
+      render(true);
+      pager.onFilter?.();
+    },
+    fill,
+    state: () => ({ kind, type, name, base, extra }),
+    onFilter: null,
+    onLayout: null,
+  };
+  /* a `<details>` in the column opened or closed by the reader — a move row
+     (opened: a held row's body is rendered and its side's Congress lines
+     copied in) or the Congress-lines bank: the column's height changed, and
+     the fit observes only the side column, so it is asked to re-run, ONCE per
+     toggle (codex M2 round 2, F1). `toggle` does not bubble, so the section
+     listens in the capture phase; a tip's popover also fires `toggle`, but it
+     is in the top layer and changes no height, so only `<details>` count. */
+  section.addEventListener(
+    "toggle",
+    (ev) => {
+      const d = ev?.target as HTMLElement | undefined;
+      if (String(d?.tagName ?? "").toUpperCase() !== "DETAILS") return;
+      if (d!.classList?.contains("mv-row") && d!.hasAttribute("open")) fill(d!);
+      pager.onLayout?.();
+    },
+    true,
+  );
+
+  /** A filter change drops the "Show more" extension (LD6) and lets the fit
+      re-run for the new view. */
+  const refilter = (): void => {
+    extra = 0;
+    render(true);
+    pager.onFilter?.();
+  };
+  section.addEventListener("click", (ev) => {
+    const btn = (ev?.target as HTMLElement | undefined)?.closest?.("button[data-mv-kind], button[data-mv-type]") as HTMLElement | null | undefined;
+    if (!btn) return;
+    const k = btn.getAttribute("data-mv-kind");
+    const t = btn.getAttribute("data-mv-type");
+    /* single-select per group; a pressed chip toggles off */
+    if (k !== null) kind = kind === k ? null : k;
+    if (t !== null) type = type === t ? null : t;
+    refilter();
+  });
+  pill?.addEventListener("click", () => {
+    name = null;
+    refilter();
+  });
+  more?.addEventListener("click", () => {
+    if (more.getAttribute("aria-disabled") === "true") return;
+    /* LD6: "Show more" extends PAST the fitted base, deliberately */
+    extra += step;
+    render(true);
+  });
+  render(false);
+  return pager;
+}
+
+/* ---------------------------------------------------------------- LD8: the one reveal sequence */
+
+let moves: MovesPager | null = null;
+
+/** The Named moves `initSignalsPage` bound (null before, or with no moves):
+    the fit's and `revealTarget`'s pager, read by the tests that drive the
+    page's own wiring. */
+export function boundNamedMoves(): MovesPager | null {
+  return moves;
+}
+
+/** LD8 "Target reveal": the ONE sequence every in-page navigation runs — a
+    hash on load or a `hashchange`, a Congress card, an Institutional card or
+    Consensus row (with `opts.name`). In order: select the tab whose panel
+    holds `el`; select the pane a pane switch has hidden it in; expand the
+    DOM-backed disclosure that holds it back (a Consensus row past ten,
+    through the "Show all" button's own state change, so the control stays
+    in step — codex M2 round 2, F4); open every closed `<details>` around it
+    (Routine around a triage row, the Congress-lines bank around a side's
+    lines); clear (or set, with `opts.name`) the filter that hides a Named
+    move and extend the page until it shows; apply a name filter; open the
+    row's own `<details>`; scroll it into view and focus its summary or
+    heading. Returns `el`, or null. */
+export function revealTarget(el: Element | null, opts: { name?: string | null } = {}): Element | null {
+  if (!el) return null;
+  selectTabFor(el);
+  selectPaneFor(el);
+  expandDomDisclosureFor(el);
+  for (let d = el.parentElement?.closest<HTMLElement>("details") ?? null; d; d = d.parentElement?.closest<HTMLElement>("details") ?? null) {
+    if (!d.hasAttribute("open")) d.setAttribute("open", "");
+  }
+  const row = el.closest<HTMLElement>("article.si-row");
+  const mv = el.closest<HTMLElement>("article.mv-item");
+  if (moves) {
+    if (mv) moves.reveal(mv, opts.name);
+    else if (opts.name !== undefined) moves.setName(opts.name);
+  }
+  const details = (row ?? mv)?.querySelector<HTMLElement>("details") ?? null;
   if (details && !details.hasAttribute("open")) details.setAttribute("open", "");
-  (row as HTMLElement & { scrollIntoView?: (o?: ScrollIntoViewOptions) => void }).scrollIntoView?.({ block: "center" });
-  const summary = row.querySelector<HTMLElement>("summary.si-row-sum");
-  (summary as (HTMLElement & { focus?: (o?: FocusOptions) => void }) | null)?.focus?.({ preventScroll: true });
-  return row;
+  if (mv && details && moves) moves.fill(details);
+  /* a Consensus row is scrolled to whole, as a move row is */
+  const cs = row || mv ? null : el.closest<HTMLElement>(".cs-row");
+  const target = (row ?? mv ?? cs ?? el) as HTMLElement & { scrollIntoView?: (o?: ScrollIntoViewOptions) => void };
+  target.scrollIntoView?.({ block: row || mv || cs ? "center" : "start" });
+  const focusEl = (details?.querySelector<HTMLElement>("summary") ?? (row || mv ? null : el.querySelector<HTMLElement>("h2, h3"))) as
+    | (HTMLElement & { focus?: (o?: FocusOptions) => void })
+    | null;
+  if (focusEl) {
+    if (focusEl.tagName !== "SUMMARY" && focusEl.tagName !== "summary" && !focusEl.hasAttribute("tabindex")) focusEl.setAttribute("tabindex", "-1");
+    focusEl.focus?.({ preventScroll: true });
+  }
+  return el;
 }
 
 /** The id a hash names: decoded, or verbatim when it carries a malformed
@@ -352,38 +630,44 @@ export function hashTargetId(hash: string): string {
   }
 }
 
-/** The row a hash names, or null. */
-function rowFromHash(hash: string): HTMLElement | null {
-  const id = hashTargetId(hash);
-  if (!id.startsWith("si-row-")) return null;
-  return document.getElementById(id);
-}
-
-/** A hash on load or a `hashchange`: a row opens (`revealRow`); any other
-    element a pane switch has hidden — `#hits`, `#families` on a phone — gets
-    its pane selected and is scrolled to (step 2 of M2's `revealTarget`), so
-    no deep link lands on a hidden pane. */
+/** A hash on load or a `hashchange`: the element it names runs the reveal
+    sequence (a row opens, a hidden pane is selected, a held move shows). */
 export function revealHash(hash: string): Element | null {
-  const row = rowFromHash(hash);
-  if (row) return revealRow(row);
   const id = hashTargetId(hash);
-  const el = id ? document.getElementById(id) : null;
-  if (!el || !selectPaneFor(el)) return null;
-  (el as HTMLElement & { scrollIntoView?: (o?: ScrollIntoViewOptions) => void }).scrollIntoView?.({ block: "start" });
-  return el;
+  return id ? revealTarget(document.getElementById(id)) : null;
 }
 
 export function initRowLinks(): void {
-  /* a card's stretched link: open the row in place, keeping the hash a real
-     history entry (a second click on the same card still opens it) */
+  /* a Congress card's stretched link: open the row in place, keeping the
+     hash a real history entry (a second click on the same card still opens
+     it). An Institutional card's link carries `data-mv-name`: it filters the
+     Named moves to its name. */
   for (const a of Array.from(document.querySelectorAll<HTMLAnchorElement>("a.si-card-open"))) {
     a.addEventListener("click", (ev) => {
       const href = a.getAttribute("href") ?? "";
-      const row = rowFromHash(href);
+      const nameKey = a.getAttribute("data-mv-name");
+      if (nameKey !== null) {
+        if (!moves) return;
+        (ev as Event | undefined)?.preventDefault?.();
+        revealTarget(document.getElementById("named-moves"), { name: nameKey });
+        return;
+      }
+      const id = hashTargetId(href);
+      const row = id.startsWith("si-row-") ? document.getElementById(id) : null;
       if (!row) return;
       (ev as Event | undefined)?.preventDefault?.();
       if (typeof location !== "undefined" && location.hash !== href && typeof history !== "undefined") history.pushState(null, "", href);
-      revealRow(row);
+      revealTarget(row);
+    });
+  }
+  /* LD12 / R14: a Consensus row filters the Named moves to its issuer key;
+     pressed again, it clears the filter */
+  for (const b of Array.from(document.querySelectorAll<HTMLElement>("button.cs-pick[data-mv-name]"))) {
+    b.addEventListener("click", () => {
+      const key = b.getAttribute("data-mv-name");
+      if (!moves || key === null) return;
+      if (b.getAttribute("aria-pressed") === "true") moves.setName(null);
+      else revealTarget(document.getElementById("named-moves"), { name: key });
     });
   }
   if (typeof window === "undefined") return;
@@ -399,14 +683,29 @@ export interface ScrollRegionNode {
   scrollWidth: number;
   clientWidth: number;
   dataset: Record<string, string | undefined>;
+  getAttribute(name: string): string | null;
   setAttribute(name: string, value: string): void;
   removeAttribute(name: string): void;
 }
 
 /** A wrapper is a focusable, named "scroll sideways" region exactly while
     its content overflows it, and a plain box otherwise (review R-8). The
-    name is the one the server rendered in `data-scroll-region`. */
+    name is the one the server rendered in `data-scroll-region`.
+
+    signals-v4 LD8: `data-scroll-region` goes only on a ROLE-LESS wrapper. An
+    element that carries a role or an accessible name of its own in the
+    server HTML (a tablist, a group) is never re-roled: the first sync finds
+    it, logs a console error and leaves it untouched — the roles this
+    function writes are recorded (`data-scroll-region-owned`), so a later
+    sync can tell them from the server's. */
 export function syncScrollRegion(el: ScrollRegionNode): boolean {
+  if (el.getAttribute("data-scroll-region-owned") !== "1") {
+    if (el.getAttribute("role") !== null || el.getAttribute("aria-label") !== null) {
+      console.error("populus: [data-scroll-region] on an element with its own role or name; it is not re-roled", el);
+      return false;
+    }
+    el.setAttribute("data-scroll-region-owned", "1");
+  }
   const name = el.dataset.scrollRegion;
   const scrolls = !!name && el.scrollWidth > el.clientWidth + 1;
   if (scrolls) {
@@ -425,20 +724,26 @@ function initScrollRegions(): void {
   for (const el of Array.from(document.querySelectorAll<HTMLElement>("[data-scroll-region]"))) {
     const sync = (): void => void syncScrollRegion(el);
     sync();
-    // the wrapper's width moves with the viewport, the table's with its rows
+    // the wrapper's width moves with the viewport, its content's (the hits
+    // table, the tablist, a chip row) with what it holds
     if (typeof ResizeObserver === "function") {
       const ro = new ResizeObserver(sync);
       ro.observe(el);
-      const table = el.querySelector("table");
-      if (table) ro.observe(table);
+      const content = el.querySelector("table") ?? el.firstElementChild;
+      if (content) ro.observe(content);
     } else window.addEventListener("resize", sync);
   }
 }
 
 let fit: FitBinding | null = null;
+let movesFit: FitBinding | null = null;
 
-export function initSignalsPage(): void {
+export function initSignalsPage(opts: { tabsEnv?: TabsEnv } = {}): void {
+  /* LD8: the tabs bind first, so a hash selects its tab before anything
+     else reads the page (a test passes its own address bar) */
+  initTabs(document, opts.tabsEnv);
   const pager = initHitPager();
+  moves = initNamedMoves();
   initPaneSwitches();
   initScrollRegions();
   initRowLinks();
@@ -448,5 +753,14 @@ export function initSignalsPage(): void {
   if (pager && ref && col) {
     fit = bindFit(ref as unknown as FitElement, col as unknown as FitElement, pager.fitTarget, { min: SIGNAL_HITS_COMPACT_ROWS, ownRoot: "hits" });
     pager.onFilter = () => void fit?.refit();
+  }
+  /* LD6 (Institutional): the Named moves fill to the height of Consensus
+     and the new-position leaders */
+  const iref = document.getElementById("inst-side");
+  const icol = document.getElementById("named-moves");
+  if (moves && iref && icol) {
+    movesFit = bindFit(iref as unknown as FitElement, icol as unknown as FitElement, moves.fitTarget, { min: NAMED_MOVES_MIN, ownRoot: "named-moves" });
+    moves.onFilter = () => void movesFit?.refit();
+    moves.onLayout = () => void movesFit?.refit();
   }
 }

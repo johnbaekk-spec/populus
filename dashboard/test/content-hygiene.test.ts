@@ -49,7 +49,8 @@ import {
   type FilingDictionary,
 } from "../src/lib/activity.ts";
 import { biggestChangeCellHtml } from "../src/lib/manager-directory.ts";
-import { notableMovesBandHtml, type NotableMove } from "../src/lib/notable-moves.ts";
+import { type NotableMove } from "../src/lib/notable-moves.ts";
+import { moveRowHtml } from "../src/lib/ui/signals-institutional.ts";
 import {
   diffPeriods,
   holdingsCaveatHtml,
@@ -102,10 +103,10 @@ test("T3.1 (R19): every 13F surface reads the ONE caps vocabulary; unknown kinds
   // the directory's change line leads with the word
   const cell = biggestChangeCellHtml({ best: { row: { ...q("trim"), issuer_name: "NVIDIA CORP" }, delta_value_usd: -5_000_000, classifiedByValue: false }, unrankable: 0 } as never);
   assert.match(visibleText(domOf(cell)), /^TRIM NVIDIA CORP −\$5\.0M/);
-  // notable moves (band row) — the kind cell
+  // notable moves (signals-v4 M2: the Named moves row) — the kind cell
   const move: NotableMove = { cik: "0000000001", manager: "M", principal: null, type: "hedge_fund", issuer: "I", ticker: null, ticker_verified: null, kind: "add", delta_shares: 1, curr_value: 1, delta_value: 1, filed: "2026-05-15", doc: null, key: "k", ikey: null } as never;
-  const band = notableMovesBandHtml([move], { periods: ["2026-03-31"], period: "2026-03-31", filerHref: (c) => `/f/${c}` });
-  const kinds = domOf(band).querySelectorAll("td.c-kind").map((td) => visibleText(td).trim());
+  const row = moveRowHtml(move, "mv-1", { period: "2026-03-31", quarter: null, filerHref: (c) => `/f/${c}` });
+  const kinds = domOf(row).querySelectorAll(".mv-k").map((td) => visibleText(td).trim());
   assert.deepEqual(kinds, ["ADD"]);
   // the activity feed (both row forms) — the word, never the pill
   const rec: ActivityRecord = {

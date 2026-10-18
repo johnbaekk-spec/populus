@@ -215,3 +215,27 @@ test("R16: the ticker page binds the tabs, and /e/ binds them after every populu
   assert.match(route, /document\.addEventListener\("populus:rerender", \(\) => initTabs\(root\)\)/);
   assert.match(src("scripts/tabs.ts"), /export function initTabs\(/);
 });
+
+/* signals-v4 M2 (R9, LD8): the binder gained `[data-tab-for]` toggling and
+   `selectTabFor(el)` for the Signals page. The ticker page carries no linked
+   element, so its behaviour is unchanged; `selectTabFor` selects the panel
+   holding a deep-link target here too, through the same `select()`. */
+import { selectTabFor } from "../src/scripts/tabs.ts";
+
+test("signals-v4 LD8: on the ticker page selectTabFor selects the panel holding an element and writes its hash; with no [data-tab-for] nothing else moves", () => {
+  const h = harness();
+  try {
+    initTabs(h.doc as unknown as ParentNode, h.env);
+    assert.equal(selected(h), "congress");
+    assert.equal(h.doc.querySelectorAll("[data-tab-for]").length, 0, "the ticker page has no linked element");
+    const inside = h.panel("institutional").querySelector("section, div, p")!;
+    assert.equal(selectTabFor(inside as unknown as Element), true);
+    assert.equal(selected(h), "institutional");
+    assert.equal(h.replaced.at(-1), "#institutional");
+    // an element outside every panel selects nothing
+    assert.equal(selectTabFor(h.doc.querySelector(".page-head") as unknown as Element), false);
+    assert.equal(selected(h), "institutional");
+  } finally {
+    h.restore();
+  }
+});

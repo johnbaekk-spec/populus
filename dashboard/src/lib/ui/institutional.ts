@@ -1048,21 +1048,10 @@ export function clusterBoardHtml(result: ClusterBoardResult, period: string | nu
   );
 }
 
-/** Band I1 (DESIGN-POLISH M2, F; coordinator decision CD-5): Consensus
-    (1.3fr, the PRIMARY cell — the wider one, for the seven-column table, at
-    its fixed default of 10 rows) │ Conviction leaders (1fr, the side panel),
-    as the approved preview draws them. Neither cell's row count depends on
-    the other. When either cell is only its empty-state line (Conviction's
-    computed zero, or no issuer moved by enough notable managers), the band
-    collapses to one column with that line UNDER the other cell — a band never
-    holds an empty or placeholder cell (R10). The collapse is read off the
-    cells' own empty-state markers (`pairBandHtml`), never from flags a page
-    computes beside them (review Q2-3). */
-export function consensusConvictionBandHtml(consensusHtml: string, convictionHtml: string): string {
-  return pairBandHtml("design-institutional-band design-consensus-band", consensusHtml, convictionHtml, { primary: "left" });
-}
-
-/* ---------- new-position leaders (the design's fixed "Conviction leaders" heading) ---------- */
+/* ---------- new-position leaders (the owner's reference label, signals-v4 LD20) ----------
+   Their panel renders on /signals/#institutional (`ui/signals-institutional.ts`
+   `convictionLeadersHtml`); the rule and count sentences stay here, beside
+   the analytics they state. */
 
 /** R26: the eligibility rule, in words — stated in the band note and in its
     computed-zero line alike. */
@@ -1081,52 +1070,6 @@ export function convictionCountsText(l: NewPositionLeaders): string {
     `${plural(l.evaluated, "filer", "filers")} opened positions in ${l.period}; ${fmtInt(l.qualifying)} ${l.qualifying === 1 ? "qualifies" : "qualify"}. ` +
     `Excluded: ${fmtInt(e.notNotable)} not notable · ${fmtInt(e.smallBook)} book under ${fmtInt(l.minBookPositions)} positions · ` +
     `${fmtInt(e.missingValue)} a position without a value · ${fmtInt(e.belowThreshold)} no new position at ${(l.thresholdBps / 100).toFixed(0)}% or more`
-  );
-}
-
-export function newPositionLeadersHtml(
-  leaders: NewPositionLeaders | null,
-  tierOf: (cik: string) => FilerBudgetState,
-  period: string | null,
-): string {
-  const context = `NEW STAKES ≥${leaders ? (leaders.thresholdBps / 100).toFixed(0) : "2"}% OF BOOK${period ? ` · ${period}` : ""}`;
-  if (leaders === null) {
-    /* a MISSING input — the only case the unavailable surface is for */
-    return unavailableDesignPanel("Conviction leaders", context, ["Filer", "New weight", "New positions"], "New-position weights need the institutional module and a closed quarter.", "design-newpositions");
-  }
-  if (leaders.rows.length === 0) {
-    /* R26: a COMPUTED zero is an answer, never "not available in this build".
-       It states the rule and the counts; `data-empty-state` collapses band I1
-       (R10) exactly as the unavailable line did. */
-    /* A section with its heading, like Consensus's empty board, so the band
-       keeps its named cell; `data-empty-state` still collapses band I1. */
-    return (
-      `<section class="panel design-newpositions" aria-label="Conviction leaders" data-empty-state>` +
-      `<div class="panel-head"><h2 class="section-h">Conviction leaders</h2><span class="panel-note">${esc(context)}</span></div>` +
-      `<p class="section-note">No filer qualifies in ${esc(leaders.period)}. ${esc(convictionRuleText(leaders))}. ${esc(convictionCountsText(leaders))}.` +
-      (leaders.notableManagers === 0 ? ` This build's manager registry marks no notable manager, so no filer is eligible.` : "") +
-      ` Zero is the computed answer.</p></section>`
-    );
-  }
-  const max = Math.max(1, ...leaders.rows.map((r) => r.maxWeightBps));
-  const rows = leaders.rows
-    .map(
-      (r, i) =>
-        `<tr><td class="c-rank c-num">${i + 1}</td>` +
-        `<td class="c-filer c-flex">${filerLinkHtml(r.cik, r.filerName, tierOf(r.cik))}</td>` +
-        `<td class="c-bar"><span class="design-weight-bar" aria-hidden="true"><span style="width:${((r.maxWeightBps / max) * 100).toFixed(1)}%"></span></span></td>` +
-        `<td class="c-num c-accent">${(r.maxWeightBps / 100).toFixed(1)}%</td>` +
-        `<td class="c-num c-muted">${fmtInt(r.atThreshold)}<span class="visually-hidden"> at or above threshold</span> / ${fmtInt(r.newPositions)}<span class="visually-hidden"> new positions</span></td></tr>`,
-    )
-    .join("\n");
-  return (
-    `<section class="panel design-newpositions" aria-label="Conviction leaders">` +
-    `<div class="panel-head"><h2 class="section-h">Conviction leaders</h2><span class="panel-note">${esc(context)}</span></div>` +
-    `<div class="table-scroll"><table class="etable etable-compact"><caption class="visually-hidden">Filers ranked by the weight of their largest new position in ${esc(leaders.period)}</caption>` +
-    `<thead><tr><th scope="col" class="c-num">#</th><th scope="col" class="c-filer c-flex">Filer</th><th scope="col" class="c-bar"><span class="visually-hidden">Largest new weight, relative</span></th><th scope="col" class="c-num">Largest new</th><th scope="col" class="c-num">≥2% / new</th></tr></thead>` +
-    `<tbody>${rows}</tbody></table></div>` +
-    `<p class="section-note">${esc(convictionRuleText(leaders))}. ${esc(convictionCountsText(leaders))}. No returns are computed.</p>` +
-    `</section>`
   );
 }
 

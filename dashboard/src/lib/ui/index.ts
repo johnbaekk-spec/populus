@@ -73,9 +73,13 @@ export {
   lagBandHtml,
   signalsRankingHtml,
   committeeDirectHtml,
+  // signals-v4 M2 (R27): Methodology's Congress-column section
+  signalsCongressColumnHtml,
   // signals-v3 M3 (LD10, R18): the ticker page's "On Signals" block
   tickerOnSignalsHtml,
 } from "./signals.ts";
+// signals-v4 M2 (LD2, LD21): the Institutional tab of /signals/
+export { signalsInstitutionalHtml, CONVICTION_LABEL_HTML } from "./signals-institutional.ts";
 export { type TickerHeaderInfo, type TickerPageDeps, tickerInstSectionHtml, tickerUnifiedBody } from "./ticker.ts";
 export {
   type AddsSortKey,
@@ -101,8 +105,6 @@ export {
   filerBandHtml,
   filerFootHtml,
   clusterBoardHtml,
-  newPositionLeadersHtml,
-  consensusConvictionBandHtml,
   ADDS_FOOTNOTES,
   addsColumns,
   addsSectionHtml,
@@ -116,6 +118,8 @@ export {
   s4Skeleton,
   s4Error,
   s7Banner,
+  // signals-v4 M2 (LD18): the banner's sentence, for /institutional/'s provenance tip
+  s7CopyHtml,
 } from "./states.ts";
 export { pickSpecimen, specimenCard, type ModuleCardStats, moduleCard, congressTileHtml, movesTileHtml, signalsTileHtml, HOME_CLAIM, HOME_TILE_ROWS } from "./home.ts";
 
