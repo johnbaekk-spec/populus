@@ -378,8 +378,12 @@ export const NAMED_MOVES_SLICE_ROWS = 30;
 /** LD11's locked fallback: the per-slice bound when 30 would carry the page
     past `SIGNALS_PAGE_BYTES` (the page applies it, `pages/signals`). */
 export const NAMED_MOVES_FALLBACK_ROWS = 20;
-/** LD11: the Signals page's byte budget, 1.5 MiB (a post-build test holds it). */
-export const SIGNALS_PAGE_BYTES = 1_572_864;
+/** LD11: the Signals page's byte budget, 2 MiB (a post-build test holds it).
+    Raised from 1.5 MiB on 2026-10-19, owner decision: on production data the
+    page at both fallbacks measured 1,665,958 B, over 1.5 MiB, because the M3
+    size model had under-predicted production (signals-v4.md, Reversed
+    decisions, with each bound's measured bytes). */
+export const SIGNALS_PAGE_BYTES = 2_097_152;
 /** What the page's layout adds around the rendered body (head, masthead,
     footer, script and style links): the body must leave this much of the
     budget. Measured on the build and recorded in signals-v4.md. */

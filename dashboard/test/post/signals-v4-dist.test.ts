@@ -226,13 +226,13 @@ test("signals-v4 T2.9 (R12, R13, R14): the built Institutional tab — the Congr
   for (const s of html.matchAll(/<summary class="mv-sum">([\s\S]*?)<\/summary>/g)) assert.doesNotMatch(s[1]!, /<a\s|<button\s/, "no control in a move's summary");
 });
 
-test("signals-v4 T2.9 (LD11): dist/signals/index.html stays within the 1.5 MiB budget", (t) => {
+test("signals-v4 T2.9 (LD11): dist/signals/index.html stays within the 2 MiB budget", (t) => {
   const page = path.join(DIST, "signals", "index.html");
   assert.ok(existsSync(page));
   const bytes = readFileSync(page).length;
   t.diagnostic(`dist/signals/index.html: ${bytes} bytes of ${SIGNALS_PAGE_BYTES}`);
   assert.ok(bytes <= SIGNALS_PAGE_BYTES, `${bytes} B exceeds the ${SIGNALS_PAGE_BYTES} B budget`);
-  assert.equal(SIGNALS_PAGE_BYTES, 1_572_864);
+  assert.equal(SIGNALS_PAGE_BYTES, 2_097_152);
 });
 
 test("signals-v4 T2.9 controls: the independent recount reads the quarter, listed stock, the sides and the broad rule", () => {

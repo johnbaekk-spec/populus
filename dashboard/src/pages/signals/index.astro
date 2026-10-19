@@ -44,7 +44,7 @@ const playbooks = {
 };
 const deps: SignalsPageDeps = { rowsEvaluated, triage, institutional, overlap: getOverlap(), playbooks };
 let body = signalsBody(artifact, ctx, deps);
-/* LD11's budget: a page over 1.5 MiB carries the Named moves' locked
+/* LD11's budget: a page over 2 MiB carries the Named moves' locked
    fallback bound (20 per filter, not 30), and — M3, when that is not enough —
    Overlap's (12 names a view, not 24); each tab states the bound it uses. */
 const over = (b: string): boolean => Buffer.byteLength(b) > SIGNALS_PAGE_BYTES - SIGNALS_PAGE_CHROME_BYTES;

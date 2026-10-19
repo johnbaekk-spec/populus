@@ -54,7 +54,7 @@ test("T3.2 (LD15): seven playbooks — ids, sources, statuses and grades as LD15
       ["cmte", "CMTE", "Committee-linked trade", "Congress", "live", "thin"],
       ["best-ideas", "BEST IDEA", "Best ideas", "Institutional", "live", "supportive"],
       ["consensus", "CONSENSUS", "Notable-manager consensus", "Institutional", "live", "weak"],
-      ["overlap", "OVERLAP", "Congress and managers on one name", "Overlap", "descriptive", "none found"],
+      ["overlap", "OVERLAP", "Congress and managers on one name", "Overlap", "descriptive", "no studies"],
       ["insider-opp", "INSIDER", "Opportunistic insider purchases", "Form 4", "needs-data", "needs data"],
     ],
   );

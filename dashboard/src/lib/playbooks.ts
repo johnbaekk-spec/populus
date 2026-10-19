@@ -195,7 +195,7 @@ export const PLAYBOOKS: readonly Playbook[] = [
     ],
   },
   {
-    id: "overlap", short: "OVERLAP", name: "Congress and managers on one name", source: "Overlap", status: "descriptive", grade: "none found",
+    id: "overlap", short: "OVERLAP", name: "Congress and managers on one name", source: "Overlap", status: "descriptive", grade: "no studies",
     pattern: "Members of Congress and notable managers moving the same name, the same way, in the same quarter.",
     /* the tab's rule is no longer a draft (LD14) */
     trigger: "The Overlap tab’s rule.",
