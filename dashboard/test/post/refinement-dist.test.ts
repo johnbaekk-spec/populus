@@ -213,7 +213,12 @@ function landingIssuerLabels(html: string): string[] {
     ...topAdd.flatMap((f) => [...(/ managers?$/.test(f.value) ? [] : [f.value]), ...(f.sub && / · no reviewed ticker$/.test(f.sub) ? [f.sub.split(" · ")[0]!] : [])]),
   ].map(text);
 }
-const numericOrCusip = (l: string): boolean => /^\d/.test(l) || /^[A-Z0-9]{9}$/.test(l);
+/** A label that is a bare number (digits and separators only: "12345",
+    "1,234") or CUSIP-shaped (eight alphanumerics, then the numeric check
+    digit). An issuer name that merely starts with a digit ("3M Co - US",
+    "1-800-FLOWERS.COM INC") or is nine capital letters ("MICROSOFT") is
+    neither. */
+const numericOrCusip = (l: string): boolean => /^(?=.*\d)[\d\s.,\-/]+$/.test(l) || /^[A-Z0-9]{8}\d$/.test(l);
 
 test("POST-BUILD R9: the issuer-label reader sees the ledger's Top add figure and the Consensus issuers (controls)", () => {
   const fig = (value: string, sub: string): string =>
@@ -228,6 +233,15 @@ test("POST-BUILD R9: the issuer-label reader sees the ledger's Top add figure an
   assert.deepEqual(landingIssuerLabels('<span class="cs-iss" id="cs-1-l"><span class="filed-name">037833100</span></span>').filter(numericOrCusip), ["037833100"]);
   // the tile read is kept for any page that still has tiles
   assert.deepEqual(landingIssuerLabels('<div class="tile-value">12345</div>').filter(numericOrCusip), ["12345"]);
+  assert.deepEqual(["1,234", "0000320193"].filter(numericOrCusip), ["1,234", "0000320193"]);
+  // control: issuer names that start with a digit, or are nine capitals, are names — "3M Co - US" is
+  // on the live Signals Institutional tab (build 20261019.1); the old /^\d/ rule flagged it
+  const named = (n: string): string => `<span class="cs-iss" id="cs-2-l"><span class="filed-name">${n}</span></span>`;
+  // …and a label of separators alone carries no digit, so it is no number ("—" is the absent value)
+  for (const n of ["3M Co - US", "1-800-FLOWERS.COM INC", "3D SYSTEMS CORP", "MICROSOFT", "-", ".", "/", "—"]) {
+    assert.deepEqual(landingIssuerLabels(named(n)), [n], `${n}: read`);
+    assert.deepEqual(landingIssuerLabels(named(n)).filter(numericOrCusip), [], `${n}: not numeric / CUSIP-shaped`);
+  }
 });
 
 test("POST-BUILD R9: no numeric or CUSIP-shaped issuer label on the institutional landing or the Signals Institutional tab", () => {
