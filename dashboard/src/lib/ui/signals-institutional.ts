@@ -82,6 +82,7 @@ import type { NewPositionLeaders } from "../inst-analytics.ts";
 import { convictionCountsText, convictionRuleText } from "./institutional.ts";
 import { disclosureLedger, pairBandHtml, type LedgerItem } from "./shared.ts";
 import { congressLineHtml, paneSwitchHtml } from "./signals.ts";
+import { playbookStripHtml } from "./signals-playbooks.ts";
 
 /** LD20: the owner's reference label for the new-position leaders. Outside
     the exempt heading, ARIA and caption forms it renders only through this
@@ -284,6 +285,24 @@ export function congressSideFor(ticker: string | null, side: QuarterSide, quarte
   );
 }
 
+/** signals-v4 M3 (R21, D8): "See {TICKER} in Overlap →" — the name's row on
+    the Overlap tab. Its one condition is that the page carries that row
+    (`overlap` non-null), in either variant: it is independent of the move's
+    Congress side, so a name whose Congress traders sit on the other side (an
+    Opposite row) or are only broad accounts links its row too. Rendered
+    after the Congress side, outside every absence branch. */
+export function overlapLinkHtml(ticker: string | null, overlap: string | null): string {
+  return ticker && overlap ? `<p class="mv-ov-link"><a href="#${esc(overlap)}">See ${esc(ticker)} in Overlap →</a></p>` : "";
+}
+
+/** The Overlap anchor a move links, given the anchors the page carries: the
+    server's and the client's one predicate (`has` reads the set, or the DOM
+    for a held row). */
+export function overlapLinkFor(ticker: string | null, has: (id: string) => boolean): string | null {
+  const id = overlapAnchorFor(ticker);
+  return id !== null && has(id) ? id : null;
+}
+
 /** The head line of one side with members: "Congress · 3 members with a
     purchase of NVDA traded in Q1 2026". */
 function congressHeadHtml(n: number, ticker: string, side: QuarterSide, quarter: string): string {
@@ -373,6 +392,8 @@ export interface MoveDetail {
   filerPage: string;
   /** members of Congress counted on the row's side */
   congress: number;
+  /** signals-v4 M3: the anchor of the name's Overlap row, where the page carries it */
+  overlap: string | null;
 }
 
 /** The opened row's body from `MoveDetail`. ONE renderer: the server renders
@@ -382,7 +403,14 @@ export interface MoveDetail {
     and, where they differ from the section's, its verification date and
     Congress count, never the body's sentences). */
 export function moveDetailHtml(d: MoveDetail): string {
-  return moveFactsHtml(d) + congressSideFor(d.ticker, moveSide(d.kind), d.quarter, d.congress);
+  return moveFactsHtml(d) + congressSideFor(d.ticker, moveSide(d.kind), d.quarter, d.congress) + overlapLinkHtml(d.ticker, d.overlap);
+}
+
+/** signals-v4 M3: the anchor of a ticker's Overlap row (`signals-overlap.ts`
+    `overlapRowId`, restated here so the client can read it without the
+    Overlap module): `ov-{slug of the SEC spelling}`. */
+export function overlapAnchorFor(ticker: string | null): string | null {
+  return ticker ? `ov-${slug(normalizeTicker13f(ticker))}` : null;
 }
 
 /** The body's facts: everything but its Congress side. */
@@ -412,6 +440,7 @@ export function moveRowHtml(
   model: Pick<SignalsInstitutional, "period" | "quarter" | "filerHref">,
   hidden = false,
   tvDefault: string | null = null,
+  overlapIds: ReadonlySet<string> | null = null,
 ): string {
   const side = moveSide(m.kind);
   const dir = m.delta_value == null ? "c-muted" : m.delta_value < 0 ? "c-sell" : "c-buy";
@@ -437,8 +466,10 @@ export function moveRowHtml(
   const d: MoveDetail = {
     type: m.type, kind: m.kind, filed: m.filed, period: model.period ?? "—", quarter: q ? (quarterLabel(q.period) ?? q.period) : null,
     ticker: m.ticker, verified: m.ticker_verified, filerPage, congress: counted,
+    /* R21 / D8: carried in either variant — never gated on the side's Congress count */
+    overlap: overlapIds ? overlapLinkFor(m.ticker, (id) => overlapIds.has(id)) : null,
   };
-  const detail = `<div class="mv-det">${lean ? "" : broad === null ? moveDetailHtml(d) : moveFactsHtml(d) + broad}</div>`;
+  const detail = `<div class="mv-det">${lean ? "" : broad === null ? moveDetailHtml(d) : moveFactsHtml(d) + broad + overlapLinkHtml(d.ticker, d.overlap)}</div>`;
   const held = lean
     ? ` data-fp="${esc(filerPage)}"${m.ticker && m.ticker_verified !== tvDefault ? ` data-tv="${esc(m.ticker_verified ?? "")}"` : ""}${counted > 0 ? ` data-cg="${counted}"` : ""}`
     : "";
@@ -510,7 +541,7 @@ function nameDetailHtml(key: string, ticker: string | null, label: string, model
   );
 }
 
-function namedMovesHtml(model: SignalsInstitutional, ctx: RenderCtx): string {
+function namedMovesHtml(model: SignalsInstitutional, ctx: RenderCtx, overlapIds: ReadonlySet<string> | null = null): string {
   const period = model.period;
   const tip = noteFromHtml(
     `<span class="si-tip-p">Notable managers' position changes in the quarter ended ${esc(period ?? "—")}, largest dollar change first within New › Exit › Add › Trim. ` +
@@ -539,7 +570,7 @@ function namedMovesHtml(model: SignalsInstitutional, ctx: RenderCtx): string {
   const shown = Math.min(NAMED_MOVES_MIN, model.domSet.length);
   const total = model.moves.length;
   const tvDefault = commonVerified(model.domSet);
-  const rows = model.domSet.map((m, i) => moveRowHtml(m, ids[i]!, model, i >= shown, tvDefault)).join("\n");
+  const rows = model.domSet.map((m, i) => moveRowHtml(m, ids[i]!, model, i >= shown, tvDefault, overlapIds)).join("\n");
   const chip = (attr: string, value: string, label: string): string =>
     `<button type="button" ${attr}="${esc(value)}" aria-pressed="false">${esc(label)}</button>`;
   /* the name filter's Congress detail, one per name a control can apply */
@@ -570,6 +601,8 @@ function namedMovesHtml(model: SignalsInstitutional, ctx: RenderCtx): string {
     `<section class="panel sig-moves" id="named-moves" aria-labelledby="named-moves-h" data-mv-period="${esc(period ?? "")}"` +
     (model.quarter ? ` data-mv-q="${esc(quarterLabel(model.quarter.period) ?? model.quarter.period)}"` : "") +
     (tvDefault ? ` data-mv-tv="${esc(tvDefault)}"` : "") +
+    /* M3: a held row's body links its Overlap row when the page carries it (the client reads the DOM) */
+    (overlapIds ? ` data-mv-ov` : "") +
     ` data-mv-totals="${esc(namedMovesTotalsAttr(model.totals))}" data-mv-min="${NAMED_MOVES_MIN}" data-mv-step="${NAMED_MOVES_STEP}" data-mv-total="${total}">` +
     head +
     `<p class="si-pill-row" id="mv-name-row" hidden><button type="button" class="si-pill" id="mv-name-pill">Name: <span id="mv-name-label"></span> <span aria-hidden="true">×</span><span class="visually-hidden">, remove the name filter</span></button></p>` +
@@ -607,7 +640,7 @@ function namedMovesHtml(model: SignalsInstitutional, ctx: RenderCtx): string {
     one "Show all" away; each row a control that filters the Named moves to
     its issuer key; the Congress column on its second line. The count stays
     visible; the count note, the exclusions and "#n" are its tip. */
-export function consensusPanelHtml(board: ConsensusBoard | null, q: CongressQuarter | null): string {
+export function consensusPanelHtml(board: ConsensusBoard | null, q: CongressQuarter | null, strip = false): string {
   const tipBody = board
     ? `<span class="si-tip-p">Issuers at least ${fmtInt(board.minFilers)} notable managers changed in the quarter ended ${esc(board.period)}, ranked by new stakes, then by net $. ` +
       `Counts are distinct notable managers · ≈ = a contributing change disclosed no value, so the sum is partial.` +
@@ -617,7 +650,7 @@ export function consensusPanelHtml(board: ConsensusBoard | null, q: CongressQuar
       `<span class="si-tip-p">Choose a row to list every change on that name in the Named moves. ▲ / ▼ = members of Congress with a purchase / a sale of it traded in the quarter, broad accounts not counted; a name only broad accounts traded says so.</span>`
     : `<span class="si-tip-p">Issuers several notable managers changed in one closed quarter. This build has no closed quarter to group over.</span>`;
   const tip = noteFromHtml(tipBody, { scope: "signals-inst-consensus" }, "about", { trigger: "mark", name: "About consensus" });
-  const head = `<div class="panel-head"><h2 class="section-h" id="consensus-h">Consensus</h2>${tip}</div>`;
+  const head = `<div class="panel-head"><h2 class="section-h" id="consensus-h">Consensus</h2>${tip}${strip ? playbookStripHtml("consensus") : ""}</div>`;
   if (board === null || board.rows.length === 0) {
     return (
       `<section class="panel sig-cons" id="consensus" aria-labelledby="consensus-h" data-empty-state>` +
@@ -681,7 +714,7 @@ export function consensusPanelHtml(board: ConsensusBoard | null, q: CongressQuar
     "Largest new: {TICKER} {issuer} · {value} · {pct}% of book", or the stated
     absence when the aggregate names no issuer for it. The rule and the counts
     are the tip; the qualifying count stays visible. */
-export function convictionLeadersHtml(leaders: NewPositionLeaders | null, tierOf: (cik: string) => FilerBudgetState, period: string | null): string {
+export function convictionLeadersHtml(leaders: NewPositionLeaders | null, tierOf: (cik: string) => FilerBudgetState, period: string | null, strip = false): string {
   const tip = noteFromHtml(
     leaders
       ? `<span class="si-tip-p">${esc(convictionRuleText(leaders))}.</span><span class="si-tip-p">${esc(convictionCountsText(leaders))}.</span>` +
@@ -694,7 +727,7 @@ export function convictionLeadersHtml(leaders: NewPositionLeaders | null, tierOf
   const context = `New stakes ≥${leaders ? (leaders.thresholdBps / 100).toFixed(0) : "2"}% of book${period ? ` · ${period}` : ""}`;
   /* the anchor is `#new-position-leaders`, never the label's word: the §0
      gate reads the page's raw bytes, ids and ARIA references included */
-  const head = `<div class="panel-head"><h2 class="section-h" id="new-position-leaders-h">${CONVICTION_LABEL_HTML}</h2>${tip}</div>`;
+  const head = `<div class="panel-head"><h2 class="section-h" id="new-position-leaders-h">${CONVICTION_LABEL_HTML}</h2>${tip}${strip ? playbookStripHtml("best-ideas") : ""}</div>`;
   const open = (empty: boolean): string => `<section class="panel sig-conv" id="new-position-leaders" aria-labelledby="new-position-leaders-h"${empty ? " data-empty-state" : ""}>`;
   if (leaders === null) {
     return open(true) + head + `<p class="section-note">New-position weights are not available in this build: they need the institutional module and a closed quarter.</p></section>`;
@@ -848,8 +881,12 @@ export function institutionalLedgerHtml(model: SignalsInstitutional | null): str
 
 /** The Institutional tabpanel's content (the panel element is the page's,
     `signalsBody`). `null` is the artifact-only view: the tab states that it
-    is computed on the server. */
-export function signalsInstitutionalHtml(model: SignalsInstitutional | null, ctx: RenderCtx): string {
+    is computed on the server. signals-v4 M3 (R21): `playbooks` adds the
+    playbook strips on Consensus and the leaders, `overlapIds` (the Overlap
+    rows the page carries) the "See {TICKER} in Overlap →" link in a move's
+    opened body, after its Congress side (whatever that side's count) — each
+    only where this view renders what it links to. */
+export function signalsInstitutionalHtml(model: SignalsInstitutional | null, ctx: RenderCtx, opts: { playbooks?: boolean; overlapIds?: ReadonlySet<string> | null } = {}): string {
   if (model === null) {
     return `<p class="section-note" data-empty-state>The Institutional tab is computed on the server from the build's 13F data; this view carries the Congress artifact only.</p>`;
   }
@@ -864,8 +901,8 @@ export function signalsInstitutionalHtml(model: SignalsInstitutional | null, ctx
   }
   const side =
     `<div class="sig-inst-side" id="inst-side">` +
-    consensusPanelHtml(model.board, model.quarter) +
-    convictionLeadersHtml(model.leaders, model.filerTier, model.period) +
+    consensusPanelHtml(model.board, model.quarter, opts.playbooks === true) +
+    convictionLeadersHtml(model.leaders, model.filerTier, model.period, opts.playbooks === true) +
     `</div>`;
   return (
     provenanceHtml(model) +
@@ -877,7 +914,7 @@ export function signalsInstitutionalHtml(model: SignalsInstitutional | null, ctx
       { id: "new-position-leaders", label: "New positions", labelHtml: CONVICTION_SHORT_LABEL_HTML },
     ]) +
     /* LD6: Named moves (the primary cell) │ Consensus above the leaders */
-    pairBandHtml("sig-inst-band", namedMovesHtml(model, ctx), side, { primary: "left" }) +
+    pairBandHtml("sig-inst-band", namedMovesHtml(model, ctx, opts.overlapIds ?? null), side, { primary: "left" }) +
     `<p class="si-foot" id="inst-method-links"><a href="/methodology/#13f-method">How 13F data is read ↗</a> <a href="/methodology/#signals-congress-column">The Congress column ↗</a> <a href="/institutional/">Filer directory ↗</a></p>` +
     /* the §5 data note ships with the 13F data on every institutional surface */
     institutionalDataNoteHtml()

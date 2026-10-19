@@ -8,11 +8,15 @@
 // signals-v4 M2 (R9, R10, LD8, LD9): the page is "Signals", in tabs — Congress
 // (the above) and Institutional (the notable managers' named moves,
 // Consensus and the new-position leaders, moved here from /institutional/).
+// signals-v4 M3 (R18–R22): two more tabs — Overlap (names Congress and the
+// notable managers both traded in the quarter, a co-occurrence) and Playbooks
+// (published research on the patterns the rows show; not advice).
 import Base from "../../layouts/Base.astro";
-import { getBuildData, getSignalArtifact, getSignalsInstitutional, getTriage } from "../../lib/data";
+import { getBuildData, getOverlap, getPlaybookTriggers, getSignalArtifact, getSignalsInstitutional, getTriage } from "../../lib/data";
 import { signalsBody, type SignalsPageDeps } from "../../lib/ui/index.ts";
 import type { RenderCtx } from "../../lib/format";
 import { NAMED_MOVES_FALLBACK_ROWS, SIGNALS_PAGE_BYTES, SIGNALS_PAGE_CHROME_BYTES } from "../../lib/notable-moves";
+import { OVERLAP_FALLBACK_ROWS } from "../../lib/ui/signals-overlap";
 
 const build = getBuildData();
 const artifact = getSignalArtifact();
@@ -27,14 +31,26 @@ const ctx: RenderCtx = {
 const rowsEvaluated = build.txns.filter(
   (t) => t.filed >= artifact.coverageFrom && t.filed <= artifact.coverageTo,
 ).length;
-// LD1: the triage and the Institutional tab are computed once per build, in
-// memory, and never serialized.
-const deps: SignalsPageDeps = { rowsEvaluated, triage: getTriage(), institutional: getSignalsInstitutional() };
+// LD1: the triage, the Institutional tab, Overlap and the playbook triggers
+// are computed once per build, in memory, and never serialized.
+const triage = getTriage();
+const institutional = getSignalsInstitutional();
+const playbooks = {
+  triggers: getPlaybookTriggers(),
+  triage,
+  bestIdeas: institutional.leaders?.qualifying ?? null,
+  consensus: institutional.board?.qualifying ?? null,
+  cmteUnavailableReason: triage.cmteUnavailableReason,
+};
+const deps: SignalsPageDeps = { rowsEvaluated, triage, institutional, overlap: getOverlap(), playbooks };
 let body = signalsBody(artifact, ctx, deps);
 /* LD11's budget: a page over 1.5 MiB carries the Named moves' locked
-   fallback bound (20 per filter, not 30); the tab states the bound it uses. */
-if (Buffer.byteLength(body) > SIGNALS_PAGE_BYTES - SIGNALS_PAGE_CHROME_BYTES) {
+   fallback bound (20 per filter, not 30), and — M3, when that is not enough —
+   Overlap's (12 names a view, not 24); each tab states the bound it uses. */
+const over = (b: string): boolean => Buffer.byteLength(b) > SIGNALS_PAGE_BYTES - SIGNALS_PAGE_CHROME_BYTES;
+if (over(body)) {
   body = signalsBody(artifact, ctx, { ...deps, institutional: getSignalsInstitutional(NAMED_MOVES_FALLBACK_ROWS) });
+  if (over(body)) body = signalsBody(artifact, ctx, { ...deps, institutional: getSignalsInstitutional(NAMED_MOVES_FALLBACK_ROWS), overlap: getOverlap(OVERLAP_FALLBACK_ROWS) });
 }
 // signals-v4 LD9 (reversing SIGNALS-CLARITY M2's R7): the page holds Congress
 // AND 13F tabs, so its title, h1 and description name both sources — the
@@ -43,7 +59,8 @@ const description =
   "Signals from Congress trades and 13F filings: the Congress filings to read first, each measured against the filer's " +
   "own record, with the rule-based hits that flagged them — every hit with its exact rule, interval magnitude, both " +
   "dates and receipt — and the notable 13F managers' named moves, consensus and largest new positions for the newest " +
-  "closed quarter, each with its 13F receipt and the members of Congress on the same side.";
+  "closed quarter, each with its 13F receipt and the members of Congress on the same side; the names both traded in " +
+  "that quarter; and published research on the patterns the rows show, with evidence on both sides. Not advice.";
 ---
 
 <Base title="Signals — Congress and 13F — Public Filings" description={description} active="signals">

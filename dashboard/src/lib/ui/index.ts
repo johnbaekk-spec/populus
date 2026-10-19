@@ -80,6 +80,9 @@ export {
 } from "./signals.ts";
 // signals-v4 M2 (LD2, LD21): the Institutional tab of /signals/
 export { signalsInstitutionalHtml, CONVICTION_LABEL_HTML } from "./signals-institutional.ts";
+// signals-v4 M3 (LD2, LD21, R27): the Overlap and Playbooks tabs, and their Methodology sections
+export { signalsOverlapHtml, signalsOverlapMethodHtml } from "./signals-overlap.ts";
+export { signalsPlaybooksHtml, signalsPlaybooksMethodHtml } from "./signals-playbooks.ts";
 export { type TickerHeaderInfo, type TickerPageDeps, tickerInstSectionHtml, tickerUnifiedBody } from "./ticker.ts";
 export {
   type AddsSortKey,

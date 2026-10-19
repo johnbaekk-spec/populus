@@ -90,6 +90,9 @@ import { COMMITTEE_DIRECT_SOURCE, COMMITTEE_DIRECT_VERSION, DIRECT_COMMITTEE_NAM
 import { SIGNAL_THRESHOLDS } from "../signal-thresholds.ts";
 import { disclosureLedger, pairBandHtml } from "./shared.ts";
 import { institutionalLedgerHtml, signalsInstitutionalHtml, type SignalsInstitutional } from "./signals-institutional.ts";
+import { overlapCarried, overlapCounts, overlapLedgerHtml, overlapRowId, signalsOverlapHtml, type Overlap } from "./signals-overlap.ts";
+import { playbookChipsHtml, playbookFilterHtml, playbookRowSectionHtml, playbooksLedgerHtml, signalsPlaybooksHtml, type PlaybooksModel } from "./signals-playbooks.ts";
+import { PLAYBOOKS, type PlaybookHit } from "../playbooks.ts";
 import { BROAD_ACCOUNT_NAMES, CONGRESS_DETAIL_LINES, QUARTER_ENDS_TEXT } from "../congress-quarter.ts";
 
 /* ================================================================================
@@ -602,6 +605,14 @@ export interface SignalsPageDeps {
       (`getSignalsInstitutional()`); absent or null → the tab states that this
       view does not carry it */
   institutional?: SignalsInstitutional | null;
+  /** signals-v4 M3 (LD1, LD2): the Overlap tab's rows (`getOverlap()`); absent
+      or null → the tab states that this view does not carry it */
+  overlap?: Overlap | null;
+  /** signals-v4 M3 (LD1, LD2, LD16): the playbook triggers over the triage
+      (`getPlaybookTriggers()`) and the panels' qualifying counts; absent or
+      null → no row carries a chip, there is no Playbooks filter, and the tab
+      states that its triggers are not computed in this view */
+  playbooks?: PlaybooksModel | null;
 }
 
 /** Inputs of the lag distribution (Methodology `#signal-lag`). */
@@ -930,8 +941,10 @@ function rowFact(label: string, html: string): string {
 
     `link: false` — the ticker page's own block (R18) — omits the ticker-page
     link, which would point at the page it is on; `open: true` renders the
-    row opened. */
-export function triageRowHtml(row: TriageRow, ctx: RenderCtx, opts: { link?: boolean; open?: boolean } = {}): string {
+    row opened. signals-v4 M3 (R21): `playbooks` — the playbooks the row
+    triggers — adds a dashed chip per playbook on line 1, `data-pb` tokens on
+    the row and the playbook section of the opened row. */
+export function triageRowHtml(row: TriageRow, ctx: RenderCtx, opts: { link?: boolean; open?: boolean; playbooks?: readonly PlaybookHit[] } = {}): string {
   const t = row.lead.txn;
   const filers = [...new Map(row.filings.map((f) => [f.memberKey, f.rows[0]!])).values()];
   const cluster = row.grouping === "cluster" && row.cluster !== null;
@@ -956,7 +969,7 @@ export function triageRowHtml(row: TriageRow, ctx: RenderCtx, opts: { link?: boo
     `<summary class="si-row-sum">` +
     `<span class="si-row-tk mono-ticker">${esc(t.ticker ?? "no ticker")}</span>` +
     `<span class="si-chip si-side-${side.cls}">${esc(side.text)}</span>` +
-    `<span class="si-row-who"><span class="si-row-member">${esc(who)}</span>${count}${aff} ${ownerWordHtml(t.owner)}${kindTag}${lateTagHtml(row.lateLines, row.totalLines)}</span>` +
+    `<span class="si-row-who"><span class="si-row-member">${esc(who)}</span>${count}${aff} ${ownerWordHtml(t.owner)}${kindTag}${lateTagHtml(row.lateLines, row.totalLines)}${playbookChipsHtml(opts.playbooks)}</span>` +
     `<span class="si-row-amt">${esc(amountText(t))}</span>` +
     metersHtml(row.meters) +
     `<span class="si-row-filed">filed <time datetime="${esc(t.filed)}">${esc(t.filed)}</time></span>` +
@@ -1007,10 +1020,13 @@ export function triageRowHtml(row: TriageRow, ctx: RenderCtx, opts: { link?: boo
     (lateDetail ? rowFact("Late", `<span class="si-late">${esc(lateDetail)}</span>`) : "") +
     `</dl>` +
     meterWordsHtml(row.meters) +
+    playbookRowSectionHtml(opts.playbooks) +
     `<div class="si-row-links">${links.join("")}</div>` +
     `</div>`;
   return (
-    `<article class="si-row" id="${esc(triageRowId(row))}" data-tier="${row.tier}" data-grouping="${row.grouping}" data-ticker="${esc(t.ticker ?? "")}" data-row-key="${esc(row.key)}">` +
+    `<article class="si-row" id="${esc(triageRowId(row))}" data-tier="${row.tier}" data-grouping="${row.grouping}" data-ticker="${esc(t.ticker ?? "")}" data-row-key="${esc(row.key)}"` +
+    (opts.playbooks && opts.playbooks.length > 0 ? ` data-pb="${opts.playbooks.map((h) => h.id).join(" ")}"` : "") +
+    `>` +
     `<details class="si-row-d" name="si-rows"${opts.open ? " open" : ""}>` +
     summary +
     detail +
@@ -1062,9 +1078,12 @@ function tierTipHtml(tier: Tier): string {
   return `<span class="si-tier-tip">${note(tierDefinition(tier), { scope: "signals-tiers" }, tier, { trigger: "mark", name: `About ${TIER_LABELS[tier].toLowerCase()}` })}</span>`;
 }
 
-function tierHtml(tier: Tier, rows: readonly TriageRow[], ctx: RenderCtx): string {
+function tierHtml(tier: Tier, rows: readonly TriageRow[], ctx: RenderCtx, pb: PlaybooksModel | null = null): string {
   const label = `${esc(TIER_LABELS[tier])} <span class="si-tier-n">${fmtInt(rows.length)}</span>`;
-  const body = rows.length === 0 ? `<p class="section-note">${esc(TIER_EMPTY[tier])}</p>` : rows.map((r) => triageRowHtml(r, ctx)).join("\n");
+  const body =
+    (rows.length === 0 ? `<p class="section-note">${esc(TIER_EMPTY[tier])}</p>` : rows.map((r) => triageRowHtml(r, ctx, pb ? { playbooks: pb.triggers.byRow.get(r.key) } : {})).join("\n")) +
+    /* signals-v4 M3 (R21): the tier's line while the Playbooks filter matches none of its rows */
+    (pb && rows.length > 0 ? `<p class="section-note si-pb-none" hidden>No ${esc(TIER_LABELS[tier].toLowerCase())} row triggers this playbook.</p>` : "");
   if (tier === "routine") {
     /* the heading rides in the summary, so the tier keeps its place in the
        outline while closed; the tip sits beside the summary, never inside it
@@ -1140,7 +1159,7 @@ function barsTipHtml(): string {
   );
 }
 
-function triageHtml(triage: TriageResult | null, artifact: SignalArtifact, ctx: RenderCtx): string {
+function triageHtml(triage: TriageResult | null, artifact: SignalArtifact, ctx: RenderCtx, pb: PlaybooksModel | null = null): string {
   /* signals-v4 LD19: the panel note (rows ranked, the filed window, the own
      record) is the "About filings to read" tip; the window also stays in the
      ledger. */
@@ -1164,11 +1183,13 @@ function triageHtml(triage: TriageResult | null, artifact: SignalArtifact, ctx: 
   return (
     `<section class="panel si-triage" id="triage" aria-labelledby="triage-h">` +
     head +
+    /* signals-v4 M3 (R21): the Playbooks filter above the rows */
+    (pb ? playbookFilterHtml(pb) : "") +
     rowHeadHtml(barsTipHtml()) +
     (triage.cmteAvailable ? "" : `<p class="section-note">Cmte reads unknown on every row: committee data is not in this build (${esc(triage.cmteUnavailableReason ?? "inputs-not-in-build")}).</p>`) +
-    tierHtml("stands", by("stands"), ctx) +
-    tierHtml("look", by("look"), ctx) +
-    tierHtml("routine", by("routine"), ctx) +
+    tierHtml("stands", by("stands"), ctx, pb) +
+    tierHtml("look", by("look"), ctx, pb) +
+    tierHtml("routine", by("routine"), ctx, pb) +
     `</section>`
   );
 }
@@ -1330,7 +1351,8 @@ export function paneSwitchHtml(panes: readonly PaneSpec[], name = "Show"): strin
 /* ---------- R10: the head and its "How signals work" note (LD9) ---------- */
 
 /** The "How signals work" tip (LD9): v3's nine sentences, unchanged, then one
-    paragraph per tab as each lands — Institutional from M2. */
+    paragraph per tab as each lands — Institutional from M2, Overlap and
+    Playbooks from M3. */
 function howSignalsWorkHtml(artifact: SignalArtifact, superseded: number, unevaluated: number, inst: SignalsInstitutional | null): string {
   return (
     `<span class="si-tip-p">${congressHowHtml(artifact, superseded, unevaluated)}</span>` +
@@ -1339,7 +1361,9 @@ function howSignalsWorkHtml(artifact: SignalArtifact, superseded: number, uneval
         (inst && inst.present
           ? ` This build holds 13F filings received through ${inst.latestFiled ?? "an unstated date"}; the newest closed quarter is ${inst.period ?? "not yet available"}.`
           : ""),
-    )}</span>`
+    )}</span>` +
+    `<span class="si-tip-p"><strong>Overlap</strong> — Same name, same quarter: a co-occurrence in public filings, never coordination or intent.</span>` +
+    `<span class="si-tip-p"><strong>Playbooks</strong> — Published research on the patterns these rows show, with evidence on both sides; the numbers are the papers' own. Not advice.</span>`
   );
 }
 
@@ -1397,6 +1421,8 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
   const triage = d.triage ?? null;
 
   const inst = d.institutional ?? null;
+  const overlap = d.overlap ?? null;
+  const pb = d.playbooks ?? null;
 
   /* --- R10 / LD9: exactly three figures per tab; the selected tab's group
      shows (`tabs.ts` toggles `[data-tab-for]`), Congress without script --- */
@@ -1416,13 +1442,16 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
   /* LD8: the tabs. Every panel renders and shows without script; `tabs.ts`
      selects one. The scroll region is the ROLE-LESS wrapper, so the tablist
      keeps its role and name at every width. */
-  const tab = (id: string, name: string, n: string | null): string =>
-    `<a class="tk-tab sig-tab" role="tab" id="tab-${id}" href="#${id}" aria-controls="${id}">${esc(name)}${n === null ? "" : ` <span class="tk-tab-n">${esc(n)}</span>`}</a>`;
+  const tab = (id: string, name: string, n: string | null, isNew = false): string =>
+    `<a class="tk-tab sig-tab" role="tab" id="tab-${id}" href="#${id}" aria-controls="${id}">${esc(name)}${n === null ? "" : ` <span class="tk-tab-n">${esc(n)}</span>`}${isNew ? ` <span class="tab-new">New</span>` : ""}</a>`;
   const tabs =
     `<div class="sig-tabs-scroll" data-scroll-region="Signal tabs · scroll sideways">` +
     `<div class="tk-tabs sig-tabs" role="tablist" aria-label="Signal sources">` +
     tab("congress", "Congress", fmtInt(active.length)) +
     tab("institutional", "Institutional", inst && inst.present && inst.period !== null ? fmtInt(inst.moves.length) : null) +
+    /* M3: Overlap counts its same-side names (broad accounts not counted), Playbooks its seven */
+    tab("overlap", "Overlap", overlap && overlap.period !== null ? fmtInt(overlapCounts(overlap.core).same) : null, true) +
+    tab("playbooks", "Playbooks", fmtInt(PLAYBOOKS.length), true) +
     `</div></div>`;
 
   return (
@@ -1432,6 +1461,8 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
     `<p class="page-lede">What stands out in Congress trades and 13F moves.</p></div>` +
     `<div class="sig-ledger" data-tab-for="congress">${ledger}</div>` +
     `<div class="sig-ledger" data-tab-for="institutional" hidden>${institutionalLedgerHtml(inst)}</div>` +
+    `<div class="sig-ledger" data-tab-for="overlap" hidden>${overlapLedgerHtml(overlap)}</div>` +
+    `<div class="sig-ledger" data-tab-for="playbooks" hidden>${playbooksLedgerHtml(pb)}</div>` +
     `</div>` +
     tabs +
     `<section class="tk-panel sig-panel" role="tabpanel" id="congress" aria-labelledby="tab-congress">` +
@@ -1444,7 +1475,7 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
     /* LD7: one band — the triage (the primary cell) │ families above the hits. */
     pairBandHtml(
       "design-signals-band",
-      triageHtml(triage, artifact, ctx),
+      triageHtml(triage, artifact, ctx, triage ? pb : null),
       `<div class="si-side" id="signals-side">` + familiesHtml(d, active, artifact) + hitsHtml(active, ctx) + `</div>`,
       { primary: "left" },
     ) +
@@ -1452,7 +1483,15 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
     withheld +
     `</section>` +
     `<section class="tk-panel sig-panel" role="tabpanel" id="institutional" aria-labelledby="tab-institutional" data-quarter="${esc(inst?.period ?? "")}">` +
-    signalsInstitutionalHtml(inst, ctx) +
+    /* M3: the strips and "See {TICKER} in Overlap →" link only to tabs this view renders */
+    signalsInstitutionalHtml(inst, ctx, { playbooks: pb !== null, overlapIds: overlap && overlap.period !== null ? new Set([...overlapCarried(overlap)].map(overlapRowId)) : null }) +
+    `</section>` +
+    `<section class="tk-panel sig-panel" role="tabpanel" id="overlap" aria-labelledby="tab-overlap">` +
+    signalsOverlapHtml(overlap, ctx, { playbooks: pb !== null }) +
+    `</section>` +
+    `<section class="tk-panel sig-panel" role="tabpanel" id="playbooks" aria-labelledby="tab-playbooks">` +
+    /* R9 / LD8: the tab links only to what this page renders */
+    signalsPlaybooksHtml(pb, ctx, { institutionalPanels: inst !== null && inst.present && inst.period !== null, triageRows: triage !== null && pb !== null && pb.triage === triage }) +
     `</section>`
   );
 }

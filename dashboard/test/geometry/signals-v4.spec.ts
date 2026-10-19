@@ -558,9 +558,10 @@ import { signalsInstitutionalHtml } from "../../src/lib/ui/index.ts";
 import { institutionalLedgerHtml, type SignalsInstitutional } from "../../src/lib/ui/signals-institutional.ts";
 import { fixtureInstitutional, fixtureMoves } from "../lib/inst-signals-fixture.ts";
 
-/** The built page with the fixture's Institutional panel and ledger group. */
+/** The built page with the fixture's Institutional panel and ledger group
+    (M3: the Institutional panel is followed by the Overlap panel). */
 function spliceFixture(html: string, model: SignalsInstitutional = fixtureInstitutional()): string {
-  const panel = /(<section class="tk-panel sig-panel" role="tabpanel" id="institutional" aria-labelledby="tab-institutional" data-quarter=")[^"]*(">)([\s\S]*?)(<\/section>\s*<\/main>)/;
+  const panel = /(<section class="tk-panel sig-panel" role="tabpanel" id="institutional" aria-labelledby="tab-institutional" data-quarter=")[^"]*(">)([\s\S]*?)(<\/section><section class="tk-panel sig-panel" role="tabpanel" id="overlap")/;
   if (!panel.test(html)) throw new Error("the built page carries no Institutional panel to splice");
   const ledger = /(<div class="sig-ledger" data-tab-for="institutional" hidden>)([\s\S]*?<\/dl>)(<\/div>)/;
   if (!ledger.test(html)) throw new Error("the built page carries no Institutional ledger group to splice");
@@ -927,7 +928,7 @@ for (const width of PHONES) {
 
 /* ---------------------------------------------------------------- T2.2: tabs */
 
-test("T2.2 (R9, LD8): the tablist keeps its role at 320 and 1440; at 320 a strip of four tabs scrolls inside its wrapper (a named region), never the page; print shows both panels", async ({ browser }, testInfo) => {
+test("T2.2 / T3.5 (R9, LD8): the tablist keeps its role at 320 and 1440; at 320 the strip of four tabs scrolls inside its wrapper (a named region), never the page; print shows every panel", async ({ browser }, testInfo) => {
   for (const width of [320, 1440]) {
     const { ctx, page } = await openInst(browser, testInfo, width, { fixture: false, path: "/signals/" });
     try {
@@ -935,11 +936,8 @@ test("T2.2 (R9, LD8): the tablist keeps its role at 320 and 1440; at 320 a strip
       expect([s.role, s.label]).toEqual(["tablist", "Signal sources"]);
       expect(s.doc, `@${width}: no sideways document scroll`).toBeLessThanOrEqual(1);
       if (width === 320) {
-        // M3's four tabs, planted: the strip overflows inside its wrapper, which becomes the region
-        await page.evaluate(() => {
-          const list = document.querySelector(".sig-tabs")!;
-          for (const id of ["overlap", "playbooks"]) list.insertAdjacentHTML("beforeend", `<a class="tk-tab sig-tab" role="tab" href="#${id}" aria-controls="${id}">${id === "overlap" ? "Overlap" : "Playbooks"} <span class="tk-tab-n">99</span></a>`);
-        });
+        // M3's four tabs, as built: the strip overflows inside its wrapper, which becomes the region
+        expect(await page.evaluate(() => document.querySelectorAll(".sig-tabs > .tk-tab").length)).toBe(4);
         await page.waitForTimeout(400);
         const o = await page.evaluate(() => { const w = document.querySelector<HTMLElement>(".sig-tabs-scroll")!; return { sw: w.scrollWidth, cw: w.clientWidth, role: w.getAttribute("role"), list: document.querySelector(".sig-tabs")!.getAttribute("role"), doc: document.documentElement.scrollWidth - innerWidth }; });
         expect(o.sw, "four tabs overflow at 320").toBeGreaterThan(o.cw + 1);
@@ -949,8 +947,10 @@ test("T2.2 (R9, LD8): the tablist keeps its role at 320 and 1440; at 320 a strip
       }
       if (width === 1440) {
         await page.emulateMedia({ media: "print" });
-        const p = await page.evaluate(() => ["congress", "institutional"].map((id) => document.getElementById(id)!.checkVisibility()));
-        expect(p, "print shows every panel").toEqual([true, true]);
+        const p = await page.evaluate(() => ["congress", "institutional", "overlap", "playbooks"].map((id) => document.getElementById(id)!.checkVisibility()));
+        expect(p, "print shows every panel").toEqual([true, true, true, true]);
+        const arts = await page.evaluate(() => Array.from(document.querySelectorAll("article.pb-main")).filter((a) => a.checkVisibility()).length);
+        expect(arts, "and every playbook").toBe(7);
         await page.emulateMedia({ media: "screen" });
       }
     } finally {
@@ -963,14 +963,183 @@ test("T2.2 (R9) @390: without JavaScript every panel and every pane renders, sta
   const { ctx, page } = await openInst(browser, testInfo, 390, { js: false });
   try {
     const s = await page.evaluate(() => ({
-      panels: ["congress", "institutional"].map((id) => document.getElementById(id)!.checkVisibility()),
+      panels: ["congress", "institutional", "overlap", "playbooks"].map((id) => document.getElementById(id)!.checkVisibility()),
       panes: ["triage", "signals-side", "named-moves", "consensus", "new-position-leaders"].map((id) => document.getElementById(id)!.checkVisibility()),
       rows: Array.from(document.querySelectorAll<HTMLElement>("#mv-list > article.mv-item")).filter((r) => r.checkVisibility()).length,
     }));
-    expect(s.panels).toEqual([true, true]);
+    expect(s.panels).toEqual([true, true, true, true]);
     expect(s.panes).toEqual([true, true, true, true, true]);
     expect(s.rows, "the server's fifteen").toBe(15);
   } finally {
     await ctx.close();
+  }
+});
+
+/* ======================================================================
+   signals-v4 M3 — Overlap and Playbooks (T3.7; R18, R19, R24, R26;
+   success criteria 4, 6 and 7 at phone widths).
+
+   The owner-tier build has no 13F change, so its Overlap is the stated
+   absence; the populated tab is measured as M2's is — the BUILT page with
+   the Overlap panel (and its ledger group) rendered by the REAL renderer over
+   the shared fixture (`test/lib/overlap-fixture.ts`), and the Playbooks
+   panel over the golden public rows with triggers on them, so its "Triggers
+   now" rows exist whatever this build's rows trigger.
+   ====================================================================== */
+
+import { signalsOverlapHtml, signalsPlaybooksHtml } from "../../src/lib/ui/index.ts";
+import { overlapLedgerHtml } from "../../src/lib/ui/signals-overlap.ts";
+import { fixtureOverlap } from "../lib/overlap-fixture.ts";
+import { loadTriageFixture } from "../lib/triage-fixture.ts";
+import { buildTriage } from "../../src/lib/signal-triage.ts";
+import { playbookTriggers } from "../../src/lib/playbooks.ts";
+
+function m3Splice(html: string): string {
+  const ov = /(<section class="tk-panel sig-panel" role="tabpanel" id="overlap" aria-labelledby="tab-overlap">)([\s\S]*?)(<\/section><section class="tk-panel sig-panel" role="tabpanel" id="playbooks")/;
+  const ovLedger = /(<div class="sig-ledger" data-tab-for="overlap" hidden>)([\s\S]*?<\/dl>)(<\/div>)/;
+  const pb = /(<section class="tk-panel sig-panel" role="tabpanel" id="playbooks" aria-labelledby="tab-playbooks">)([\s\S]*?)(<\/section>\s*<\/main>)/;
+  for (const [re, what] of [[ov, "Overlap panel"], [ovLedger, "Overlap ledger group"], [pb, "Playbooks panel"]] as const) if (!re.test(html)) throw new Error(`the built page carries no ${what} to splice`);
+  const f = loadTriageFixture();
+  const tr = buildTriage(f.artifact, f.rows, { committee: f.committee, identityOf: f.identityOf });
+  const trig = playbookTriggers(tr, f.rows);
+  /* every row of the golden triage triggers the leadership playbook here, so "Triggers now" lists five */
+  const byRow = new Map(tr.rows.map((r) => [r.key, [{ id: "leader" as const, why: "fixture" }]]));
+  const model = { triggers: { ...trig, byRow, counts: { ...trig.counts, leader: tr.rows.length } }, triage: tr, bestIdeas: 3, consensus: 7, cmteUnavailableReason: null };
+  const o = fixtureOverlap();
+  return html
+    .replace(ov, (_m, a: string, _b: string, c: string) => `${a}${signalsOverlapHtml(o, {})}${c}`)
+    .replace(ovLedger, (_m, a: string, _b: string, c: string) => `${a}${overlapLedgerHtml(o)}${c}`)
+    .replace(pb, (_m, a: string, _b: string, c: string) => `${a}${signalsPlaybooksHtml(model, {})}${c}`);
+}
+
+async function openM3(browser: Browser, testInfo: TestInfo, width: number, hash: string, opts: { js?: boolean } = {}) {
+  const ctx = await browser.newContext({ baseURL: testInfo.project.use.baseURL, viewport: { width, height: width > 720 ? 900 : 844 }, javaScriptEnabled: opts.js !== false });
+  await ctx.route(/cloudflareinsights\.com/, (r) => r.abort());
+  await ctx.route(/\/signals\/(?:index\.html)?(?:\?.*)?$/, async (route) => {
+    const res = await route.fetch();
+    const headers = { ...res.headers(), "content-type": "text/html; charset=utf-8" };
+    delete headers["content-length"];
+    await route.fulfill({ status: res.status(), headers, body: m3Splice(await res.text()) });
+  });
+  const page = await ctx.newPage();
+  expect((await page.goto(`/signals/${hash}`, { waitUntil: "load" }))?.status()).toBe(200);
+  await page.waitForLoadState("networkidle", { timeout: 30_000 }).catch(() => undefined);
+  await page.evaluate(() => document.fonts.ready);
+  await page.waitForTimeout(200);
+  return { ctx, page };
+}
+
+/** Each Congress line under `root`: owner, range, both dates and receipt, CSS-visible and inside the viewport's width. */
+function lineFieldProblems(page: Page, root: string): Promise<{ n: number; out: string[] }> {
+  return page.evaluate((sel) => {
+    const vis = (e: Element | null): boolean => !!e && e.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) && e.getBoundingClientRect().width > 0;
+    const inView = (e: Element): boolean => { const r = e.getBoundingClientRect(); return r.left >= -0.5 && r.right <= innerWidth + 0.5; };
+    const ls = Array.from(document.querySelectorAll(`${sel} .cl-line`)).filter((l) => (l as HTMLElement).checkVisibility());
+    const out: string[] = [];
+    ls.forEach((li, i) => {
+      for (const f of [".owner-note", ".cl-amt", ".si-row-traded time", ".si-row-filed time", ".si-row-src a"]) {
+        const e = li.querySelector(f);
+        if (!vis(e) || !inView(e!)) out.push(`line ${i}: ${f}`);
+      }
+    });
+    return { n: ls.length, out };
+  }, root);
+}
+
+for (const width of PHONES) {
+  test(`T3.7 (R18, R24, R26) @${width}: Overlap — no sideways document scroll; its controls pass G12 and scroll inside themselves; each shown row keeps its relation and both counts; an opened row's Congress lines keep owner, range, both dates and receipt`, async ({ browser }, testInfo) => {
+    const { ctx, page } = await openM3(browser, testInfo, width, "#overlap");
+    try {
+      expect(await page.evaluate(() => document.getElementById("tab-overlap")!.getAttribute("aria-selected"))).toBe("true");
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth), "no sideways document scroll").toBeLessThanOrEqual(1);
+      expect(await hitMisses(page, "#ov-section .ov-rels > button")).toEqual([]);
+      expect(await hitMisses(page, "#ov-broad")).toEqual([]);
+      const tools = await page.evaluate(() => { const t = document.querySelector<HTMLElement>("#ov-section .ov-tools")!; return { sw: t.scrollWidth, cw: t.clientWidth, overflow: getComputedStyle(t).overflowX, role: t.getAttribute("role") }; });
+      expect(tools.overflow).toBe("auto");
+      if (tools.sw > tools.cw + 1) expect(tools.role, "an overflowing control row is a named region").toBe("region");
+      const rows = await page.evaluate(() => {
+        const vis = (e: Element | null): boolean => !!e && e.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) && e.getBoundingClientRect().width > 0;
+        const inView = (e: Element): boolean => { const r = e.getBoundingClientRect(); return r.left >= -0.5 && r.right <= innerWidth + 0.5; };
+        const items = Array.from(document.querySelectorAll<HTMLElement>("#ov-list > article.ov-item")).filter((i) => !i.hidden);
+        const out: string[] = [];
+        for (const it of items) for (const sel of [".ov-tk", ".ov-rl:not([hidden]) .ov-rel", ".ov-cg:not([hidden])", ".ov-mg"]) {
+          const e = it.querySelector(sel);
+          if (!vis(e) || !inView(e!)) out.push(`${it.id}: ${sel}`);
+        }
+        return { n: items.length, out };
+      });
+      expect(rows.n, "the first twelve").toBe(12);
+      expect(rows.out).toEqual([]);
+      const first = page.locator("#ov-list > article.ov-item:not([hidden])").first();
+      await first.locator("summary").click();
+      await page.waitForTimeout(250);
+      const lines = await lineFieldProblems(page, "#ov-list > article.ov-item:not([hidden]) details[open]");
+      expect(lines.n, "the opened row lists its Congress lines").toBeGreaterThan(0);
+      expect(lines.out).toEqual([]);
+      const mgr = await page.evaluate(() => Array.from(document.querySelectorAll("#ov-list details[open] .ov-mline")).filter((l) => { const a = l.querySelector("a.mv-src"); return !a || a.getBoundingClientRect().right > innerWidth + 0.5 || !a.checkVisibility(); }).length);
+      expect(mgr, "every manager line keeps its 13F receipt on screen").toBe(0);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth), "still no sideways scroll").toBeLessThanOrEqual(1);
+      // Broad accounts on: the broad-only names list, with no sideways scroll
+      await page.locator("#ov-broad").click();
+      await page.waitForTimeout(150);
+      expect(await page.evaluate(() => document.getElementById("ov-broad")!.getAttribute("aria-pressed"))).toBe("true");
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test(`T3.7 (R19, R24, R26) @${width}: Playbooks — the "Not advice" line on screen; the list is a strip that scrolls inside itself with G12 links; every "Triggers now" line keeps owner, range, both dates and receipt; no sideways document scroll`, async ({ browser }, testInfo) => {
+    const { ctx, page } = await openM3(browser, testInfo, width, "#pb-leader");
+    try {
+      expect(await page.evaluate(() => document.getElementById("tab-playbooks")!.getAttribute("aria-selected"))).toBe("true");
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth), "no sideways document scroll").toBeLessThanOrEqual(1);
+      const disc = await page.evaluate(() => { const d = document.querySelector<HTMLElement>("#pb-section .pb-disc")!; const r = d.getBoundingClientRect(); return { vis: d.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }), right: r.right, text: d.textContent ?? "" }; });
+      expect(disc.vis).toBe(true);
+      expect(disc.text).toContain("Not advice.");
+      expect(disc.right).toBeLessThanOrEqual(width + 0.5);
+      const list = await page.evaluate(() => { const l = document.querySelector<HTMLElement>("#pb-section .pb-list")!; return { sw: l.scrollWidth, cw: l.clientWidth, overflow: getComputedStyle(l).overflowX, role: l.getAttribute("role") }; });
+      expect(list.overflow).toBe("auto");
+      expect(list.sw, "seven playbooks overflow a phone's strip").toBeGreaterThan(list.cw + 1);
+      expect(list.role, "the overflowing strip is a named region").toBe("region");
+      expect(await hitMisses(page, "#pb-section .pb-list > a.pbi", 8)).toEqual([]);
+      expect(await page.evaluate(() => Array.from(document.querySelectorAll("article.pb-main")).filter((a) => a.checkVisibility()).map((a) => a.id))).toEqual(["pb-leader"]);
+      const lines = await lineFieldProblems(page, "#pb-leader .pb-row");
+      expect(lines.n, "five Triggers now rows").toBe(5);
+      expect(lines.out).toEqual([]);
+      const status = await page.evaluate(() => { const s = document.querySelector<HTMLElement>("#pb-leader .pb-st")!; return s.checkVisibility() && s.getBoundingClientRect().right <= innerWidth + 0.5; });
+      expect(status, "its status on screen").toBe(true);
+    } finally {
+      await ctx.close();
+    }
+  });
+}
+
+test("T3.7 (R18, R19) @1440: Overlap rows are two lines, every name's counts beside its relation; the Playbooks list sits beside one article; with JavaScript off every article and the core rows show", async ({ browser }, testInfo) => {
+  const { ctx, page } = await openM3(browser, testInfo, 1440, "#overlap");
+  try {
+    const h = await page.evaluate(() => {
+      const items = Array.from(document.querySelectorAll<HTMLElement>("#ov-list > article.ov-item")).filter((i) => !i.hidden);
+      return items.map((i) => { const s = i.querySelector("summary")!; const lh = parseFloat(getComputedStyle(s).lineHeight); return s.getBoundingClientRect().height / lh; });
+    });
+    expect(h.length).toBe(12);
+    for (const lines of h) expect(lines, "a collapsed Overlap row is two lines").toBeLessThan(3.2);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+    await page.locator("#tab-playbooks").click();
+    const side = await page.evaluate(() => { const n = document.querySelector(".pb-nav")!.getBoundingClientRect(); const a = Array.from(document.querySelectorAll<HTMLElement>("article.pb-main")).find((x) => !x.hidden)!.getBoundingClientRect(); return { navRight: n.right, artLeft: a.left, top: Math.abs(n.top - a.top) }; });
+    expect(side.navRight, "the list beside the article").toBeLessThanOrEqual(side.artLeft);
+  } finally {
+    await ctx.close();
+  }
+  const off = await openM3(browser, testInfo, 390, "", { js: false });
+  try {
+    const s = await off.page.evaluate(() => ({
+      arts: Array.from(document.querySelectorAll("article.pb-main")).filter((a) => a.checkVisibility()).length,
+      rows: Array.from(document.querySelectorAll<HTMLElement>("#ov-list > article.ov-item")).filter((r) => r.checkVisibility()).length,
+    }));
+    expect(s.arts, "every playbook without script").toBe(7);
+    expect(s.rows, "the core view's first twelve").toBe(12);
+  } finally {
+    await off.ctx.close();
   }
 });

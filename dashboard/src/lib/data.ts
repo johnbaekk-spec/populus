@@ -78,6 +78,8 @@ import { activityFeed } from "./activity.ts";
 import { concentrationPeriods, newPositionLeaders } from "./inst-analytics.ts";
 import { closedPeriods, corpusAsOf, instFreshnessText } from "./inst-adds.ts";
 import { buildSignalsInstitutional, type SignalsInstitutional } from "./ui/signals-institutional.ts";
+import { OVERLAP_SLICE_ROWS, buildOverlap, type Overlap } from "./ui/signals-overlap.ts";
+import { playbookTriggers, type PlaybookTriggers } from "./playbooks.ts";
 
 export type { StatTile, MemberEntity, TickerEntity };
 
@@ -1756,6 +1758,43 @@ export function getSignalsInstitutional(sliceRows: number = NAMED_MOVES_SLICE_RO
   });
   signalsInstCache.set(sliceRows, model);
   return model;
+}
+
+/* ---------- signals-v4 M3 (LD1): the Overlap tab and the playbook triggers ---------- */
+
+const overlapCache = new Map<number, Overlap>();
+
+/** The Overlap tab's rows, once per build (LD1, LD14): the Institutional
+    model's Congress-quarter join and in-build moves — no second join — in
+    both variants (broad accounts not counted, and counted). One model per
+    per-view bound: the page asks for LD14's fallback bound only when the
+    default would exceed its byte budget. Build memory only (R23). */
+export function getOverlap(sliceRows: number = OVERLAP_SLICE_ROWS): Overlap {
+  const cached = overlapCache.get(sliceRows);
+  if (cached) return cached;
+  const inst = getSignalsInstitutional();
+  const absent = !inst.present
+    ? "the institutional 13F module is not in this build"
+    : inst.period === null
+      ? "no 13F quarter in this build has passed its 45-day filing deadline yet"
+      : inst.moves.length === 0
+        ? inst.notableManagers === 0
+          ? "this build's manager registry marks no notable manager, so no 13F change is named"
+          : `no notable-manager change is on record for the quarter ended ${inst.period}`
+        : null;
+  const o = buildOverlap(inst.quarter, inst.moves, { sliceRows, absent });
+  overlapCache.set(sliceRows, o);
+  return o;
+}
+
+let playbookTriggersCache: PlaybookTriggers | null = null;
+
+/** The three Congress playbook triggers over the build's triage (LD1, LD16),
+    once per build, never serialized. */
+export function getPlaybookTriggers(): PlaybookTriggers {
+  if (playbookTriggersCache) return playbookTriggersCache;
+  playbookTriggersCache = playbookTriggers(getTriage(), getBuildData().txns);
+  return playbookTriggersCache;
 }
 
 /* ---------- R20: the holders-page set, bounded by the R19 file self-cap ---------- */

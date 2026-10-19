@@ -220,7 +220,7 @@ summary cards → dense content bands that share one-pixel seams → footer.
 below: L13 for the cards, L14 for the Signals rule book, SV3-M2 for the
 Signals triage, SV3-M3 for the ticker page, SV4-M1 for the Signals rows,
 tips and pane switch, SV4-M2 for the Signals tabs, the Institutional tab and
-the reduced `/institutional/`.)
+the reduced `/institutional/`, SV4-M3 for the Overlap and Playbooks tabs.)
 `/signals` is a triage page (signals-v3 M2, record SV3-M2 below): three lead
 cards, then "Filings to read" in three tiers beside the hit rate by family and
 a slim hits table. Its rule book (every kind, its exact rule, hits, status —
@@ -329,10 +329,11 @@ takes its content's width above the fold and a full ledger row at it.
   positions (1.7fr) │ Book shape + Filing history (1fr) — the Planned line, the
   EDGAR and notes disclosures, and the §5 data note as the page's foot line.
 - **Signals** (signals-v3 M2, record SV3-M2; signals-v4 M1, record SV4-M1;
-  signals-v4 M2, record SV4-M2): the head — h1 "Signals" with the "How
-  signals work" ⓘ beside it — beside ONE three-figure ledger group per tab
-  (the selected tab's shows; Congress's without script), then the sticky tab
-  strip (Congress │ Institutional) over the panels. Congress: the lead cards,
+  signals-v4 M2, record SV4-M2; signals-v4 M3, record SV4-M3): the head — h1
+  "Signals" with the "How signals work" ⓘ beside it — beside ONE three-figure
+  ledger group per tab (the selected tab's shows; Congress's without script),
+  then the sticky tab strip (Congress │ Institutional │ Overlap │ Playbooks)
+  over the panels. Congress: the lead cards,
   the pane switch (shown only where the band stacks), band S1 — Filings to
   read (1.5fr, the primary) │ Hit rate by family above the slim hits (1fr),
   its cells unstretched and the hits filled to the height of Filings to read
@@ -340,7 +341,11 @@ takes its content's width above the fold and a full ledger row at it.
   provenance chips, three lead cards, a three-pane switch, band S2 — Named
   moves (1.6fr, the primary) │ Consensus above the new-position leaders
   (1fr), unstretched, the moves filled to the side column's height — the
-  foot's link row and the §5 data note.
+  foot's link row and the §5 data note. Overlap: the panel head with its
+  playbook strip, the co-occurrence line, the controls (Same │ Opposite │ All,
+  Broad accounts), one two-line row per name, the pager and the page's own
+  bound. Playbooks: the "Not advice" line, the count line, the list of seven
+  beside one article (stacked at the fold, the list a sideways strip).
 - **Ticker** (signals-v3 M3, record SV3-M3): the head beside its five-figure
   ledger, the provenance strip, the "On Signals" block when the ticker has an
   active signal, then the sticky Congress │ Institutional tab bar over two
@@ -545,6 +550,36 @@ record: `docs/frontend/signals-v4.md` §M2.
   exempt heading, ARIA and caption forms or through
   `<span class="ref-label">…</span>`; its anchor is `#new-position-leaders`
   (the §0 gate reads raw bytes, ids included).
+
+**Record SV4-M3 (signals-v4 M3, owner-approved mock 2026-10-17) — Overlap
+and Playbooks.** Decision record: `docs/frontend/signals-v4.md` §M3.
+
+- **Overlap (LD14).** A co-occurrence, worded so on screen (the line under
+  the head) and in its tip: never coordination, never intent. One row per
+  name as a `<details>` — line 1 the ticker, the relation word (SAME · BUY
+  SIDE, SAME · SELL SIDE, OPPOSITE, MIXED), the issuer and both sides' ▲/▼
+  counts with their words for assistive technology; line 2 the members and
+  the managers, cut by an ellipsis above the fold and wrapped at it. The row
+  carries both variants (broad accounts not counted, and counted): the
+  inactive one's relation and counts are `hidden`, never a media rule. The
+  opened row lists each member's newest line through the one Congress-line
+  renderer (range, owner, both dates, receipt), the broad accounts' lines
+  apart and named, and each manager's change with its 13F receipt. The page
+  carries a bounded run of names per view and states the bound where a view
+  runs past it; every count is the true total.
+- **Playbooks (R19).** "Published research on the patterns these rows show.
+  Not advice." is the tab's first line, visible, never a tip. The list is
+  anchors (without script every article shows and the list jumps to it; with
+  it one article shows and its link is `aria-current`); each article states
+  its source and status, pattern, verdict (amber), rule and horizon (tips),
+  what triggers it now, and its evidence for and against, each finding with
+  its venue, sample and source link, visible (no `title=`). At the fold the
+  list is a sideways strip of chips that keep their status.
+- **Playbook chips (R21).** A dashed chip on a triggered row's first line
+  (inside the filer cell, never shrinking), the playbook's section in the
+  opened row, a Playbooks filter above Filings to read (dashed segmented
+  chips with their counts; an unavailable playbook says so), and strips on
+  Consensus, the new-position leaders and Overlap — links to the playbook.
 
 **Record L15 (reversal of a Sep-10 SRC §5 ban) — the HOUSE PARSE label (D2).**
 The Sep-10 copy pass banned "HOUSE PARSE" in visible text. D2 restores the

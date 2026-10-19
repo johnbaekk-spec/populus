@@ -16,6 +16,12 @@
      holds, the Consensus rows and lead cards that set the name filter, the
      Named moves' column fit, and `revealTarget` — the ONE sequence every
      in-page navigation runs (a hash, a card, a Consensus row).
+   - signals-v4 M3 (R18, R19, R21, LD8, LD14, LD16): Overlap's relation
+     control, Broad accounts toggle and "Show 12 more" over the names the
+     server carries; the Playbooks list (one article at a time); the
+     Playbooks filter over Filings to read; and every in-page link inside a
+     tab — a strip, a row's "Playbook →", a "Triggers now" row, "See {TICKER}
+     in Overlap →" — through `revealTarget`.
 
    Nothing is stored and nothing leaves the device. */
 
@@ -23,7 +29,8 @@ import { fmtInt, parseDataColumns, type RenderCtx } from "../lib/format.ts";
 import { hitsBodyHtml, hitsRangeText, sortHits, SIGNAL_HITS_PAGE_SIZE, SIGNAL_HITS_COMPACT_ROWS, hitsView, hitsHiddenText, type HitFilter } from "../lib/ui/index.ts";
 import type { Signal, SignalArtifact } from "../lib/signals.ts";
 import { NAMED_MOVES_MIN, NAMED_MOVES_STEP, namedMovesSliceKey } from "../lib/notable-moves.ts";
-import { moveDetailHtml, namedMovesBoundText, namedMovesRangeText, parseNamedMovesTotals, type MoveDetail } from "../lib/ui/signals-institutional.ts";
+import { moveDetailHtml, namedMovesBoundText, namedMovesRangeText, overlapLinkFor, parseNamedMovesTotals, type MoveDetail } from "../lib/ui/signals-institutional.ts";
+import { overlapBoundText, overlapRangeText } from "../lib/ui/signals-overlap.ts";
 import { bindFit, type FitBinding, type FitElement, type FitTarget } from "./column-fit.ts";
 import { initTabs, selectTabFor, type TabsEnv } from "./tabs.ts";
 import { expandDomDisclosureFor } from "./inst-index-client.ts";
@@ -403,6 +410,9 @@ export function initNamedMoves(): MovesPager | null {
       verified: row.hasAttribute("data-tv") ? row.getAttribute("data-tv") || null : section!.getAttribute("data-mv-tv"),
       filerPage: row.getAttribute("data-fp") ?? "",
       congress: Number(row.getAttribute("data-cg")) || 0,
+      /* M3 (R21, D8): the name's Overlap row, where the page carries it — the
+         server's one predicate, never gated on the side's Congress count */
+      overlap: section!.hasAttribute("data-mv-ov") ? overlapLinkFor(tk, (id) => document.getElementById(id)?.classList.contains("ov-item") === true) : null,
     };
   };
   /** LD10: an opened row's (or a shown name's) Congress side lists its lines:
@@ -564,9 +574,233 @@ export function initNamedMoves(): MovesPager | null {
   return pager;
 }
 
+/* ---------------------------------------------------------------- M3, LD14: Overlap */
+
+/** The Overlap tab's client state, which `revealTarget` drives. */
+export interface OverlapPager {
+  /** make a carried name visible: the variant that has it (Broad accounts on
+      when only that one does), All when the relation excludes it — or its
+      own relation, where All's carried run does not reach it — then extend
+      the page until it shows */
+  reveal(item: Element): void;
+  state(): { variant: "core" | "all"; rel: "all" | "same" | "opposite"; extra: number; shown: number };
+}
+
+type OvRel = "all" | "same" | "opposite";
+
+export function initOverlap(): OverlapPager | null {
+  const section = document.getElementById("ov-section");
+  const list = document.getElementById("ov-list");
+  if (!section || !list) return null;
+  const rangeEl = document.getElementById("ov-range");
+  const more = document.getElementById("ov-more");
+  const bound = document.getElementById("ov-bound");
+  const empty = document.getElementById("ov-empty");
+  const status = document.getElementById("ov-status");
+  const broadBtn = document.getElementById("ov-broad");
+  const step = Number(section.getAttribute("data-ov-step")) || 12;
+  /* each variant's true totals, "core all" (the server's) */
+  const pair = (name: string): [number, number] => {
+    const [a, b] = String(section.getAttribute(name) ?? "0 0").split(/\s+/).map(Number);
+    return [a || 0, b || 0];
+  };
+  const totals = { all: pair("data-ov-n"), same: pair("data-ov-same"), opposite: pair("data-ov-opp") };
+  let variant: 0 | 1 = 0;
+  let rel: OvRel = "all";
+  let extra = 0;
+  let shownNow = 0;
+  const items = (): HTMLElement[] => Array.from(list.querySelectorAll<HTMLElement>("article.ov-item"));
+  const ordOf = (el: Element, v: 0 | 1): number | null => {
+    const raw = el.getAttribute(v === 0 ? "data-oc" : "data-oa");
+    return raw === null || raw === "" ? null : Number(raw);
+  };
+  const relOf = (el: Element, v: 0 | 1): string | null => el.getAttribute(v === 0 ? "data-core" : "data-all") || null;
+  /** The active view: its carried names in the variant's order, the length of
+      the run the page carries from the view's first name (a view is a
+      contiguous run of the variant's order: same, then opposite, then mixed),
+      and its true total. */
+  function view(): { inView: HTMLElement[]; run: number; total: number } {
+    const n = totals.all[variant];
+    const sm = totals.same[variant];
+    const op = totals.opposite[variant];
+    const start = rel === "opposite" ? sm : 0;
+    const total = rel === "all" ? n : rel === "same" ? sm : op;
+    const inView = items()
+      .filter((el) => {
+        const r = relOf(el, variant);
+        return r !== null && (rel === "all" || r === rel);
+      })
+      .sort((a, b) => ordOf(a, variant)! - ordOf(b, variant)!);
+    let run = 0;
+    for (const el of inView) {
+      if (ordOf(el, variant) === start + run) run++;
+      else break;
+    }
+    return { inView, run, total };
+  }
+  function render(say = false): void {
+    const { inView, run, total } = view();
+    const want = Math.min(run, step + extra);
+    shownNow = want;
+    /* the list in the variant's order (the other variant's names after) */
+    const all = items();
+    const sorted = [...all].sort((a, b) => (ordOf(a, variant) ?? Infinity) - (ordOf(b, variant) ?? Infinity) || all.indexOf(a) - all.indexOf(b));
+    if (sorted.some((el, i) => el !== all[i])) (list as unknown as { append(...n: Element[]): void }).append(...sorted);
+    const shown = new Set(inView.slice(0, want));
+    for (const el of all) el.hidden = !shown.has(el);
+    const v = variant === 0 ? "core" : "all";
+    for (const sp of Array.from(section!.querySelectorAll<HTMLElement>("[data-v]"))) sp.hidden = sp.getAttribute("data-v") !== v;
+    for (const b of Array.from(section!.querySelectorAll<HTMLElement>("button[data-ov-rel]"))) b.setAttribute("aria-pressed", String(b.getAttribute("data-ov-rel") === rel));
+    broadBtn?.setAttribute("aria-pressed", String(variant === 1));
+    const range = overlapRangeText(want, total);
+    if (rangeEl) rangeEl.textContent = range;
+    if (more) {
+      const unavailable = want >= run;
+      more.setAttribute("aria-disabled", String(unavailable));
+      more.classList.toggle("is-unavailable", unavailable);
+    }
+    if (bound) {
+      bound.hidden = !(want === run && run < total);
+      bound.textContent = overlapBoundText(run);
+    }
+    if (empty) empty.hidden = total > 0;
+    section!.setAttribute("data-ov-shown", String(want));
+    if (say && status) status.textContent = `${range} · ${rel === "all" ? "all relations" : rel === "same" ? "same side" : "opposite"} · broad accounts ${variant === 1 ? "counted" : "not counted"}.`;
+  }
+  /** the name's place in the active view's carried run, or -1 */
+  const reach = (item: Element): number => {
+    const { inView, run } = view();
+    const at = inView.indexOf(item as HTMLElement);
+    return at >= 0 && at < run ? at : -1;
+  };
+  section.addEventListener("click", (ev) => {
+    const btn = (ev?.target as HTMLElement | undefined)?.closest?.("button[data-ov-rel], #ov-broad, #ov-more") as HTMLElement | null | undefined;
+    if (!btn) return;
+    if (btn.id === "ov-more") {
+      if (btn.getAttribute("aria-disabled") === "true") return;
+      extra += step;
+      render(true);
+      return;
+    }
+    if (btn.id === "ov-broad") variant = variant === 0 ? 1 : 0;
+    else rel = (btn.getAttribute("data-ov-rel") as OvRel | null) ?? "all";
+    extra = 0;
+    render(true);
+  });
+  render(false);
+  return {
+    reveal(item: Element): void {
+      if (reach(item) < 0) {
+        rel = "all";
+        extra = 0;
+      }
+      if (reach(item) < 0) rel = (relOf(item, variant) as OvRel | null) === "same" || relOf(item, variant) === "opposite" ? (relOf(item, variant) as OvRel) : "all";
+      if (reach(item) < 0 && relOf(item, variant === 0 ? 1 : 0) !== null) {
+        variant = variant === 0 ? 1 : 0;
+        rel = "all";
+        if (reach(item) < 0) rel = relOf(item, variant) === "same" || relOf(item, variant) === "opposite" ? (relOf(item, variant) as OvRel) : "all";
+      }
+      const at = reach(item);
+      if (at >= step + extra) extra = at + 1 - step;
+      render(true);
+    },
+    state: () => ({ variant: variant === 0 ? "core" : "all", rel, extra, shown: shownNow }),
+  };
+}
+
+/* ---------------------------------------------------------------- M3, R19: the Playbooks list */
+
+export interface PlaybookList {
+  /** show the playbook `id` (its article) and mark its link current */
+  select(id: string): boolean;
+  selected(): string | null;
+}
+
+export function initPlaybooks(): PlaybookList | null {
+  const section = document.getElementById("pb-section");
+  if (!section) return null;
+  const links = Array.from(section.querySelectorAll<HTMLElement>("a[data-pb-pick]"));
+  const arts = Array.from(section.querySelectorAll<HTMLElement>("article.pb-main"));
+  if (arts.length === 0) return null;
+  let current: string | null = null;
+  const api: PlaybookList = {
+    select(id: string): boolean {
+      if (!arts.some((a) => a.id === `pb-${id}`)) return false;
+      current = id;
+      for (const a of arts) a.hidden = a.id !== `pb-${id}`;
+      for (const l of links) {
+        if (l.getAttribute("data-pb-pick") === id) l.setAttribute("aria-current", "true");
+        else l.removeAttribute("aria-current");
+      }
+      return true;
+    },
+    selected: () => current,
+  };
+  /* with script one article shows; the first until a link, a hash or a
+     strip names another */
+  api.select(arts[0]!.id.slice(3));
+  return api;
+}
+
+/* ---------------------------------------------------------------- M3, R21: the Playbooks filter */
+
+export interface PlaybookFilter {
+  set(id: string | null): void;
+  active(): string | null;
+}
+
+export function initPlaybookFilter(): PlaybookFilter | null {
+  const triage = document.getElementById("triage");
+  if (!triage) return null;
+  const chips = Array.from(triage.querySelectorAll<HTMLElement>("button[data-pb-filter]"));
+  if (chips.length === 0) return null;
+  const status = document.getElementById("si-pb-status");
+  let active: string | null = null;
+  const nameOf = (id: string): string => (chips.find((c) => c.getAttribute("data-pb-filter") === id)?.textContent ?? id).replace(/\s+\d[\d,]*$/, "").trim();
+  function apply(): void {
+    let n = 0;
+    for (const tier of Array.from(triage!.querySelectorAll<HTMLElement>(".si-tier"))) {
+      let m = 0;
+      for (const r of Array.from(tier.querySelectorAll<HTMLElement>("article.si-row"))) {
+        const on = active === null || (r.getAttribute("data-pb") ?? "").split(" ").includes(active);
+        r.hidden = !on;
+        if (on) m++;
+      }
+      n += m;
+      const none = tier.querySelector<HTMLElement>(".si-pb-none");
+      if (none) none.hidden = active === null || m > 0;
+      /* a match in closed Routine opens it */
+      if (active !== null && m > 0 && tier.tagName.toUpperCase() === "DETAILS" && !tier.hasAttribute("open")) tier.setAttribute("open", "");
+    }
+    for (const c of chips) c.setAttribute("aria-pressed", String(c.getAttribute("data-pb-filter") === active));
+    if (status) {
+      status.hidden = active === null;
+      status.textContent = active === null ? "" : `${fmtInt(n)} ${n === 1 ? "row triggers" : "rows trigger"} ${nameOf(active)}. Choose it again to show every row.`;
+    }
+  }
+  const api: PlaybookFilter = {
+    set(id: string | null): void {
+      active = id;
+      apply();
+    },
+    active: () => active,
+  };
+  for (const c of chips) {
+    c.addEventListener("click", () => {
+      if (c.getAttribute("aria-disabled") === "true") return;
+      const id = c.getAttribute("data-pb-filter");
+      api.set(id === active ? null : id);
+    });
+  }
+  return api;
+}
+
 /* ---------------------------------------------------------------- LD8: the one reveal sequence */
 
 let moves: MovesPager | null = null;
+let overlap: OverlapPager | null = null;
+let playbookList: PlaybookList | null = null;
+let pbFilter: PlaybookFilter | null = null;
 
 /** The Named moves `initSignalsPage` bound (null before, or with no moves):
     the fit's and `revealTarget`'s pager, read by the tests that drive the
@@ -592,23 +826,30 @@ export function revealTarget(el: Element | null, opts: { name?: string | null } 
   selectTabFor(el);
   selectPaneFor(el);
   expandDomDisclosureFor(el);
+  /* M3 (LD8 step 3): a playbook's article, or something in it, is selected in the list */
+  const art = el.closest<HTMLElement>("article.pb-main");
+  if (art && playbookList) playbookList.select(art.id.replace(/^pb-/, ""));
   for (let d = el.parentElement?.closest<HTMLElement>("details") ?? null; d; d = d.parentElement?.closest<HTMLElement>("details") ?? null) {
     if (!d.hasAttribute("open")) d.setAttribute("open", "");
   }
   const row = el.closest<HTMLElement>("article.si-row");
   const mv = el.closest<HTMLElement>("article.mv-item");
+  const ov = el.closest<HTMLElement>("article.ov-item");
+  /* M3 (LD8 step 4): a triage row the Playbooks filter hides — clear it */
+  if (row && row.hidden && pbFilter && pbFilter.active() !== null) pbFilter.set(null);
+  if (ov && overlap) overlap.reveal(ov);
   if (moves) {
     if (mv) moves.reveal(mv, opts.name);
     else if (opts.name !== undefined) moves.setName(opts.name);
   }
-  const details = (row ?? mv)?.querySelector<HTMLElement>("details") ?? null;
+  const details = (row ?? mv ?? ov)?.querySelector<HTMLElement>("details") ?? null;
   if (details && !details.hasAttribute("open")) details.setAttribute("open", "");
   if (mv && details && moves) moves.fill(details);
   /* a Consensus row is scrolled to whole, as a move row is */
-  const cs = row || mv ? null : el.closest<HTMLElement>(".cs-row");
-  const target = (row ?? mv ?? cs ?? el) as HTMLElement & { scrollIntoView?: (o?: ScrollIntoViewOptions) => void };
-  target.scrollIntoView?.({ block: row || mv || cs ? "center" : "start" });
-  const focusEl = (details?.querySelector<HTMLElement>("summary") ?? (row || mv ? null : el.querySelector<HTMLElement>("h2, h3"))) as
+  const cs = row || mv || ov ? null : el.closest<HTMLElement>(".cs-row");
+  const target = (row ?? mv ?? ov ?? cs ?? el) as HTMLElement & { scrollIntoView?: (o?: ScrollIntoViewOptions) => void };
+  target.scrollIntoView?.({ block: row || mv || ov || cs ? "center" : "start" });
+  const focusEl = (details?.querySelector<HTMLElement>("summary") ?? (row || mv || ov ? null : el.querySelector<HTMLElement>("h2, h3"))) as
     | (HTMLElement & { focus?: (o?: FocusOptions) => void })
     | null;
   if (focusEl) {
@@ -673,6 +914,30 @@ export function initRowLinks(): void {
   if (typeof window === "undefined") return;
   window.addEventListener("hashchange", () => void revealHash(location.hash));
   if (typeof location !== "undefined" && location.hash) revealHash(location.hash);
+}
+
+/** signals-v4 M3 (LD8): every in-page link inside a tab — a playbook strip, a
+    row's "Playbook →", a "Triggers now" row, "All {n} in Filings to read",
+    "See {TICKER} in Overlap →", a list link, a panel link — runs
+    `revealTarget` on what it names, keeping the hash a real history entry
+    (a second click on the same link still reveals it). A card's own link
+    (`a.si-card-open`) keeps its binder; a tab is `tabs.ts`'s. */
+export function initInPageLinks(): void {
+  for (const panel of Array.from(document.querySelectorAll<HTMLElement>('[role="tabpanel"]'))) {
+    panel.addEventListener("click", (ev) => {
+      const a = (ev?.target as HTMLElement | undefined)?.closest?.("a") as HTMLAnchorElement | null | undefined;
+      if (!a || a.classList.contains("si-card-open")) return;
+      const href = a.getAttribute("href") ?? "";
+      if (!href.startsWith("#") || href.length < 2) return;
+      const target = document.getElementById(hashTargetId(href));
+      if (!target || !target.closest('[role="tabpanel"]')) return;
+      (ev as Event | undefined)?.preventDefault?.();
+      const filter = a.getAttribute("data-pb-filter");
+      if (filter !== null && pbFilter) pbFilter.set(filter);
+      if (typeof location !== "undefined" && location.hash !== href && typeof history !== "undefined") history.pushState(null, "", href);
+      revealTarget(target);
+    });
+  }
 }
 
 /* ---------------------------------------------------------------- R-8: scroll regions */
@@ -744,8 +1009,13 @@ export function initSignalsPage(opts: { tabsEnv?: TabsEnv } = {}): void {
   initTabs(document, opts.tabsEnv);
   const pager = initHitPager();
   moves = initNamedMoves();
+  /* M3: before the row links, which reveal a hash on load */
+  overlap = initOverlap();
+  playbookList = initPlaybooks();
+  pbFilter = initPlaybookFilter();
   initPaneSwitches();
   initScrollRegions();
+  initInPageLinks();
   initRowLinks();
   /* LD6 (Congress): the hits fill to the height of "Filings to read" */
   const ref = document.getElementById("triage");
