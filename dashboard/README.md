@@ -161,6 +161,28 @@ the full record is `docs/frontend/signals-v4.md`.
    page carries the first 30 moves of every filter (20 when the page would pass its
    1.5 MiB budget) and every move on a Consensus or lead-card name; where a filter
    runs past them the count keeps the build's true total and says so.
+- **LD22-5 (M3).** **Banned wording replaced on Overlap and Playbooks:** "Both bought /
+   Both sold" are SAME · BUY SIDE / SAME · SELL SIDE, "▲n bought ▼n sold" are ▲n · ▼n
+   with their words, "highest-conviction" left the best-ideas pattern, and "Opportunistic
+   insider buying" is "Opportunistic insider purchases".
+- **LD22-6 (M3).** **Overlap counts listed stock as filed only**, as the Congress column
+  does, so its names are not the mock's 142 and 41.
+- **LD22-8 (M3).** **No `title=` on the playbook strips or the evidence:** a strip is a
+  link that names its playbook for assistive technology; each finding's venue and
+  sample are visible under its citation.
+- **LD22-12.** **Overlap carries a bounded run of names per view** — the first 24 of
+  each view (12 when the page would pass its budget) — with every count the true total
+  and the bound stated where a view runs past it; the mock rendered every name.
+- **LD22-13.** **An opened Overlap row lists each member's newest Congress line** (at
+  most 12 a side, every line with its range, owner, both dates and receipt; the rest on
+  the ticker page) **and each manager's largest change** (at most 5 a side, with its
+  13F receipt); the mock listed every line with its trade date only.
+- **LD22-14.** **Overlap's relation control starts at All**, with and without script;
+  the mock started at Same.
+- **LD22-15.** **"Triggers now" rows are full Congress lines** (ticker, member, owner,
+  side, range, both dates, receipt) with a link to the row, not the mock's abbreviated
+  row.
+- **LD22-16.** **The phone playbook strip keeps each playbook's status**; the mock hid it.
 
 Design-side reconciliation is still owed for each.
 

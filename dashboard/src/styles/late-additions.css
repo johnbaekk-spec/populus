@@ -1156,6 +1156,125 @@ details.si-tier > summary > .si-tier-h { display: inline; }
   .cv-row { padding: 10px 2px; }
 }
 
+/* ---------- signals-v4 M3 (R18–R22, LD8, LD14–LD16): Overlap, Playbooks and the playbook chips ---------- */
+/* LD8: the two new tabs say so */
+.tab-new { font: 600 var(--fs-label)/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--amber); border: 1px solid var(--amber); border-radius: 3px; padding: 2px 4px; }
+/* R21: a playbook's chip — dashed, on a triggered row's first line, in its
+   opened row, on a strip and on the playbook's own head */
+.pb-chip { display: inline-block; font: 600 var(--fs-label)/1.3 var(--mono); letter-spacing: .06em; color: var(--accent); border: 1px dashed var(--accent); border-radius: 3px; padding: 0 4px; white-space: nowrap; vertical-align: baseline; }
+.si-row-who .pb-chip { flex: none; }
+.pb-strip { display: inline-flex; align-items: center; gap: 6px; min-height: var(--hit-min); margin-left: auto; font: 400 var(--fs-note)/1.3 var(--sans); color: var(--ink3); text-decoration: none; white-space: nowrap; }
+.pb-strip:hover { color: var(--ink); }
+.si-row-pb { margin: 8px 0 0; padding: 8px 0 0; border-top: 1px dashed var(--rule2); }
+.si-row-pb-one + .si-row-pb-one { margin-top: 8px; }
+.si-row-pb-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin: 0; font: 400 var(--fs-small)/1.5 var(--sans); color: var(--ink); }
+.si-row-pb-v { margin: 2px 0 0; font: 400 var(--fs-small)/1.5 var(--sans); color: var(--amber); }
+/* R21: the Playbooks filter above Filings to read */
+.si-pb-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 2px 0 10px; }
+.si-pb-l { font: 500 var(--fs-meta)/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-meta); }
+.si-pb-chips { min-width: 0; max-width: 100%; }
+.si-pb-chips:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.si-pb-chips .chips > button { border-style: dashed; }
+.si-pb-chips .chips > button[aria-disabled="true"] { color: var(--ink3); cursor: default; }
+.si-pb-status { margin: -4px 0 10px; }
+/* R18 / LD14: Overlap — the co-occurrence line, the controls, then one row
+   per name: two lines that open in place (as the triage row does) */
+.ov-lede { margin: 0 0 10px; }
+.ov-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 10px; }
+.ov-tools:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ov-broad { display: inline-flex; align-items: center; gap: 8px; min-height: var(--hit-min); padding: 6px 12px; font: 500 var(--fs-control)/1 var(--mono); color: var(--seg-text); background: none; border: 1px solid var(--seg-border); border-radius: 2px; cursor: pointer; white-space: nowrap; }
+.ov-broad[aria-pressed="true"] { color: var(--seg-text-active); background: var(--seg-fill); }
+.ov-box { width: 12px; height: 12px; border: 1px solid var(--ink3); border-radius: 2px; }
+/* the Broad accounts tip keeps clear of the toggle's hit area (G12) */
+.ov-broad + .note { margin-left: 10px; }
+.ov-broad[aria-pressed="true"] .ov-box { background: var(--accent); border-color: var(--accent); }
+.ov-head, .ov-sum { display: grid; grid-template-columns: 58px 124px minmax(0,1fr) 108px 108px 20px; column-gap: 12px; }
+.ov-head { padding: 6px 6px 5px; border-bottom: 1px solid var(--rule2); font: 500 var(--fs-label)/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-meta); }
+.ov-head > :nth-child(1) { grid-column: 1 / 3; } .ov-head > :nth-child(2) { grid-column: 3; } .ov-head > :nth-child(3) { grid-column: 4; } .ov-head > :nth-child(4) { grid-column: 5; }
+.ov-item { border-bottom: 1px solid var(--rule-row); }
+.ov-sum { grid-template-areas: "tk rl iss cg mg chv" "tk who who mw mw chv"; row-gap: 2px; align-items: baseline; padding: 8px 6px; cursor: pointer; list-style: none; font: 400 var(--fs-small)/1.5 var(--sans); color: var(--ink2); }
+.ov-sum::-webkit-details-marker { display: none; }
+.ov-sum:hover, .ov-row[open] { background: var(--raised); }
+.ov-sum:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ov-tk { grid-area: tk; font-weight: 600; color: var(--ink); }
+.ov-rl { grid-area: rl; }
+.ov-rel { font: 600 var(--fs-label)/1.5 var(--mono); letter-spacing: .08em; white-space: nowrap; }
+.ov-rel-buy { color: var(--buy); } .ov-rel-sell { color: var(--sell); } .ov-rel-opp { color: var(--amber); } .ov-rel-mix { color: var(--ink3); }
+.ov-iss { grid-area: iss; min-width: 0; color: var(--ink); }
+.ov-who { grid-area: who; min-width: 0; font-size: var(--fs-note); color: var(--ink3); }
+.ov-cg { grid-area: cg; }
+.ov-mg { grid-area: mg; }
+.ov-cg, .ov-mg { position: relative; font: 400 var(--fs-control)/1.5 var(--mono); white-space: nowrap; }
+.ov-cg .visually-hidden, .ov-mg .visually-hidden { left: 0; top: 0; }
+.ov-mw { grid-area: mw; min-width: 0; font-size: var(--fs-note); color: var(--ink3); }
+.ov-iss, .ov-who, .ov-mw { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ov-row[open] > .ov-sum > :is(.ov-iss, .ov-who, .ov-mw) { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+.ov-sum > .si-row-chv { grid-area: chv; align-self: center; }
+.ov-det { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); align-items: start; gap: 10px 28px; padding: 4px 6px 14px 76px; }
+.ov-det-h { margin: 0 0 4px; font: 500 var(--fs-meta)/1.5 var(--mono); letter-spacing: .06em; color: var(--ink-meta); }
+.ov-det-k { margin: 6px 0 2px; font: 500 var(--fs-note)/1.5 var(--sans); color: var(--ink2); }
+.ov-mlist { list-style: none; margin: 0; padding: 0; }
+.ov-mline { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; padding: 3px 0; font: 400 var(--fs-small)/1.5 var(--sans); color: var(--ink2); }
+.ov-mline > .mv-src { position: static; }
+.ov-m { color: var(--accent); font-weight: 500; }
+.ov-n { font-variant-numeric: tabular-nums; }
+/* R19: Playbooks — the "Not advice" line first, the list beside one article */
+.pb-disc { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 4px; font: 400 var(--fs-body)/1.5 var(--sans); color: var(--ink2); }
+.pbg { display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; margin-top: 12px; }
+.pb-nav { flex: 1 1 280px; max-width: 340px; min-width: 0; }
+.pb-list { display: flex; flex-direction: column; border-top: 1px solid var(--rule2); }
+.pb-list:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pbi { display: flex; flex-direction: column; gap: 2px; min-height: var(--hit-min); padding: 9px 10px; border-bottom: 1px solid var(--rule-row); text-decoration: none; color: var(--ink); }
+.pbi:hover { background: var(--raised); }
+.pbi[aria-current="true"] { background: var(--seg-fill); box-shadow: inset 3px 0 0 var(--amber); }
+.pbi-n { font: 600 var(--fs-small)/1.4 var(--sans); }
+.pbi-s { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 0; font: 500 var(--fs-label)/1.5 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink3); }
+.pb-st-live { color: var(--buy); } .pb-st-descriptive { color: var(--ink3); } .pb-st-needs-data { color: var(--amber); }
+.pb-arts { flex: 999 1 560px; min-width: 0; }
+.pb-main + .pb-main { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--rule2); }
+.pb-h { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 4px 0 0; }
+.pb-name { margin: 0; font: 600 var(--fs-heading)/1.25 var(--sans); color: var(--ink); }
+.pb-meta { display: inline-flex; align-items: center; gap: 4px; font: 500 var(--fs-label)/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--ink3); }
+.pb-p { max-width: 820px; margin: 10px 0 0; font: 400 var(--fs-body)/1.55 var(--sans); color: var(--ink); }
+.pb-verdict { max-width: 820px; margin: 8px 0 0; font: 400 var(--fs-body)/1.55 var(--sans); color: var(--amber); }
+.pb-sec { margin-top: 16px; }
+.pb-k { margin: 0 0 4px; font: 500 var(--fs-meta)/1.5 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-meta); }
+.pb-row { padding: 2px 0; border-bottom: 1px solid var(--rule-row); }
+.pb-row-open, .pb-line { font: 400 var(--fs-note)/1.5 var(--sans); }
+.pb-line { margin: 6px 0 0; }
+.pb-needs { margin: 0; padding-left: 18px; font: 400 var(--fs-small)/1.55 var(--sans); color: var(--ink2); }
+.pb-ev { list-style: none; margin: 0; padding: 0; }
+.ev { display: grid; grid-template-columns: 76px minmax(0,1fr) auto; grid-template-areas: "d c src" "d v v" "d f f"; gap: 2px 12px; align-items: baseline; padding: 9px 0; border-bottom: 1px solid var(--rule-row); }
+.ev-d { grid-area: d; font: 600 var(--fs-label)/1.5 var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+.ev-supports { color: var(--buy); } .ev-against { color: var(--sell); } .ev-indirect { color: var(--ink2); }
+.ev-c { grid-area: c; font: 500 var(--fs-small)/1.5 var(--sans); color: var(--ink); }
+.ev-src { grid-area: src; font: 400 var(--fs-control)/1.5 var(--mono); white-space: nowrap; }
+.ev-v { grid-area: v; font: 400 var(--fs-note)/1.5 var(--sans); color: var(--ink3); }
+.ev-f { grid-area: f; font: 400 var(--fs-small)/1.55 var(--sans); color: var(--ink2); }
+.mv-ov-link { margin: 6px 0 0; font: 400 var(--fs-small)/1.5 var(--sans); }
+@media (max-width: 1080px) {
+  .ov-det { padding-left: 6px; }
+}
+@media (max-width: 720px) {
+  /* R26: the controls and the playbook chips scroll inside themselves; the
+     playbook list becomes a strip of chips; nothing honest is hidden */
+  .si-pb-chips, .ov-tools { display: grid; grid-auto-flow: column; grid-auto-columns: max-content; justify-content: start; overflow-x: auto; padding-bottom: 2px; }
+  .ov-head { display: none; }
+  .ov-sum { grid-template-columns: minmax(0,1fr) auto 20px; grid-template-areas: "tk rl chv" "iss iss chv" "cg mg chv" "who who who" "mw mw mw"; column-gap: 8px; padding: 10px 2px; }
+  .ov-iss, .ov-who, .ov-mw { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+  .ov-det { grid-template-columns: minmax(0,1fr); padding: 4px 2px 14px; }
+  .pb-nav { flex-basis: 100%; max-width: none; }
+  .pb-list { flex-direction: row; overflow-x: auto; gap: 8px; border-top: 0; padding-bottom: 4px; }
+  /* square-cornered chips: a rounded corner would fall outside the hit area G12 measures */
+  .pbi { flex: 0 0 auto; border: 1px solid var(--rule2); border-radius: 3px; padding: 8px 12px; }
+  .pbi[aria-current="true"] { box-shadow: none; border-color: var(--amber); }
+  .pbi-n { white-space: nowrap; }
+  .ev { grid-template-columns: minmax(0,1fr) auto; grid-template-areas: "d src" "c c" "v v" "f f"; }
+}
+@media print {
+  .pb-main[hidden] { display: block !important; }
+}
+
 /* cluster board + new-position leaders + benchmarked book shape (the bars and
    the cell roles are in the ledger region) */
 /* R11: the comparison text is never cut — its track sizes to it (auto) and it

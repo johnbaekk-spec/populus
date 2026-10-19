@@ -81,7 +81,7 @@ A source is ingested only if it passes all four, with the determination recorded
 
 ### 2.4 Non-goals
 
-- **Not an advice product.** Populus reports disclosures, statistics and published, rule-based classifications of a disclosure against the filer's own record; it never predicts returns, infers intent, recommends, or backtests. "Not financial advice" is a design constraint.
+- **Not an advice product.** Populus reports disclosures, statistics and published, rule-based classifications of a disclosure against the filer's own record, and names published research on the patterns those rows show, quoting that research's own findings; it never predicts returns, infers intent, recommends, or backtests. "Not financial advice" is a design constraint.
 - **Not a market-data terminal** (§2.2).
 - **Not everything at once.** Strictly sequential modules (G12).
 - **No accounts, payments, alerts, or hosted write APIs** through M1–M4. Usage is measured anonymously (aggregate, cookieless — no login, no identity; §12.3).

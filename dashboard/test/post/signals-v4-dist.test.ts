@@ -246,3 +246,104 @@ test("signals-v4 T2.9 controls: the independent recount reads the quarter, liste
   assert.equal(independentCongressCounts(broad, "2026-03-31")("NVDA", "buy"), 1, "the 26-name member is not counted");
   assert.equal(independentCongressCounts([row({})], "2026-02-28")("NVDA", "buy"), 0, "no calendar quarter, no join");
 });
+
+/* ======================================================================
+   signals-v4 M3 (T3.7; R18, R20, R22, R23; success criteria 6 and 7) — the
+   Overlap tab recomputed independently from the build's rows in both
+   variants, the playbook counts against the rows' tokens, the roster on
+   Methodology. On the owner-tier build (no notable manager typed) Overlap is
+   its stated absence and the recount checks that; the populated tab is
+   exercised on the fixture in unit and geometry tests.
+   ====================================================================== */
+
+import { getOverlap, getPlaybookTriggers, getTriage } from "../../src/lib/data.ts";
+import { ROSTER } from "../../src/lib/leadership-roster.ts";
+import { independentOverlap } from "../lib/overlap-recount.ts";
+
+test("signals-v4 T3.7 (R18, criterion 6): the built Overlap — every carried row and both variants' counts equal an independent recount; or, with no 13F change in the build, its absence is stated", (t) => {
+  const html = readFileSync(path.join(DIST, "signals", "index.html"), "utf-8");
+  const panel = /<section class="tk-panel sig-panel" role="tabpanel" id="overlap" aria-labelledby="tab-overlap">([\s\S]*?)<\/section><section class="tk-panel sig-panel" role="tabpanel" id="playbooks"/.exec(html)?.[1];
+  assert.ok(panel !== undefined, "the built page carries the Overlap panel");
+  const o = getOverlap();
+  const model = getSignalsInstitutional();
+  const build = getBuildData();
+  if (o.period === null || o.all.length === 0) {
+    assert.match(panel, /No Overlap: |No name in Q\d \d{4} has both a member of Congress's listed-stock line and a notable manager's change/, "the absence is stated");
+    assert.doesNotMatch(panel, /<article class="ov-item"/);
+    t.diagnostic(`Overlap: ${o.period === null ? "no quarter" : `quarter ${o.period}, 0 names`} — ${o.absent ?? "no name on both sides"}`);
+    return;
+  }
+  const want = independentOverlap(build.txns, model.moves, o.period);
+  assert.deepEqual(o.core.map((r) => `${r.ticker}:${r.rel}`), want.core, "core: the recount");
+  assert.deepEqual(o.all.map((r) => `${r.ticker}:${r.rel}`), want.all, "all: the recount");
+  const n = (re: RegExp): string => re.exec(panel)?.[1] ?? "";
+  assert.equal(n(/data-ov-n="([^"]+)"/), `${want.core.length} ${want.all.length}`);
+  for (const rel of ["same", "opposite"] as const) {
+    const attr = rel === "same" ? "data-ov-same" : "data-ov-opp";
+    assert.equal(n(new RegExp(`${attr}="([^"]+)"`)), `${want.core.filter((x) => x.endsWith(`:${rel}`)).length} ${want.all.filter((x) => x.endsWith(`:${rel}`)).length}`, rel);
+  }
+  const items = [...panel.matchAll(/<article class="ov-item" id="([^"]+)" data-core="([^"]*)" data-all="([^"]*)" data-oc="([^"]*)" data-oa="([^"]*)"/g)];
+  for (const it of items) {
+    const oa = Number(it[5]);
+    assert.equal(`${want.all[oa]!.split(":")[1]}`, it[3], `${it[1]}: its broad-inclusive relation`);
+    if (it[4] !== "") assert.equal(want.core[Number(it[4])]!.split(":")[1], it[2], `${it[1]}: its relation`);
+  }
+  t.diagnostic(`Overlap ${o.period}: core ${want.core.length}, all ${want.all.length}, carried ${items.length}`);
+});
+
+test("signals-v4 T3.7 (R20, R21, criterion 7): the Playbooks filter's counts equal the built rows carrying each token, and the triggers recomputed", (t) => {
+  const html = readFileSync(path.join(DIST, "signals", "index.html"), "utf-8");
+  const tokens = [...html.matchAll(/<article class="si-row" id="[^"]+"[^>]*?(?: data-pb="([^"]+)")?>/g)].map((m) => (m[1] ?? "").split(" ").filter(Boolean));
+  const triage = getTriage();
+  assert.equal(tokens.length, triage.rows.length, "every triage row, once");
+  const trig = getPlaybookTriggers();
+  for (const id of ["opp-buy", "leader", "cmte"] as const) {
+    const carried = tokens.filter((x) => x.includes(id)).length;
+    assert.equal(carried, trig.counts[id], `${id}: the rows carrying it are the triggers' count`);
+    const chip = new RegExp(`<button type="button" class="si-pb-pick" data-pb-filter="${id}" aria-pressed="false"[^>]*>[^<]*<span class="tk-tab-n">([^<]+)</span>`).exec(html)?.[1];
+    assert.ok(chip !== undefined, `${id}: its filter chip`);
+    assert.equal(chip, id === "cmte" && !trig.cmteAvailable ? "unavailable this build" : String(carried), `${id}: the chip's count`);
+  }
+  const cls: Record<string, number> = {};
+  for (const r of trig.cmp.values()) cls[r.cls] = (cls[r.cls] ?? 0) + 1;
+  t.diagnostic(`triggers: opp-buy ${trig.counts["opp-buy"]}, leader ${trig.counts.leader}, cmte ${trig.counts.cmte}${trig.cmteAvailable ? "" : " (unavailable)"}; CMP over ${trig.cmp.size} rows: ${JSON.stringify(cls)}; rows ${triage.rows.length}`);
+});
+
+test("signals-v4 T3.7 (R22): Methodology carries the roster — every tenure with its source and checked date", () => {
+  const html = readFileSync(path.join(DIST, "methodology", "index.html"), "utf-8");
+  const sec = /<section class="si-method" id="signals-playbooks"[\s\S]*?<\/section>/.exec(html)?.[0];
+  assert.ok(sec, "#signals-playbooks");
+  const rows = [...sec.matchAll(/<tr><td class="c-secondary">[\s\S]*?<\/tr>/g)].map((m) => m[0]);
+  assert.equal(rows.length, ROSTER.length);
+  ROSTER.forEach((r, i) => {
+    assert.ok(rows[i]!.includes(r.bioguide) && rows[i]!.includes(`href="${r.source}"`) && rows[i]!.includes(`checked ${r.checked}`), `${r.name}`);
+  });
+  assert.ok(/id="signals-overlap"/.test(html), "#signals-overlap");
+});
+
+/* codex M3 round 1, F2 (R9 / LD8, R24) on the BUILT site, in whatever data
+   state the build is in: every in-page link on /signals/ reaches an id the
+   page carries; every /methodology/#… link from it reaches an id Methodology
+   carries; and the in-page links of Methodology's two M3 sections reach
+   theirs. The unit test (`signals-anchors.test.ts`) walks the other states. */
+test("signals-v4 codex M3 r1 F2: every in-page and Methodology anchor the built /signals/ links exists; so do the M3 Methodology sections' in-page links", () => {
+  const ids = (html: string): Set<string> => new Set([...html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]!));
+  const sig = readFileSync(path.join(DIST, "signals", "index.html"), "utf-8");
+  const met = readFileSync(path.join(DIST, "methodology", "index.html"), "utf-8");
+  const sigIds = ids(sig);
+  const metIds = ids(met);
+  const inPage = [...new Set([...sig.matchAll(/\shref="#([^"]*)"/g)].map((m) => m[1]!))];
+  assert.ok(inPage.length >= 4, "precondition: the page links in-page");
+  assert.deepEqual(inPage.filter((id) => !sigIds.has(id)), [], "in-page targets on /signals/");
+  const toMet = [...new Set([...sig.matchAll(/\shref="\/methodology\/#([^"]+)"/g)].map((m) => m[1]!))];
+  assert.ok(toMet.length > 0, "precondition: /signals/ links Methodology");
+  assert.deepEqual(toMet.filter((id) => !metIds.has(id)), [], "Methodology targets from /signals/");
+  for (const sec of ["signals-overlap", "signals-playbooks"]) {
+    const body = new RegExp(`<section class="si-method" id="${sec}"[\\s\\S]*?</section>`).exec(met)?.[0];
+    assert.ok(body, `#${sec}`);
+    const dangling = [...body.matchAll(/\shref="#([^"]*)"/g)].map((m) => m[1]!).filter((id) => !metIds.has(id));
+    assert.deepEqual(dangling, [], `#${sec}: its in-page links`);
+  }
+  // control: the check reads ids, not hrefs
+  assert.equal(ids(`<a href="#x">`).has("x"), false);
+});

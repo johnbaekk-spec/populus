@@ -718,6 +718,23 @@ test("T2.7 (R27): Methodology renders #signals-congress-column through its one f
   assert.match(signalsInstitutionalHtml(fixtureInstitutional(), {}), /<a href="\/methodology\/#signals-congress-column">/);
 });
 
+/* signals-v4 M3 (R27; T3.6): Methodology #signals-overlap and
+   #signals-playbooks — each through its one function (its text is pinned,
+   constants and roster read from code, in signals-overlap.test.ts and
+   playbooks.test.ts), and each linked from its tab */
+import { signalsOverlapMethodHtml, signalsPlaybooksMethodHtml, signalsOverlapHtml, signalsPlaybooksHtml } from "../src/lib/ui/index.ts";
+import { fixtureOverlap } from "./lib/overlap-fixture.ts";
+
+test("T3.6 (R27): Methodology renders #signals-overlap and #signals-playbooks through their functions, after the Congress column; each tab links its anchor", () => {
+  const page = readFileSync(METHODOLOGY, "utf-8");
+  const at = (s: string) => page.indexOf(s);
+  assert.ok(at("signalsCongressColumnHtml() +") > 0 && at("signalsOverlapMethodHtml() +") > at("signalsCongressColumnHtml() +") && at("signalsPlaybooksMethodHtml();") > at("signalsOverlapMethodHtml() +"), "in order, after the Congress column");
+  assert.ok(domOf(signalsOverlapMethodHtml()).querySelector("section#signals-overlap h3"));
+  assert.ok(domOf(signalsPlaybooksMethodHtml()).querySelector("section#signals-playbooks table tbody tr"));
+  assert.match(signalsOverlapHtml(fixtureOverlap(), {}), /<a href="\/methodology\/#signals-overlap">/);
+  assert.match(signalsPlaybooksHtml(null, {}), /<a href="\/methodology\/#signals-playbooks">/);
+});
+
 /* ======================================================================
    signals-v3 M3 (R17–R21, LD8, LD9): the ticker page
    ====================================================================== */

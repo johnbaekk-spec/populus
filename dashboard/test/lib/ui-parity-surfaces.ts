@@ -444,9 +444,29 @@ export async function renderParitySurfaces(): Promise<Record<string, string>> {
      moves, Consensus, the leaders, Congress lines), the tab alone, the S7
      sentence /institutional/'s provenance tip carries, and Methodology's
      Congress-column section */
-  const { fixtureInstitutional } = await import("./inst-signals-fixture.ts");
-  out["signalsBody.institutional"] = ui.signalsBody(SIGNAL_ARTIFACT, CTX, { rowsEvaluated: 1000, triage, institutional: fixtureInstitutional() });
+  const { fixtureInstitutional, fixtureMoves, fixtureTxns } = await import("./inst-signals-fixture.ts");
+  /* signals-v4 M3: the page with all four tabs populated — a small
+     Institutional model (16 moves; the full tab is pinned alone, below), the
+     Overlap of its own moves, and a playbook hit on the triage row — then
+     the two new tabs alone over their fixtures, a triggered row, and
+     Methodology's two sections. The page key reads small models so the
+     capture stays reviewable; each tab's own key carries its full fixture. */
+  const { fixtureOverlap } = await import("./overlap-fixture.ts");
+  const { buildOverlap } = await import("../../src/lib/ui/signals-overlap.ts");
+  /* without the frequent filer's thirteen lines, so the Congress side stays short */
+  const small = fixtureInstitutional({ moves: fixtureMoves(16), txns: fixtureTxns().filter((t) => !t.txnId.startsWith("f-")) });
+  const hit = { id: "leader" as const, why: "Fixture Member was Speaker of the House on the trade date (roster v1, checked 2026-10-18)." };
+  const playbooks = {
+    triggers: { byRow: new Map([[triage.rows[0]!.key, [hit]]]), counts: { "opp-buy": 0, leader: 1, cmte: 0 }, cmteAvailable: false, cmp: new Map() },
+    triage, bestIdeas: 3, consensus: small.board?.qualifying ?? 0, cmteUnavailableReason: "inputs-not-in-build",
+  };
+  out["signalsBody.institutional"] = ui.signalsBody(SIGNAL_ARTIFACT, CTX, { rowsEvaluated: 1000, triage, institutional: small, overlap: buildOverlap(small.quarter, small.moves), playbooks });
   out["signalsInstitutionalHtml"] = ui.signalsInstitutionalHtml(fixtureInstitutional(), CTX);
+  out["signalsOverlapHtml"] = ui.signalsOverlapHtml(fixtureOverlap({ sliceRows: 2 }), CTX);
+  out["signalsPlaybooksHtml"] = ui.signalsPlaybooksHtml(playbooks, CTX);
+  out["triageRowHtml.playbooks"] = ui.triageRowHtml(triage.rows[0], CTX, { playbooks: [hit] });
+  out["signalsOverlapMethodHtml"] = ui.signalsOverlapMethodHtml();
+  out["signalsPlaybooksMethodHtml"] = ui.signalsPlaybooksMethodHtml();
   out["s7CopyHtml"] = ui.s7CopyHtml(WINDOW);
   out["signalsCongressColumnHtml"] = ui.signalsCongressColumnHtml();
   out["memberSignalsPanel"] = ui.memberSignalsPanel(SIGNAL_ARTIFACT, "T000001", CTX);

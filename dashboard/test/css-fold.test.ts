@@ -39,6 +39,10 @@ import {
   signalsInstitutionalHtml,
 } from "../src/lib/ui/index.ts";
 import { fixtureInstitutional, fixtureTxns } from "./lib/inst-signals-fixture.ts";
+import { fixtureOverlap } from "./lib/overlap-fixture.ts";
+import { buildOverlap } from "../src/lib/ui/signals-overlap.ts";
+import { playbookTriggers } from "../src/lib/playbooks.ts";
+import { signalsOverlapHtml, signalsPlaybooksHtml, signalsOverlapMethodHtml, signalsPlaybooksMethodHtml } from "../src/lib/ui/index.ts";
 import { redactFiledNames } from "./lib/banned-scan.ts";
 import { congressLineHtml } from "../src/lib/ui/signals.ts";
 import { buildInstIndexRow, instIndexRowHtml } from "../src/lib/inst-index.ts";
@@ -54,6 +58,17 @@ function goldenTriage(): { artifact: SignalArtifact; triage: TriageResult } {
   const f = loadTriageFixture();
   goldenCache = { artifact: f.artifact, triage: buildTriage(f.artifact, f.rows, { committee: f.committee, identityOf: f.identityOf }) };
   return goldenCache;
+}
+
+/** signals-v4 M3: the playbook triggers over the golden rows (the committee
+    playbook live), plus a fabricated opportunistic-buy hit on six rows so
+    "Triggers now" lists five and links "All 6". */
+function m3Playbooks(): import("../src/lib/ui/signals-playbooks.ts").PlaybooksModel {
+  const { triage } = goldenTriage();
+  const real = playbookTriggers(triage, loadTriageFixture().rows);
+  const byRow = new Map(real.byRow);
+  for (const r of triage.rows.slice(0, 6)) byRow.set(r.key, [{ id: "opp-buy", why: "fixture" }, ...(byRow.get(r.key) ?? [])]);
+  return { triggers: { ...real, byRow, counts: { ...real.counts, "opp-buy": 6 } }, triage, bestIdeas: 3, consensus: 7, cmteUnavailableReason: null };
 }
 
 /** signals-v3 M3: a ticker page over the golden public rows and the build's
@@ -426,6 +441,27 @@ const HONESTY_SELECTORS = [
   ".cv-top",
   ".sig-pchip",
   ".inst-moved",
+  /* signals-v4 M3 (R18, R19, R21, R24, R25): Overlap's co-occurrence line,
+     each row's relation and both sides' counts, and the page's own bound;
+     the Playbooks tab's "Not advice" line, its count line, each playbook's
+     status and verdict, each finding with its venue, sample and source link;
+     a playbook's chip and an opened row's playbook section; the filter's
+     live count. None may vanish at a breakpoint. */
+  ".ov-lede",
+  ".ov-rl",
+  ".ov-cg",
+  ".ov-mg",
+  ".ov-bound",
+  ".pb-disc",
+  ".pb-count",
+  ".pb-st",
+  ".pb-verdict",
+  ".ev-f",
+  ".ev-v",
+  ".ev-src",
+  ".pb-chip",
+  ".si-row-pb",
+  ".si-pb-status",
   /* RUN SURFACES-LEGIBILITY, SL-R24 (T12). The note primitive is now the
      channel a large share of this site's explanations travel on — every
      `.col-why`, every footnote clause, the exclusion counts, the owner codes,
@@ -1061,6 +1097,19 @@ function renderCorpus(): string {
     signalsBody(goldenTriage().artifact, CTX, { rowsEvaluated: 2051, triage: goldenTriage().triage, institutional: fixtureInstitutional() }),
     signalsInstitutionalHtml(fixtureInstitutional({ moves: [] }), CTX),
     signalsInstitutionalHtml(null, CTX),
+    /* signals-v4 M3: the four tabs populated — Overlap over its fixture, the
+       playbook triggers over the golden rows (the committee playbook live) —
+       and their stated absences; Methodology's two M3 sections */
+    signalsBody(goldenTriage().artifact, CTX, {
+      rowsEvaluated: 2051, triage: goldenTriage().triage, institutional: fixtureInstitutional(), overlap: fixtureOverlap(),
+      playbooks: m3Playbooks(),
+    }),
+    signalsOverlapHtml(null, CTX),
+    signalsPlaybooksHtml(null, CTX),
+    /* a move's "See {TICKER} in Overlap →": the Institutional tab beside the Overlap of its own moves */
+    signalsBody(goldenTriage().artifact, CTX, { rowsEvaluated: 2051, triage: null, institutional: fixtureInstitutional(), overlap: buildOverlap(fixtureInstitutional().quarter, fixtureInstitutional().moves) }),
+    signalsOverlapMethodHtml(),
+    signalsPlaybooksMethodHtml(),
     /* LD10: the one Congress line with its ticker (M3's Overlap detail and
        "Triggers now" rows render it so) */
     `<ul class="cl-list">${congressLineHtml(fixtureTxns()[0]!, CTX, { ticker: true })}</ul>`,
@@ -1177,6 +1226,21 @@ const NEW_RENDERER_CLASSES = [
   "cl-list", "cl-line", "cl-tk", "cl-amt", "cl-dates",
   "cs-count", "cs-head", "cs-hr", "cs-hcg", "cs-row", "cs-list", "cs-pick", "cs-tk", "cs-iss", "cs-n", "cs-a", "cs-t", "cs-x", "cs-net", "cs-cg", "cs-strong", "cs-top",
   "cv-count", "cv-list", "cv-row", "cv-rk", "cv-fl", "cv-bar", "cv-pc", "cv-top", "cv-rt",
+  /* signals-v4 M3 (R18–R22, LD8, LD14–LD16): the tabs' "New"; a playbook's
+     dashed chip, its strip, an opened row's playbook section and the
+     Playbooks filter; Overlap — its line, controls, column head, each row's
+     summary cells and opened sides, the managers' lines; the Playbooks tab —
+     the "Not advice" line, the list, each article and its evidence; a move's
+     link to its Overlap row. */
+  "tab-new", "pb-chip", "pb-strip", "si-row-pb", "si-row-pb-one", "si-row-pb-h", "si-row-pb-v",
+  "si-pb-filter", "si-pb-l", "si-pb-chips", "si-pb-status",
+  "ov-lede", "ov-tools", "ov-broad", "ov-box", "ov-head", "ov-item", "ov-row", "ov-sum", "ov-tk", "ov-rl", "ov-rel",
+  "ov-rel-buy", "ov-rel-sell", "ov-rel-opp", "ov-rel-mix", "ov-iss", "ov-who", "ov-cg", "ov-mg", "ov-mw",
+  "ov-det", "ov-det-h", "ov-det-k", "ov-mlist", "ov-mline", "ov-m", "ov-n",
+  "pb-disc", "pbg", "pb-nav", "pb-list", "pbi", "pbi-n", "pbi-s", "pb-st-live", "pb-st-descriptive", "pb-st-needs-data",
+  "pb-arts", "pb-main", "pb-h", "pb-name", "pb-meta", "pb-p", "pb-verdict", "pb-sec", "pb-k", "pb-row", "pb-row-open", "pb-line", "pb-needs",
+  "pb-ev", "ev", "ev-d", "ev-supports", "ev-against", "ev-indirect", "ev-c", "ev-src", "ev-v", "ev-f",
+  "mv-ov-link",
 ];
 
 /* DESIGN-POLISH M2: classes a renderer emits as HOOKS — a root the period
@@ -1205,6 +1269,13 @@ const NEW_HOOK_CLASSES = [
      receipt is the swept `.si-row-src`); the owner's reference label, which
      the wording scan reads (LD20) */
   "sig-tab", "sig-moves", "sig-cons", "sig-conv", "mv-list", "mv-bound", "cl-who", "cl-src", "ref-label",
+  /* signals-v4 M3: the Overlap and Playbooks panels (laid out by `.panel`),
+     the relation group (a `.seg`), the row list and a row's opened side
+     (laid out by `.ov-det`), the stated bound and the count line (each a
+     `.section-note`); a playbook's source word and status (the status's
+     colour is its `pb-st-*` modifier); a filter chip (a `.chips` item); the
+     "All n" link (a `.pb-line`'s); a tier's no-match line (a `.section-note`) */
+  "sig-ov", "sig-pb", "ov-rels", "ov-list", "ov-side", "ov-bound", "pb-count", "pbi-src", "pb-st", "si-pb-pick", "pb-all", "si-pb-none",
 ];
 
 /* Classes a milestone RETIRED: neither styled nor emitted — by a renderer OR
@@ -1573,6 +1644,10 @@ const DECLARED_DROPPABLE_CHROME = new Set<string>([
   // word, which stays visible at >=900px and in the accessibility tree at every
   // width, so hiding the abbreviation drops nothing.
   "th-abbr",
+  // signals-v4 M3: Overlap's column labels, aria-hidden decoration; at the fold
+  // each row's cells stack with their own words (the counts carry theirs for
+  // assistive technology), so the head has nothing left to label
+  "ov-head",
 ]);
 
 /* ---------- the three institutional surfaces ---------- */
@@ -1768,6 +1843,31 @@ function institutionalSurfaces(): { name: string; owner: string; html: string; p
   ];
 }
 
+/** signals-v4 M3 (R18, R19, R24, R25): Overlap lists 13F changes beside
+    Congress lines, and Playbooks quotes research on both — each is swept for
+    its folds and its wording as the institutional surfaces are. They are not
+    13F pages: the §5 note ships once on /signals, at the Institutional tab's
+    foot (a second copy would duplicate its id), and Overlap's tip carries
+    the 13F snapshot caveat. */
+function m3Surfaces(): { name: string; owner: string; html: string; page: string }[] {
+  return [
+    {
+      name: "/signals#overlap",
+      owner: "signals-v4 M3",
+      page: "signals/index.astro",
+      html: pageSource("signals/index.astro") + signalsOverlapHtml(fixtureOverlap(), {}),
+    },
+    {
+      name: "/signals#playbooks",
+      owner: "signals-v4 M3",
+      page: "signals/index.astro",
+      html:
+        pageSource("signals/index.astro") +
+        signalsPlaybooksHtml(m3Playbooks(), {}),
+    },
+  ];
+}
+
 test("signals-v4 M2: the drop enumeration ignores a pseudo-element's own display, and still reports the element's", () => {
   // a <style> appended to the corpus CSS is not modelled here; the instrument is the rule matcher
   const rule = (selector: string) => ({ selector, decls: "display: none", where: "control", min: 0, max: Infinity }) as unknown as PositionedRule;
@@ -1820,7 +1920,7 @@ test("T14/R16: 375 / 720 / desktop drop NOTHING honesty-bearing on the instituti
   // concurrent run then fixes one defect at a time.
   const honestyFindings: string[] = [];
   const undeclaredFindings: string[] = [];
-  for (const surface of institutionalSurfaces()) {
+  for (const surface of [...institutionalSurfaces(), ...m3Surfaces()]) {
     // Non-vacuity: a renderer that returned "" would sail through every
     // assertion below. Prove the sweep actually looked at a page first.
     const inspected = elementsOf(surface.html).length;
@@ -1989,7 +2089,7 @@ test("T14/R16: no banned trading verb on any institutional surface", () => {
     const scanned = surface.name === "/institutional" || surface.name.startsWith("/signals") ? text.replace('"Conviction leaders"', '"New-position leaders"') : text;
     return scanBannedWording(scanned).map((hit) => `${surface.name} (owner ${surface.owner}) uses "${hit}"`);
   };
-  const surfaces = institutionalSurfaces();
+  const surfaces = [...institutionalSurfaces(), ...m3Surfaces()];
   assert.deepEqual(
     surfaces.flatMap((s) => findingsOf(s)),
     [],

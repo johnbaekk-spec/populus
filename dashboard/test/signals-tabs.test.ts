@@ -1,7 +1,7 @@
 /* signals-v4 M2 (R9, R10, LD8, LD9; T2.2): the Signals tabs — one tablist of
-   Congress and Institutional (its markup and `tabs.ts` accept four), every
-   panel present and visible in the server HTML, the per-tab ledger groups,
-   and the scroll region that never re-roles the tablist.
+   Congress and Institutional, and from M3 (T3.5) Overlap and Playbooks too,
+   every panel present and visible in the server HTML, the per-tab ledger
+   groups, and the scroll region that never re-roles the tablist.
 
    The DOM is `mini-dom` over the bytes `signalsBody` emits; the address bar
    and history are the binder's `TabsEnv`. */
@@ -16,6 +16,8 @@ import type { SignalArtifact } from "../src/lib/signals.ts";
 import { buildTriage } from "../src/lib/signal-triage.ts";
 import { loadTriageFixture } from "./lib/triage-fixture.ts";
 import { fixtureInstitutional } from "./lib/inst-signals-fixture.ts";
+import { fixtureOverlap } from "./lib/overlap-fixture.ts";
+import { playbookTriggers } from "../src/lib/playbooks.ts";
 import { installDom, MiniElement } from "./lib/mini-dom.ts";
 
 const CTX = {};
@@ -31,7 +33,11 @@ function goldenPage(): string {
   if (page) return page;
   const f = loadTriageFixture();
   const t = buildTriage(f.artifact, f.rows, { committee: f.committee, identityOf: f.identityOf });
-  page = signalsBody(f.artifact, CTX, { rowsEvaluated: 2051, triage: t, institutional: fixtureInstitutional() });
+  const inst = fixtureInstitutional();
+  page = signalsBody(f.artifact, CTX, {
+    rowsEvaluated: 2051, triage: t, institutional: inst, overlap: fixtureOverlap(),
+    playbooks: { triggers: playbookTriggers(t, f.rows), triage: t, bestIdeas: inst.leaders!.qualifying, consensus: inst.board!.qualifying, cmteUnavailableReason: t.cmteUnavailableReason },
+  });
   return page;
 }
 
@@ -65,7 +71,7 @@ function harness(html: string, hash = ""): Harness {
 }
 const key = (k: string) => ({ key: k, preventDefault() {} });
 
-test("T2.2 (R9, LD8): one tablist — Congress, Institutional — in a role-less scroll wrapper; every panel is present and visible without script, Congress first", () => {
+test("T2.2 / T3.5 (R9, LD8): one tablist — Congress, Institutional, Overlap, Playbooks — in a role-less scroll wrapper; every panel is present and visible without script, Congress first", () => {
   const root = domOf(goldenPage());
   const lists = root.querySelectorAll('[role="tablist"]');
   assert.equal(lists.length, 1);
@@ -80,16 +86,22 @@ test("T2.2 (R9, LD8): one tablist — Congress, Institutional — in a role-less
   assert.deepEqual(tabs.map((t) => [t.getAttribute("id"), t.getAttribute("href"), t.getAttribute("aria-controls")]), [
     ["tab-congress", "#congress", "congress"],
     ["tab-institutional", "#institutional", "institutional"],
+    ["tab-overlap", "#overlap", "overlap"],
+    ["tab-playbooks", "#playbooks", "playbooks"],
   ]);
   assert.match(text(tabs[1]), /^Institutional 200$/, "the Institutional tab counts the quarter's moves");
+  assert.equal(text(tabs[2]), "Overlap 26 New", "Overlap counts its same-side names, and says it is new");
+  assert.equal(text(tabs[3]), "Playbooks 7 New");
   const panels = root.querySelectorAll('[role="tabpanel"]');
-  assert.deepEqual(panels.map((p) => [p.getAttribute("id"), p.getAttribute("aria-labelledby")]), [["congress", "tab-congress"], ["institutional", "tab-institutional"]]);
+  assert.deepEqual(panels.map((p) => [p.getAttribute("id"), p.getAttribute("aria-labelledby")]), [["congress", "tab-congress"], ["institutional", "tab-institutional"], ["overlap", "tab-overlap"], ["playbooks", "tab-playbooks"]]);
   assert.ok(panels.every((p) => !p.hasAttribute("hidden")), "no panel is hidden in the server HTML (no-JS: stacked)");
   assert.equal(panels[1]!.getAttribute("data-quarter"), "2026-03-31");
   // v3's Congress anchors keep their order inside the Congress panel
   const congress = root.querySelector("#congress")!;
   for (const id of ["lead-cards", "triage", "stands", "look", "routine", "families", "hits"]) assert.ok(congress.querySelector(`#${id}`), `#${id} in #congress`);
   for (const id of ["named-moves", "consensus", "new-position-leaders", "inst-lead-cards"]) assert.ok(root.querySelector(`#institutional #${id}`), `#${id} in #institutional`);
+  assert.ok(root.querySelector("#overlap #ov-section #ov-list article.ov-item"), "the Overlap rows in #overlap");
+  assert.equal(root.querySelectorAll("#playbooks article.pb-main").length, 7, "the seven playbooks in #playbooks");
 });
 
 test("T2.2 (R10, LD9): the head — h1 Signals, the M2 lede, the How tip — and one ledger group per tab, three figures each; Congress shows, Institutional is hidden", () => {
@@ -97,12 +109,21 @@ test("T2.2 (R10, LD9): the head — h1 Signals, the M2 lede, the How tip — and
   assert.equal(text(root.querySelector("h1")), "Signals");
   assert.equal(text(root.querySelector(".page-lede")), "What stands out in Congress trades and 13F moves.");
   const groups = root.querySelectorAll(".page-head [data-tab-for]");
-  assert.deepEqual(groups.map((g) => [g.getAttribute("data-tab-for"), g.hasAttribute("hidden")]), [["congress", false], ["institutional", true]]);
-  assert.deepEqual(groups.map((g) => g.querySelectorAll(".ledger-fig").length), [3, 3]);
-  assert.deepEqual(groups[1]!.querySelectorAll(".ledger-fig dt").map((d) => text(d).replace(/,? explain$/, "").split(" ")[0]), ["Moves", "Top", "Quarter"]);
-  // every value in the hidden group is stated inside its panel
-  const panel = text(root.querySelector("#institutional"));
-  for (const v of groups[1]!.querySelectorAll(".ledger-value").map((x) => text(x))) assert.ok(panel.includes(v), `"${v}" in the Institutional panel`);
+  assert.deepEqual(groups.map((g) => [g.getAttribute("data-tab-for"), g.hasAttribute("hidden")]), [["congress", false], ["institutional", true], ["overlap", true], ["playbooks", true]]);
+  assert.deepEqual(groups.map((g) => g.querySelectorAll(".ledger-fig").length), [3, 3, 3, 3]);
+  const labels = (g: MiniElement) => g.querySelectorAll(".ledger-fig dt").map((d) => text(d).replace(/,? explain$/, "").split(" ")[0]);
+  assert.deepEqual(labels(groups[1]!), ["Moves", "Top", "Quarter"]);
+  assert.deepEqual(labels(groups[2]!), ["Same", "Opposite", "Quarter"]);
+  assert.deepEqual(labels(groups[3]!), ["Playbooks", "Triggered", "Needs"]);
+  assert.deepEqual(groups[2]!.querySelectorAll(".ledger-value").map((x) => text(x)), ["26", "12", "Q1 2026"], "LD9: Overlap's core same and opposite names, the quarter");
+  assert.equal(groups[3]!.querySelectorAll(".ledger-value").map((x) => text(x))[0], "7");
+  // every value in a hidden group is stated inside its panel (LD9)
+  for (const [g, id] of [[groups[1]!, "institutional"], [groups[2]!, "overlap"], [groups[3]!, "playbooks"]] as const) {
+    const panel = text(root.querySelector(`#${id}`));
+    for (const v of g.querySelectorAll(".ledger-value").map((x) => text(x))) assert.ok(panel.includes(v), `"${v}" in the ${id} panel`);
+  }
+  // control: a value the panel does not state is caught by the same check
+  assert.ok(!text(root.querySelector("#overlap")).includes("Q9 2099"), "control");
 });
 
 test("T2.2 (R9, LD8): selecting Institutional shows its panel and its ledger group and hides Congress's; arrow keys, Home and End follow the tabs pattern; a hash inside a panel selects it", () => {
@@ -120,10 +141,17 @@ test("T2.2 (R9, LD8): selecting Institutional shows its panel and its ledger gro
     assert.equal(group("institutional").hasAttribute("hidden"), false, "its ledger group shows");
     assert.equal(group("congress").hasAttribute("hidden"), true, "and Congress's hides");
     assert.deepEqual(h.replaced, ["#institutional"], "the hash is written with replaceState");
-    // keys
+    // keys (M3: four tabs)
     tab("institutional").dispatch("keydown", key("ArrowRight"));
+    assert.equal(tab("overlap").getAttribute("aria-selected"), "true", "ArrowRight moves to the next");
+    assert.equal(group("overlap").hasAttribute("hidden"), false, "with its ledger group");
+    tab("overlap").dispatch("keydown", key("ArrowRight"));
+    tab("playbooks").dispatch("keydown", key("ArrowRight"));
     assert.equal(tab("congress").getAttribute("aria-selected"), "true", "ArrowRight wraps to the first");
     tab("congress").dispatch("keydown", key("End"));
+    assert.equal(tab("playbooks").getAttribute("aria-selected"), "true");
+    tab("playbooks").dispatch("keydown", key("ArrowLeft"));
+    tab("overlap").dispatch("keydown", key("ArrowLeft"));
     assert.equal(tab("institutional").getAttribute("aria-selected"), "true");
     tab("institutional").dispatch("keydown", key("Home"));
     assert.equal(tab("congress").getAttribute("aria-selected"), "true");
@@ -225,10 +253,16 @@ test("T2.2 (LD8): no element in the page carries data-scroll-region together wit
   assert.equal(regionRoleProblems(planted).length, 1, "control: the tablist as its own scroll region is caught");
 });
 
-test("T2.2: an artifact-only view still renders both tabs, the Institutional panel stating it is computed on the server", () => {
+test("T2.2 / T3.5: an artifact-only view still renders every tab, the Institutional, Overlap and Playbooks panels stating they are computed on the server", () => {
   const html = signalsBody({ ...(loadTriageFixture().artifact as SignalArtifact) }, CTX);
   const root = domOf(html);
-  assert.equal(root.querySelectorAll('[role="tab"]').length, 2);
+  assert.equal(root.querySelectorAll('[role="tab"]').length, 4);
+  assert.match(text(root.querySelector("#overlap")), /Overlap is computed on the server from the build's Congress rows and 13F changes; this view carries the Congress artifact only\./);
+  assert.match(text(root.querySelector('[data-tab-for="overlap"]')), /not computed in this view/);
+  assert.equal(text(root.querySelector("#tab-overlap")), "Overlap New", "no count it cannot state");
+  assert.equal(text(root.querySelector("#playbooks .pb-disc")), "Published research on the patterns these rows show. Not advice.");
+  assert.match(text(root.querySelector("#playbooks")), /The Playbooks tab is computed on the server from the build's triage/);
+  assert.match(text(root.querySelector('[data-tab-for="playbooks"]')), /not computed in this view/);
   assert.match(text(root.querySelector("#institutional")), /computed on the server from the build's 13F data; this view carries the Congress artifact only/);
   assert.match(text(root.querySelector('[data-tab-for="institutional"]')), /not computed in this view/);
   assert.equal(text(root.querySelector("#tab-institutional")), "Institutional", "no count it cannot state");

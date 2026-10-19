@@ -254,6 +254,19 @@ export class MiniElement {
     if (phase === "target") for (const fn of [...(this.listeners.get(type) ?? [])]) fn(ev);
   }
 
+  /** Move existing elements to the end of this one, in order — a browser's
+      `ParentNode.append` of nodes already in the tree (signals-v4 M3: the
+      Overlap tab re-orders its rows this way when the variant changes). */
+  append(...els: MiniElement[]): void {
+    for (const n of els) {
+      if (n.parent) {
+        n.parent.children = n.parent.children.filter((c) => c !== n);
+        n.parent.nodes = n.parent.nodes.filter((c) => c !== n);
+      }
+      this.appendNode(n);
+    }
+  }
+
   /** internal: used by the parser */
   appendNode(n: MiniElement | string): void {
     this.nodes.push(n);

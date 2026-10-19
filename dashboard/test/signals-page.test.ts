@@ -198,9 +198,11 @@ test("LD9 / signals-v4 LD19 (T1.8): every caveat that left the visible page is i
   assert.equal(ownText(root.querySelector(".page-lede")!).trim(), "What stands out in Congress trades and 13F moves.", "the M2 lede (LD9)");
   /* signals-v4 M2 (LD9): the tip adds the Institutional paragraph after the
      nine sentences; with no Institutional model it states the 13F caveat
-     without a build-specific claim */
+     without a build-specific claim. M3 adds the Overlap and Playbooks ones. */
   const howParas = how.querySelectorAll(".si-tip-p");
-  assert.equal(howParas.length, 2, "the Congress paragraph, then the Institutional one");
+  assert.equal(howParas.length, 4, "the Congress paragraph, then the Institutional, Overlap and Playbooks ones");
+  assert.equal(howParas[2]!.textContent, "Overlap — Same name, same quarter: a co-occurrence in public filings, never coordination or intent.", "LD9's Overlap paragraph");
+  assert.equal(howParas[3]!.textContent, "Playbooks — Published research on the patterns these rows show, with evidence on both sides; the numbers are the papers' own. Not advice.", "LD9's Playbooks paragraph");
   assert.ok(howParas[0]!.textContent.includes("A signal is a fact about a filing"), "the nine sentences come first");
   assert.ok(
     howParas[1]!.textContent.includes("13F filings are quarter-end, long-only snapshots filed up to 45 days after the quarter — never current holdings. Exits are inferred from absence in the next filing."),
@@ -775,8 +777,12 @@ test("signals-v4 LD9 (was R7 / T8): the page is Signals — Congress and 13F (ti
   assert.match(page, /"Signals from Congress trades and 13F filings: /, "the meta description names both sources");
   assert.match(page, /notable 13F managers/, "and what the 13F tab holds");
   assert.match(page, /active="signals"/, "the masthead nav entry is unchanged");
-  assert.match(page, /triage: getTriage\(\)/, "the page reads the build's one memoised triage");
-  assert.match(page, /institutional: getSignalsInstitutional\(\)/, "and the build's one memoised Institutional model");
+  assert.match(page, /const triage = getTriage\(\);/, "the page reads the build's one memoised triage");
+  assert.match(page, /const institutional = getSignalsInstitutional\(\);/, "and the build's one memoised Institutional model");
+  /* signals-v4 M3 (LD1): and the build's one Overlap and playbook triggers, into the page's deps */
+  assert.match(page, /triggers: getPlaybookTriggers\(\)/);
+  assert.match(page, /const deps: SignalsPageDeps = \{ rowsEvaluated, triage, institutional, overlap: getOverlap\(\), playbooks \};/);
+  assert.match(page, /the names both traded in " \+\s*"that quarter; and published research on the patterns the rows show, with evidence on both sides\. Not advice\./, "the description names the two M3 tabs");
 });
 
 test("R10 / T9: the WHAT sentence — owner, verb, asset, chip; S-3 names its members and side; a prior record says the asset is not in it", () => {
