@@ -159,7 +159,7 @@ the full record is `docs/frontend/signals-v4.md`.
    the Congress side — not the mock's sentence repeating the row's numbers.
 - **LD22-10.** **The mock's "Mock only" moves-file tip is the page's real bound:** the
    page carries the first 30 moves of every filter (20 when the page would pass its
-   1.5 MiB budget) and every move on a Consensus or lead-card name; where a filter
+   2 MiB budget) and every move on a Consensus or lead-card name; where a filter
    runs past them the count keeps the build's true total and says so.
 - **LD22-5 (M3).** **Banned wording replaced on Overlap and Playbooks:** "Both bought /
    Both sold" are SAME · BUY SIDE / SAME · SELL SIDE, "▲n bought ▼n sold" are ▲n · ▼n
