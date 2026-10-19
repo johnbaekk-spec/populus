@@ -42,6 +42,7 @@ WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
 RUNNER_RUNBOOK = REPO_ROOT / "docs" / "runbooks" / "self-hosted-runner.md"
 DASHBOARD_PACKAGE = REPO_ROOT / "dashboard" / "package.json"
 ENTITY_POST_TEST = REPO_ROOT / "dashboard" / "test" / "post" / "entity-orchestration.test.ts"
+ENTITY_CUT_BUILD = REPO_ROOT / "dashboard" / "test" / "lib" / "cut-build.ts"
 GITLEAKS_TOML = REPO_ROOT / ".gitleaks.toml"
 GITLEAKS_IGNORE = REPO_ROOT / ".gitleaksignore"
 CURRENT_RUNNER_VERSION = "2.337.0"
@@ -569,10 +570,22 @@ def test_full_site_build_uses_the_bounded_heap_wrapper_everywhere():
 
 
 def test_forced_cut_build_has_the_same_machine_and_child_heap_bounds():
+    """The forced-cut build is bounded: the 32 GiB machine preflight, the
+    24 GiB child heap, and a finite timeout. The timeout was the literal
+    900_000; it is now `CUT_BUILD_TIMEOUT_MS` in `dashboard/test/lib/cut-build.ts`
+    (1,800,000), because the build measured 728-740 s unloaded on data build
+    20261019.2 and timed out on the shared runner in publish run 39216202838.
+    The property kept: the hook passes a finite cap that fits inside the
+    post-build step's 90-minute limit."""
     text = ENTITY_POST_TEST.read_text()
     assert "totalmem() >= 34_359_738_368" in text
     assert 'NODE_OPTIONS: "--max-old-space-size=24576"' in text
-    assert "timeout: 900_000" in text
+    assert "timeout: CUT_BUILD_TIMEOUT_MS," in text
+    assert 'from "../lib/cut-build.ts"' in text
+    cap = re.search(r"^export const CUT_BUILD_TIMEOUT_MS = ([\d_]+);$", ENTITY_CUT_BUILD.read_text(), re.M)
+    assert cap, "the cap is a numeric literal in cut-build.ts"
+    ms = int(cap.group(1).replace("_", ""))
+    assert 900_000 <= ms <= 3_600_000, f"bounded, and at most an hour of the 90-minute step: {ms}"
 
 
 # ---------------------------------------------------------------------------

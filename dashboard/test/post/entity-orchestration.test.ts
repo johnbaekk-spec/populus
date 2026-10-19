@@ -25,6 +25,7 @@ import {
   type DriverHandle,
 } from "../../src/scripts/entity-client.ts";
 import { tickerDataKey } from "../../src/lib/derive.ts";
+import { CUT_BUILD_TIMEOUT_MS, cutBuildFailure, type CutBuildError } from "../lib/cut-build.ts";
 import {
   FILER_INDEX_PATH,
   filerShardPath,
@@ -40,18 +41,22 @@ const CUT_TICKER = "AAPL"; // every ticker is cut under budget 10 (members first
 
 before(() => {
   assert.ok(totalmem() >= 34_359_738_368, "forced-cut build requires at least 32 GiB RAM");
-  execFileSync("npx", ["astro", "build", "--outDir", "dist-cut"], {
-    cwd: DASH,
-    env: {
-      ...process.env,
-      NODE_OPTIONS: "--max-old-space-size=24576",
-      POPULUS_TEST_PAGE_BUDGET: BUDGET,
-    },
-    stdio: "ignore",
-    // The full institutional corpus needs roughly 4.5 minutes on the owner
-    // runner. Keep the timeout bounded, but above the observed honest build.
-    timeout: 900_000,
-  });
+  const started = Date.now();
+  try {
+    execFileSync("npx", ["astro", "build", "--outDir", "dist-cut"], {
+      cwd: DASH,
+      env: {
+        ...process.env,
+        NODE_OPTIONS: "--max-old-space-size=24576",
+        POPULUS_TEST_PAGE_BUDGET: BUDGET,
+      },
+      stdio: ["ignore", "ignore", "pipe"],
+      maxBuffer: 64 * 1024 * 1024,
+      timeout: CUT_BUILD_TIMEOUT_MS,
+    });
+  } catch (e) {
+    throw new Error(cutBuildFailure(e as CutBuildError, Date.now() - started), { cause: e });
+  }
 });
 
 /* ---------- the cut is real ---------- */
