@@ -151,13 +151,14 @@ export function independentCongressCounts(txns: readonly TxnRow[], period: strin
   return (ticker, side) => members.get(`${norm(ticker)}|${side}`)?.size ?? 0;
 }
 
-/** The rendered Named moves rows: anchor, kind, name key and the Congress cell's visible text. */
+/** The rendered Named moves rows: anchor, kind, name key and the Congress cell's visible text.
+    The attribute is decoded with `&amp;` LAST, so an escaped "&amp;quot;" never double-decodes. */
 function renderedMoves(html: string): { id: string; kind: string; ikey: string; cg: string; tk: string | null }[] {
   const out: { id: string; kind: string; ikey: string; cg: string; tk: string | null }[] = [];
   for (const a of html.matchAll(/<article class="mv-item" id="([^"]+)" data-kind="([^"]+)" data-type="[^"]*" data-ikey="([^"]*)"[^>]*>([\s\S]*?)<\/article>/g)) {
     const cg = /<span class="mv-cg">(?:<span class="cg-on" aria-hidden="true">([^<]*)<\/span>|<span aria-hidden="true">([^<]*)<\/span>)/.exec(a[4]!);
     const tk = /<span class="mv-tk"><span class="mono-ticker">([^<]+)<\/span>/.exec(a[4]!)?.[1] ?? null;
-    out.push({ id: a[1]!, kind: a[2]!, ikey: a[3]!.replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'"), cg: cg?.[1] ?? cg?.[2] ?? "?", tk });
+    out.push({ id: a[1]!, kind: a[2]!, ikey: a[3]!.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&"), cg: cg?.[1] ?? cg?.[2] ?? "?", tk });
   }
   return out;
 }
