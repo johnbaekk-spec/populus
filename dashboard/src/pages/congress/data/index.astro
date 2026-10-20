@@ -54,10 +54,9 @@ function mib(n: number): string {
         The parts are contiguous and already in the site's own feed order (newest
         filing date first, transactions before paper filings within a date), so
         concatenating their <code>rows</code> arrays in the order listed
-        reproduces the dataset exactly. Each part names its own
-        <code>offset</code>, so the reassembly can be checked rather than trusted.
-        <a class="plain-link" href={FEED_PARTS_INDEX_HREF}>The machine-readable index</a>
-        lists every part with its row counts, byte size and first/last row key.
+        reproduces the dataset exactly. Each part names its own <code>offset</code>, so the reassembly can be
+        checked rather than trusted. <a class="plain-link" href={FEED_PARTS_INDEX_HREF}>The machine-readable index</a> lists every
+        part with its row counts, byte size and first/last row key.
       </p>
       <p class="s1-detail">
         <strong>Why parts, and not one file.</strong> This dataset was previously
@@ -66,8 +65,7 @@ function mib(n: number): string {
         and was growing by roughly 9,287 disclosures a year. A single file would have
         become undeployable, taking the whole site's next release with it. Each part
         below is bounded at {kib(SHARD_RESPONSE_CEILING_BYTES)}, so the corpus can now
-        grow without any one asset approaching that limit. The old path,
-        <code>/congress/data/feed.v1.json</code>, still answers and states its own
+        grow without any one asset approaching that limit. The old path, <code>/congress/data/feed.v1.json</code>, still answers and states its own
         retirement rather than disappearing.
       </p>
 

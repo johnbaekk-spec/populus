@@ -303,6 +303,10 @@ export function tickerUnifiedBody(
   const late = t.txns.filter((r) => r.late === 1).length;
   const unknownTimeliness = t.txns.filter((r) => r.lag == null).length;
   const holders = inst.state === "data" ? inst.holders?.length ?? 0 : null;
+  /* The figure is the full holder count when the reviewed mapping knows it;
+     the table lists the top slice of it, and the sub-line says so. A bare
+     "500" beside "the 500 largest of the 5,662" read as two answers. */
+  const holdersAll = inst.state === "data" && inst.mapped ? Math.max(inst.mapped.holderCount, holders ?? 0) : null;
   /* LD9: "unknown timeliness" moved from the retired summary card into the
      Filed late figure's sub-line; its explanation is the figure's note. */
   const lateSub =
@@ -332,10 +336,12 @@ export function tickerUnifiedBody(
       },
       {
         label: "13F holders",
-        value: holders === null ? "—" : fmtInt(holders),
+        value: holders === null ? "—" : fmtInt(holdersAll ?? holders),
         detail:
           inst.state === "data"
-            ? `top-${fmtInt(inst.topn ?? 25)} slice · ${inst.period ?? ""}`
+            ? holdersAll !== null
+              ? `${holdersAll > (holders ?? 0) ? `top ${fmtInt(holders ?? 0)} listed` : "all listed"} · ${inst.period ?? ""}`
+              : `top-${fmtInt(inst.topn ?? 25)} slice · ${inst.period ?? ""}`
             : inst.state === "module-absent"
               ? "13F module not in build"
               : "ticker not resolved to an issuer",
@@ -408,7 +414,7 @@ export function tickerUnifiedBody(
         ? [
             {
               mark: "†",
-              html: `issuer name from the SEC's present-day ticker file (company_tickers.json) — a present-day mapping, not the name as of each filing`,
+              html: `issuer name from the SEC's present-day ticker list — a present-day mapping, not the name as of each filing`,
             },
           ]
         : [],

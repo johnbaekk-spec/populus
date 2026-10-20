@@ -59,8 +59,7 @@ const description =
       Public Filings republishes primary government records — nothing else. Below, per
       module: sources and their license conditions, coverage measured against
       the full corpus, known gaps, and the structural caveats that no amount of
-      engineering removes. Everything here is regenerated from
-      <span class="mono-id">stats.json</span> on every build and is
+      engineering removes. Everything here is regenerated from <span class="mono-id">stats.json</span> on every build and is
       byte-verifiable against the published snapshot.
     </p>
     <nav class="toc" aria-label="Sections">
@@ -130,7 +129,7 @@ const description =
           <div class="gaps-block" id="defaults">
             <div>· {fmtInt(build.stats.totals.needs_ocr_filing_count_including_excluded)} paper filings <span class="flag dashed">needs OCR</span> — counted in totals labeled *_including_excluded</div>
             <div>· {fmtInt(build.stats.totals.unresolved_pair_count)} filer name-pairs not yet joined to members — the join is name × chamber × term, only on a unique candidate; the alias file is version-controlled and public</div>
-            <div>· amendments carry <span class="flag amber">amendment pending</span> until amendment semantics are settled — the default view (v_default_transactions) excludes the superseded original, and both readings are queryable</div>
+            <div>· amendments carry <span class="flag amber">amendment pending</span> until amendment semantics are settled — the default view excludes the superseded original, and both readings are queryable</div>
             <div>· rows with defect flags are visible and flagged, never dropped</div>
           </div>
           {/* The ONE anchor whose text was not already on this page. Moved
@@ -202,7 +201,7 @@ const description =
           <div class="mtile">
             <div class="tile-value">{fmtInt(inst.filers.length)}</div>
             <div class="tile-label">filers on record</div>
-            <div class="mtile-sub">agg_filer_registry</div>
+            <div class="mtile-sub">13F filer registry</div>
           </div>
           <div class="mtile">
             <div class="tile-value">{inst.watermarks.latest_period_of_report ?? "—"}</div>
@@ -455,11 +454,8 @@ const description =
             financial-disclosure reports for commercial purposes, for
             determining credit, or for solicitation is restricted by 5 U.S.C.
             § 13107(c). <strong>Not financial advice.</strong> Public Filings reports
-            disclosures; it recommends nothing. <strong>Attribution.</strong>
-            Data remain U.S. government records; per-source conditions are
-            recorded in the machine-readable conditions register and rendered in
-            <a href="/legal/DATA-LICENSE.md">DATA-LICENSE ↗</a> and
-            <a href="/legal/NOTICE.txt">NOTICE ↗</a>.
+            disclosures; it recommends nothing. <strong>Attribution.</strong> Data remain U.S. government records; per-source conditions are
+            recorded in the machine-readable conditions register and rendered in <a href="/legal/DATA-LICENSE.md">DATA-LICENSE ↗</a> and <a href="/legal/NOTICE.txt">NOTICE ↗</a>.
           </p>
         </div>
       </div>

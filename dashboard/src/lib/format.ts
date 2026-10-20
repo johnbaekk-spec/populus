@@ -1048,7 +1048,7 @@ export const AMOUNT_UNPARSED_SPOKEN = "not disclosed in a parseable range";
 /** The methodology page's known-limits line on amendments (pages/methodology). */
 export const AMENDMENT_PENDING_NOTE =
   "amendments carry amendment pending until amendment semantics are settled — the default view " +
-  "(v_default_transactions) excludes the superseded original, and both readings are queryable";
+  "excludes the superseded original, and both readings are queryable";
 /** The exclusion wording the flow panel and the rankings use for date anomalies. */
 export const DATE_ANOMALY_NOTE = "impossible trade dates";
 /** The methodology page's known-limits line on every defect flag. */

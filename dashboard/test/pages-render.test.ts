@@ -367,7 +367,11 @@ test("holdersBody: period chips, top-N as a Public Filings build parameter, mapp
   assert.ok(html.includes("quarter-end snapshots — positions may have changed since"));
   assert.ok(html.includes("top-"), "top-N named");
   assert.ok(html.includes("not a census"));
-  assert.ok(html.includes("company_tickers.json"), "mapping provenance printed");
+  /* Pre-launch defects (2026-10-20): the provenance stays, in plain words; the
+     SEC's file name was reader-facing jargon. /methodology/#ticker-mapping
+     describes the mapping and its source, the SEC company list. */
+  assert.ok(html.includes("the SEC's present-day ticker list"), "mapping provenance printed");
+  assert.ok(!html.includes("company_tickers.json"), "in plain words, not the file name");
   /* DESIGN-POLISH M3 (Architecture H, G-11): the same absent fields, named in
      plain words — "this build's published top-holders list", never the table
      name or the design mockup. */

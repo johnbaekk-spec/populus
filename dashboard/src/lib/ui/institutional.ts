@@ -111,7 +111,7 @@ export const INST_STAMP_CAVEAT =
    ticker→issuer mapping, not about a column), § to the Src column, which is
    where `srcLinkDerived` prints the marker. */
 const HOLDERS_MAPPING_NOTE =
-  `ticker→issuer via the SEC's present-day ticker file (company_tickers.json), matched only ` +
+  `ticker→issuer via the SEC's present-day ticker list, matched only ` +
   `against entity-keyed issuers in the aggregate — a present-day mapping, not the name as of ` +
   `each filing`;
 /* Architecture H (G-11): the holders surfaces read `agg_issuer_top_holders`

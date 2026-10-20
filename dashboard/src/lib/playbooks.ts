@@ -200,7 +200,7 @@ export const PLAYBOOKS: readonly Playbook[] = [
     /* the tab's rule is no longer a draft (LD14) */
     trigger: "The Overlap tab’s rule.",
     horizon: "—",
-    verdict: "No published evidence found. It stays descriptive: Populus uses no prices, so it cannot test the pairing itself.",
+    verdict: "No published evidence found. It stays descriptive: Public Filings uses no prices, so it cannot test the pairing itself.",
     evidence: [],
   },
   {
@@ -211,7 +211,7 @@ export const PLAYBOOKS: readonly Playbook[] = [
     trigger:
       "Proposed: open-market purchases (Form 4 code P) by insiders not tagged routine; routine = traded in the same calendar month in each of the 3 prior years. Extra weight when 2 or more insiders of one issuer buy within 30 days — a proposed refinement, not tested in the paper.",
     horizon: "Portfolios formed monthly on the filing.",
-    verdict: "The strongest evidence of the set, and Populus cannot trigger it: there is no Form 4 data in Populus.",
+    verdict: "The strongest evidence of the set, and Public Filings cannot trigger it: there is no Form 4 data here yet.",
     needs: [
       "A Form 4 ingest from EDGAR ownership XML; filings are due within 2 business days of the trade.",
       "An insider-level history of at least 3 years, for the routine test.",

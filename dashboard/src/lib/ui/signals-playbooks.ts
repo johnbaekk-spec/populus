@@ -288,7 +288,7 @@ export function signalsPlaybooksHtml(model: PlaybooksModel | null, ctx: RenderCt
   }
   const tip = note(
     "A playbook names published research on a pattern a row shows, with what the research found on both sides. Its numbers are the paper's own, from its own sample and years — not computed here. " +
-      "Populus uses no prices and computes no returns, so it cannot say whether a pattern still holds. Nothing here is a recommendation.",
+      "Public Filings uses no prices and computes no returns, so it cannot say whether a pattern still holds. Nothing here is a recommendation.",
     { scope: "signals-pb" },
     "about",
     { trigger: "mark", name: "How to read a playbook" },
@@ -346,7 +346,7 @@ export function signalsPlaybooksMethodHtml(): string {
     `<section class="si-method" id="signals-playbooks" aria-labelledby="signals-playbooks-h">` +
     `<h3 class="section-h" id="signals-playbooks-h">Playbooks: published research on the patterns the rows show</h3>` +
     `<p class="metho-body">The Playbooks tab on <a href="/signals/#playbooks">/signals</a> names published research on a pattern a row shows and quotes what it found, with evidence on both sides. ` +
-    `The numbers are the papers' own, from their samples and years. Populus reads no price and computes no return, so it cannot say whether a pattern still holds; nothing here is advice.</p>` +
+    `The numbers are the papers' own, from their samples and years. Public Filings reads no price and computes no return, so it cannot say whether a pattern still holds; nothing here is advice.</p>` +
     `<ul class="si-method-list">` +
     li(
       `<strong>Opportunistic member buy — the rule, adapted.</strong> Cohen, Malloy &amp; Pomorski's routine test is for corporate insiders; the site adapts it to members of Congress. ` +
@@ -359,7 +359,7 @@ export function signalsPlaybooksMethodHtml(): string {
         `The roster (v${ROSTER_VERSION}) starts ${ROSTER_FROM}: a trade before it is never classified. ${esc(ROSTER_PRECISION_TEXT)}`,
     ) +
     li(`<strong>Committee-linked trade.</strong> It triggers when a row's Cmte meter reads medium — a direct match in the committee table (<a href="#committee-direct">above</a>). When the committee inputs are not in a build it has no rows, and the tab says it is unavailable. ${esc(COMMITTEE_CAVEAT)}`) +
-    li(`<strong>Best ideas and Consensus</strong> trigger on panels, not rows: the new-position leaders and Consensus on the Institutional tab state how many managers and names qualify. Opportunistic insider purchases need Form 4 data Populus does not hold.`) +
+    li(`<strong>Best ideas and Consensus</strong> trigger on panels, not rows: the new-position leaders and Consensus on the Institutional tab state how many managers and names qualify. Opportunistic insider purchases need Form 4 data Public Filings does not hold.`) +
     `</ul>` +
     `<p class="metho-body">The seven playbooks, their rules and their sources:</p>` +
     `<ul class="si-method-list">${rules}</ul>` +

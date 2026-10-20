@@ -333,10 +333,14 @@ export function addsNoteHtml(payload: Pick<AddsPayload,
   const clauses: string[] = [];
   if (payload.truncated) {
     const b = payload.truncation_boundary;
+    /* The boundary stays exact, but its issuer key (`iss:396`) is an internal
+       identifier, not reader copy: the value and manager count name the cut
+       for a reader, and the key rides on `data-boundary-key` for anyone
+       auditing it against the published aggregate. */
     const at = b
-      ? `the first omitted issuer had ${
+      ? `the first omitted issuer had <span class="adds-boundary" data-boundary-key="${esc(b[2])}">${
           b[0] == null ? "no disclosed value" : esc(fmtUsd(b[0]))
-        } across ${fmtInt(b[1])} ${b[1] === 1 ? "manager" : "managers"} (${esc(b[2])})`
+        } across ${fmtInt(b[1])} ${b[1] === 1 ? "manager" : "managers"}</span>`
       : "the exact boundary was not recorded";
     clauses.push(
       `This leaderboard is bounded by Public Filings, not by the data — ${at}. ` +
