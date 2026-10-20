@@ -425,13 +425,14 @@ test("T3.4 (R19, LD16): 'Triggers now' lists up to five rows, each the row's lea
   assert.match(text(empty.querySelector("#pb-leader")), /No row in Filings to read triggers it this build — a computed answer over every ranked row\./);
 });
 
-test("T3.5 (R21): a triggered row carries data-pb tokens and a dashed chip per playbook on line 1, and opened, each playbook's name, verdict, why and link; an untriggered row carries none", () => {
+test("T3.5 (R21): a triggered row carries data-pb tokens and a dashed chip per playbook leading line 2's reason (never beside the filer's name), and opened, each playbook's name, verdict, why and link; an untriggered row carries none", () => {
   const { tr } = golden();
   const r = tr.rows[0]!;
   const hits: PlaybookHit[] = [{ id: "opp-buy", why: "why one" }, { id: "leader", why: "why two" }];
   const el = domOf(triageRowHtml(r, CTX, { playbooks: hits })).querySelector("article.si-row")!;
   assert.equal(el.getAttribute("data-pb"), "opp-buy leader");
-  const chips = el.querySelectorAll("summary .si-row-who .pb-chip");
+  const chips = el.querySelectorAll("summary .si-row-why .si-row-tags .pb-chip");
+  assert.equal(el.querySelectorAll("summary .si-row-who .pb-chip").length, 0, "no chip beside the name: it squeezed the name on production data");
   assert.deepEqual(chips.map((c) => text(c)), ["OPP. BUY, triggers the Opportunistic member buy playbook", "LEADER, triggers the Leadership trade playbook"]);
   const sec = el.querySelectorAll(".si-row-det .si-row-pb-one");
   assert.equal(sec.length, 2);

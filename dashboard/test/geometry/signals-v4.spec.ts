@@ -392,6 +392,293 @@ for (const width of DESKTOPS) {
   });
 }
 
+/* The heaviest rows, on any data. Production data's late batch for AAPL
+   (LATE BATCH, LATE 22/32 and a CMTE playbook chip beside "Michael A.
+   Rulli", R–OH-6, "owner not stated") left the name 8.4px at 1440px and 0px
+   at 1081px when the grouping tag and the chips sat on line 1. The local
+   data carries no playbook chip, so the sweep above never saw it. Two rows
+   are rendered through the REAL renderer from the golden late batch and
+   spliced over the first two rows of the built page:
+   - FIT: the grouping tag and two playbook chips (the most line 2's
+     narrowest track, ≈189px at 1081px, holds);
+   - MAX: the grouping tag and all three Congress playbooks, wider than that
+     track.
+   The properties, each with a negative control (codex cycle 1, rounds 1–2,
+   and cycle 2, round 1):
+   P1 every honesty field visible and unclipped, collapsed and again with the
+      row opened;
+   P2 every grouping tag and chip, and its visible label, visible, on screen,
+      inside its own box and every clipping ancestor, collapsed and opened;
+   P3 (desktops) the filer's name ≥24px;
+   P4 (desktops) two lines. The one exception (PLAN.md success criterion 2,
+      the owner's ruling): where the tags' own single-line width, measured,
+      exceeds line 2's track, they wrap onto exactly two lines and the row is
+      exactly three, no taller than that second tag line; tags that fit and
+      wrap anyway fail;
+   P5 opened, the reason visible and every run of its text inside its own
+      box and every clipping ancestor, both ways, desktops and phones. */
+import { triageRowHtml } from "../../src/lib/ui/index.ts";
+import { buildTriage as buildTriageForRows } from "../../src/lib/signal-triage.ts";
+import { loadTriageFixture as loadTriageForRows } from "../lib/triage-fixture.ts";
+
+const HEAVY = { fit: "si-row-heavy-fit", max: "si-row-heavy-max" } as const;
+function heavyRowSplice(html: string): string {
+  const f = loadTriageForRows();
+  const tr = buildTriageForRows(f.artifact, f.rows, { committee: f.committee, identityOf: f.identityOf });
+  const batch = tr.rows.find((r) => r.grouping === "late-batch" && r.lateLines > 0);
+  if (!batch) throw new Error("the golden triage carries no late batch with late lines");
+  const fit = triageRowHtml(batch, {}, { playbooks: [{ id: "leader", why: "fixture" }, { id: "cmte", why: "fixture" }] }).replace(/ id="si-row-[^"]+"/, ` id="${HEAVY.fit}"`);
+  const max = triageRowHtml(batch, {}, { playbooks: [{ id: "opp-buy", why: "fixture" }, { id: "leader", why: "fixture" }, { id: "cmte", why: "fixture" }] }).replace(/ id="si-row-[^"]+"/, ` id="${HEAVY.max}"`);
+  const first = /<article class="si-row" id="si-row-[^"]+"[\s\S]*?<\/article>/;
+  if (!first.test(html)) throw new Error("the built page carries no triage row to splice over");
+  const once = html.replace(first, fit);
+  const second = /(<article class="si-row" id="si-row-heavy-fit"[\s\S]*?<\/article>[\s\S]*?)<article class="si-row" id="si-row-(?!heavy)[^"]+"[\s\S]*?<\/article>/;
+  if (!second.test(once)) throw new Error("the built page carries no second triage row to splice over");
+  return once.replace(second, (_m, a: string) => `${a}${max}`);
+}
+
+async function openHeavy(browser: Browser, testInfo: TestInfo, width: number): Promise<{ ctx: Awaited<ReturnType<Browser["newContext"]>>; page: Page }> {
+  const ctx = await browser.newContext({ baseURL: testInfo.project.use.baseURL, viewport: { width, height: width > 720 ? 900 : 844 } });
+  await ctx.route(/cloudflareinsights\.com/, (r) => r.abort());
+  await ctx.route(/\/signals\/(?:index\.html)?(?:\?.*)?$/, async (route) => {
+    const res = await route.fetch();
+    const headers = { ...res.headers(), "content-type": "text/html; charset=utf-8" };
+    delete headers["content-length"];
+    await route.fulfill({ status: res.status(), headers, body: heavyRowSplice(await res.text()) });
+  });
+  const page = await ctx.newPage();
+  expect((await page.goto("/signals/", { waitUntil: "load" }))?.status()).toBe(200);
+  await page.evaluate(() => document.fonts.ready);
+  return { ctx, page };
+}
+
+/** Every grouping tag and playbook chip in a row's summary, and its visible
+    label (the text a reader sees; the visually-hidden words excluded): each
+    visible (CSS and opacity, the element or an ancestor), with a box, on
+    screen, and inside every clipping ancestor up to the row — the label's
+    text runs inside the chip's own box too (codex round 2, F2: a chip whose
+    label alone is hidden or cut kept its box). `wrapped`: the tags take more
+    than one line; `leadH`, `oneH`, `gapH`: the lead's height, its tallest
+    tag's (a chip is taller than the grouping tag) and its row gap; `need`,
+    `room`: the tags' single-line width (each tag's own width, nowrap, plus
+    the lead's column gaps) and the room line 2's track leaves the lead (its
+    content width less the gap before the sentence, which may shrink to
+    nothing). */
+function tagProblems(page: Page, id: string): Promise<{ n: number; out: string[]; wrapped: boolean; leadH: number; oneH: number; gapH: number; need: number; room: number }> {
+  return page.evaluate((rid) => {
+    const row = document.getElementById(rid)!;
+    const sum = row.querySelector("summary")!;
+    const tags = Array.from(sum.querySelectorAll<HTMLElement>(".si-group-tag, .pb-chip"));
+    const out: string[] = [];
+    const seen = (e: Element): boolean => e.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
+    const inside = (r: DOMRect, a: DOMRect): boolean => r.left >= a.left - 0.5 && r.right <= a.right + 0.5 && r.top >= a.top - 0.5 && r.bottom <= a.bottom + 0.5;
+    /* the rect against every clipping ancestor from `from` up to the row */
+    const clips = (r: DOMRect, from: Element | null): string | null => {
+      for (let a = from; a && a !== row; a = a.parentElement) {
+        const cs = getComputedStyle(a);
+        if (cs.overflowX === "visible" && cs.overflowY === "visible") continue;
+        if (!inside(r, a.getBoundingClientRect())) return `.${(a as HTMLElement).className.split(" ")[0] || a.tagName}`;
+      }
+      return null;
+    };
+    for (const t of tags) {
+      const label = `${rid}: ${(t.textContent ?? "").trim().slice(0, 24)}`;
+      if (!seen(t)) {
+        out.push(`${label} is not visible`);
+        continue;
+      }
+      const r = t.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) {
+        out.push(`${label} has no box`);
+        continue;
+      }
+      if (r.left < -0.5 || r.right > innerWidth + 0.5) out.push(`${label} is off screen`);
+      const c = clips(r, t.parentElement);
+      if (c) out.push(`${label} is clipped by ${c}`);
+      // its visible label: every text run outside the visually-hidden words
+      let runs = 0;
+      const walker = document.createTreeWalker(t, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        const p = n.parentElement!;
+        if (!n.textContent!.trim() || p.closest(".visually-hidden")) continue;
+        if (!seen(p)) {
+          out.push(`${label}: its label is not visible`);
+          continue;
+        }
+        const range = document.createRange();
+        range.selectNodeContents(n);
+        for (const q of Array.from(range.getClientRects())) {
+          if (q.width <= 0 || q.height <= 0) continue;
+          runs++;
+          if (!inside(q, r)) out.push(`${label}: its label runs outside its box`);
+          const lc = clips(q, p);
+          if (lc) out.push(`${label}: its label is clipped by ${lc}`);
+        }
+      }
+      if (runs === 0) out.push(`${label} shows no label`);
+    }
+    const lead = sum.querySelector<HTMLElement>(".si-row-tags");
+    const oneH = Math.max(0, ...tags.map((t) => t.getBoundingClientRect().height));
+    const leadH = lead?.getBoundingClientRect().height ?? 0;
+    const gapH = lead ? parseFloat(getComputedStyle(lead).rowGap) || 0 : 0;
+    const colGap = lead ? parseFloat(getComputedStyle(lead).columnGap) || 0 : 0;
+    const need = tags.reduce((w, t) => w + t.getBoundingClientRect().width, 0) + colGap * Math.max(0, tags.length - 1);
+    const why = sum.querySelector<HTMLElement>(".si-row-why")!;
+    const wcs = getComputedStyle(why);
+    const room = why.getBoundingClientRect().width - parseFloat(wcs.paddingLeft) - parseFloat(wcs.paddingRight) - (parseFloat(wcs.columnGap) || 0);
+    return { n: tags.length, out, wrapped: !!lead && leadH > oneH * 1.5, leadH, oneH, gapH, need, room };
+  }, id);
+}
+
+/** P5: an opened row's reason — visible, and every run of its text inside
+    the sentence's own box and every clipping ancestor, both ways. */
+function reasonProblems(page: Page, id: string): Promise<string[]> {
+  return page.evaluate((rid) => {
+    const say = document.querySelector<HTMLElement>(`#${rid} summary .si-row-say`);
+    if (!say) return [`${rid}: no reason`];
+    if (!say.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return [`${rid}: the reason is not visible`];
+    const out: string[] = [];
+    if (say.scrollWidth > say.clientWidth + 1 || say.scrollHeight > say.clientHeight + 1) out.push(`${rid}: the reason overflows its box`);
+    const box = say.getBoundingClientRect();
+    const inside = (q: DOMRect, b: DOMRect): boolean => q.left >= b.left - 0.5 && q.right <= b.right + 0.5 && q.top >= b.top - 0.5 && q.bottom <= b.bottom + 0.5;
+    let runs = 0;
+    const walker = document.createTreeWalker(say, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      if (!n.textContent!.trim()) continue;
+      const range = document.createRange();
+      range.selectNodeContents(n);
+      for (const q of Array.from(range.getClientRects())) {
+        if (q.width <= 0 || q.height <= 0) continue;
+        runs++;
+        if (!inside(q, box)) out.push(`${rid}: the reason runs outside its box`);
+        for (let a = say.parentElement; a && a !== document.body; a = a.parentElement) {
+          const cs = getComputedStyle(a);
+          if (cs.overflowX === "visible" && cs.overflowY === "visible") continue;
+          if (!inside(q, a.getBoundingClientRect())) {
+            out.push(`${rid}: the reason is clipped by .${(a as HTMLElement).className.split(" ")[0] || a.tagName}`);
+            break;
+          }
+        }
+      }
+    }
+    if (runs === 0) out.push(`${rid}: the reason shows no text`);
+    return [...new Set(out)];
+  }, id);
+}
+
+/** Open one heavy row (the rows share one `name`, so opening it closes the
+    other), then P1, P2 and P5 on it. */
+async function openedProblems(page: Page, id: string): Promise<string[]> {
+  if (!(await page.locator(`#${id} details.si-row-d`).evaluate((d) => (d as HTMLDetailsElement).open))) await page.locator(`#${id} summary`).click();
+  const out = (await rowHonesty(page)).problems.filter((p) => p.startsWith(`${id}:`));
+  out.push(...(await tagProblems(page, id)).out.map((p) => `opened ${p}`), ...(await reasonProblems(page, id)));
+  return out;
+}
+
+/** A control: inject `css`, expect a problem containing `what`, then remove it. */
+async function control(page: Page, css: string, check: () => Promise<string[]>, what: string): Promise<void> {
+  const tag = await page.addStyleTag({ content: css });
+  expect((await check()).some((p) => p.includes(what)), `control: ${css} → "${what}"`).toBe(true);
+  await tag.evaluate((e) => e.remove());
+}
+
+const nameWidth = (page: Page, id: string): Promise<number> => page.evaluate((rid) => document.querySelector(`#${rid} .si-row-member`)!.getBoundingClientRect().width, id);
+
+for (const width of DESKTOPS) {
+  test(`T1.4 (R2) @${width}: the heaviest rows — the grouping tag with two, then all three, playbook chips — keep every honesty field, a filer name ≥24px, every tag, chip and label, and an opened row's full reason; two lines unless the tags alone outgrow the track (P1–P5)`, async ({ browser }, testInfo) => {
+    const { ctx, page } = await openHeavy(browser, testInfo, width);
+    try {
+      /* wherever the renderer places them: the layout rules below are the test */
+      expect(await page.locator(`#${HEAVY.fit} summary .pb-chip`).count()).toBe(2);
+      expect(await page.locator(`#${HEAVY.max} summary .pb-chip`).count()).toBe(3);
+      await openRoutine(page);
+      const r = await rowHonesty(page, { lines: true });
+      const fit = await tagProblems(page, HEAVY.fit);
+      const max = await tagProblems(page, HEAVY.max);
+      expect(fit.n, "LATE BATCH and two chips").toBe(3);
+      expect(max.n, "LATE BATCH and three chips").toBe(4);
+      // P2
+      expect([...fit.out, ...max.out], "P2: every grouping tag, chip and label visible and unclipped").toEqual([]);
+      // P1 and P4 for FIT: its tags fit the track, on one line, and the row is two lines
+      expect(fit.need, "FIT: its tags fit line 2's track").toBeLessThanOrEqual(fit.room + 0.5);
+      expect(fit.wrapped, "FIT: its tags hold one line").toBe(false);
+      expect(r.problems.filter((p) => p.startsWith(`${HEAVY.fit}:`)), "FIT: P1, and two lines").toEqual([]);
+      // P1 and P4 for MAX
+      const isLine = (p: string): boolean => / lines, not 2 /.test(p) || /over two lines/.test(p);
+      const maxRow = r.problems.filter((p) => p.startsWith(`${HEAVY.max}:`));
+      expect(maxRow.filter((p) => !isLine(p)), "MAX: P1").toEqual([]);
+      if (max.need > max.room + 0.5) {
+        expect(max.wrapped, "MAX: tags wider than the track wrap").toBe(true);
+        expect(max.leadH, "MAX: its tags take two lines, never more").toBeLessThanOrEqual(2 * max.oneH + max.gapH + 1);
+        for (const p of maxRow.filter(isLine)) {
+          const n = / (\d+) lines, not 2 /.exec(p);
+          if (n) expect(Number(n[1]), `MAX: three lines, no more (${p})`).toBe(3);
+          const t = /the summary is ([\d.]+)px, over two lines' ([\d.]+)px/.exec(p);
+          if (t) expect(Number(t[1]) - Number(t[2]), `MAX: no taller than the tags' own second line (${p})`).toBeLessThanOrEqual(max.leadH - max.oneH + 1);
+        }
+      } else {
+        expect(max.wrapped, "MAX: tags that fit the track hold one line").toBe(false);
+        expect(maxRow.filter(isLine), "MAX: two lines where its tags fit").toEqual([]);
+      }
+      // P3
+      for (const id of [HEAVY.fit, HEAVY.max]) expect(await nameWidth(page, id), `${id}: the filer's name keeps ≥24px`).toBeGreaterThanOrEqual(24);
+      if (width === 1440) {
+        /* P4's control, where MAX fits: tags squeezed into wrapping anyway are caught */
+        const squeeze = await page.addStyleTag({ content: ".si-row-sum > .si-row-why > .si-row-tags { max-width: 120px }" });
+        const sq = await tagProblems(page, HEAVY.max);
+        expect(sq.need <= sq.room + 0.5 && sq.wrapped, "control: MAX fits here, and tags squeezed into a wrap read as wrapped though they fit").toBe(true);
+        await squeeze.evaluate((e) => e.remove());
+      }
+      // P1, P2 and P5 with each row opened
+      for (const id of [HEAVY.fit, HEAVY.max]) expect(await openedProblems(page, id), `${id} opened`).toEqual([]);
+      if (width === 1081) {
+        /* controls on the opened MAX row (P1, P5), then the collapsed lead (P2, P4) */
+        const opened = (): Promise<string[]> => openedProblems(page, HEAVY.max);
+        await control(page, ".si-row-d[open] .owner-note { opacity: 0 }", opened, `${HEAVY.max}: owner`);
+        await control(page, ".si-row-d[open] .si-row-say { opacity: 0 }", opened, "the reason is not visible");
+        await control(page, ".si-row-d[open] .si-row-say { max-height: 6px; overflow: hidden }", opened, "the reason overflows its box");
+        await control(page, ".si-row-d[open] .si-row-why { overflow: hidden; max-height: 8px }", opened, "the reason is clipped by .si-row-why");
+        await page.locator(`#${HEAVY.max} summary`).click(); // closed again
+        const tags = (id: string) => async (): Promise<string[]> => (await tagProblems(page, id)).out;
+        await control(page, '.si-row-tags > .pb-chip > [aria-hidden="true"] { opacity: 0 }', tags(HEAVY.fit), "its label is not visible");
+        await control(page, ".si-row-tags > .pb-chip { overflow: hidden !important; max-width: 14px !important }", tags(HEAVY.fit), "its label is clipped by .pb-chip");
+        await control(page, '.si-row-tags > .pb-chip > [aria-hidden="true"] { position: relative; left: 40px }', tags(HEAVY.fit), "its label runs outside its box");
+        const stack = await page.addStyleTag({ content: ".si-row-sum > .si-row-why > .si-row-tags { flex-direction: column !important }" });
+        const col = await tagProblems(page, HEAVY.max);
+        expect(col.leadH, "control: tags stacked one per line break the two-line bound").toBeGreaterThan(2 * col.oneH + col.gapH + 1);
+        await stack.evaluate((e) => e.remove());
+        await control(page, ".si-row-tags { opacity: 0 }", tags(HEAVY.fit), "is not visible");
+        /* as specific as the stylesheet's own rule, or the control changes nothing */
+        await control(page, ".si-row-sum > .si-row-why > .si-row-tags { flex-wrap: nowrap !important; flex-shrink: 1 !important; min-width: 0 !important; overflow: hidden !important } .si-row-sum > .si-row-why { overflow: hidden !important }", tags(HEAVY.max), "is clipped by");
+        expect([...(await tagProblems(page, HEAVY.fit)).out, ...(await tagProblems(page, HEAVY.max)).out], "the controls left nothing behind").toEqual([]);
+      }
+    } finally {
+      await ctx.close();
+    }
+  });
+}
+
+for (const width of PHONES) {
+  test(`T1.4 (R3) @${width}: the heaviest rows keep every honesty field, every tag, chip and label, and an opened row's full reason (P1, P2, P5)`, async ({ browser }, testInfo) => {
+    const { ctx, page } = await openHeavy(browser, testInfo, width);
+    try {
+      await openRoutine(page);
+      const r = await rowHonesty(page);
+      expect(r.problems.filter((p) => p.startsWith(`${HEAVY.fit}:`) || p.startsWith(`${HEAVY.max}:`)), "P1").toEqual([]);
+      for (const id of [HEAVY.fit, HEAVY.max]) expect((await tagProblems(page, id)).out, `${id}: P2`).toEqual([]);
+      for (const id of [HEAVY.fit, HEAVY.max]) expect(await openedProblems(page, id), `${id} opened`).toEqual([]);
+      if (width === 390) {
+        const opened = (): Promise<string[]> => openedProblems(page, HEAVY.max);
+        await control(page, ".si-row-d[open] .owner-note { opacity: 0 }", opened, `${HEAVY.max}: owner`);
+        await control(page, ".si-row-d[open] .si-row-say { opacity: 0 }", opened, "the reason is not visible");
+        await control(page, ".si-row-d[open] .si-row-say { max-height: 6px; overflow: hidden }", opened, "the reason overflows its box");
+      }
+    } finally {
+      await ctx.close();
+    }
+  });
+}
+
 for (const width of PHONES) {
   test(`T1.4 (R3, criterion 4) @${width}: no sideways scroll; every row keeps its range, both dates, lag, owner, LATE tags and receipt on screen, visible and unclipped; short filers stay on three lines`, async ({ browser }, testInfo) => {
     const { ctx, page } = await open(browser, testInfo, width);

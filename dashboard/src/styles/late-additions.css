@@ -832,7 +832,16 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 .si-row-sum > .si-meters { grid-area: met; align-self: center; }
 .si-row-filed { grid-area: fil; font: 400 var(--fs-control) var(--mono); color: var(--ink2); text-align: right; white-space: nowrap; }
 .si-row-slot { grid-area: src; }
-.si-row-why { grid-area: why; font: 400 var(--fs-small)/1.5 var(--sans); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.si-row-why { grid-area: why; font: 400 var(--fs-small)/1.5 var(--sans); color: var(--ink); min-width: 0; display: flex; align-items: baseline; column-gap: 5px; }
+/* line 2's reason: the grouping tag and the playbook chips never shrink below
+   their widest one, and wrap only when they alone are wider than the track;
+   the sentence takes what is left and is the part cut by the ellipsis */
+.si-row-why > .si-row-tags { flex: 0 1 auto; display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 2px 5px; }
+.si-row-why > .si-row-say { flex: 1 1 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* an opened row states its reason in full: beside the tags while there is
+   room for a phrase, else on its own line beneath them */
+.si-row-d[open] > .si-row-sum > .si-row-why { flex-wrap: wrap; row-gap: 2px; }
+.si-row-d[open] > .si-row-sum > .si-row-why > .si-row-say { flex: 1 1 16ch; white-space: normal; overflow: visible; }
 .si-row-traded { grid-area: trd; font: 400 var(--fs-control) var(--mono); color: var(--ink3); text-align: right; white-space: nowrap; }
 .si-row-chv { grid-area: chv; justify-self: end; align-self: center; width: 7px; height: 7px; margin-right: 4px; border-right: 1.5px solid var(--ink3); border-bottom: 1.5px solid var(--ink3); transform: translateY(-2px) rotate(45deg); }
 .si-row-d[open] > .si-row-sum > .si-row-chv { transform: translateY(2px) rotate(225deg); }
@@ -847,8 +856,11 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
    two lines at EVERY width, as the mock's `.a-who` does — the filer cell is
    one line that never wraps, and only the filer's (or the cluster's) NAME
    gives way, cut by an ellipsis. The party and state, the owner word, the
-   ×N count and every tag keep their full width (flex: none) and are never
-   cut; the full name stays in the DOM and in the opened row. The ticker never
+   ×N count and the LATE tag keep their full width (flex: none) and are never
+   cut; the full name stays in the DOM and in the opened row. The grouping
+   tag and the playbook chips lead line 2's reason instead (`.si-row-tags`):
+   on line 1, production data's heaviest late batch squeezed its name to
+   8.4px. The ticker never
    wraps either: its track grows past 52px for the rare long one ("no
    ticker"). */
 @media (min-width: 721px) {
@@ -867,10 +879,11 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
    band at 721–1080px, and its 1.5fr share of the split band below 1440px),
    the meters move to line 2, between the reason and the trade date, and the
    gaps, the range's and the meters' tracks narrow. The filer cell is then
-   ≥283px at 1081px, the narrowest split width (the widest real fixed part,
-   Tuberville's late batch without its name, is 238px; the widest cluster
-   line, 281px), and ≥354px from 1200px, which holds the widest real line
-   (≈339px) in full. Every field keeps its own cell;
+   ≥283px at 1081px, the narrowest split width, and ≥354px from 1200px. On
+   production data 20261019.2 the widest fixed part of line 1, without its
+   name, is 220px once the grouping tag and playbook chips moved to line 2,
+   which leaves every name ≥63px. Before the move it was 340px, which left a
+   late batch's name 8.4px at 1440px and 0px at 1081px. Every field keeps its own cell;
    nothing is dropped or cut but a name. The column head's meter labels sit
    over the meters' column. From 1440px the meters stay on line 1 and the
    filer cell (348px) holds the widest real line. */
@@ -1159,10 +1172,9 @@ details.si-tier > summary > .si-tier-h { display: inline; }
 /* ---------- signals-v4 M3 (R18–R22, LD8, LD14–LD16): Overlap, Playbooks and the playbook chips ---------- */
 /* LD8: the two new tabs say so */
 .tab-new { font: 600 var(--fs-label)/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--amber); border: 1px solid var(--amber); border-radius: 3px; padding: 2px 4px; }
-/* R21: a playbook's chip — dashed, on a triggered row's first line, in its
-   opened row, on a strip and on the playbook's own head */
+/* R21: a playbook's chip — dashed, leading a triggered row's line-2 reason,
+   in its opened row, on a strip and on the playbook's own head */
 .pb-chip { display: inline-block; font: 600 var(--fs-label)/1.3 var(--mono); letter-spacing: .06em; color: var(--accent); border: 1px dashed var(--accent); border-radius: 3px; padding: 0 4px; white-space: nowrap; vertical-align: baseline; }
-.si-row-who .pb-chip { flex: none; }
 .pb-strip { display: inline-flex; align-items: center; gap: 6px; min-height: var(--hit-min); margin-left: auto; font: 400 var(--fs-note)/1.3 var(--sans); color: var(--ink3); text-decoration: none; white-space: nowrap; }
 .pb-strip:hover { color: var(--ink); }
 .si-row-pb { margin: 8px 0 0; padding: 8px 0 0; border-top: 1px dashed var(--rule2); }

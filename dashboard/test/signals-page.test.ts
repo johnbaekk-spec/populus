@@ -357,9 +357,17 @@ test("R12 / signals-v4 R2 (LD4): every triage row is an article holding a <detai
       assert.ok(m.querySelector(".si-meter-label"), "the inline label (shown on phones)");
     }
     assert.ok(sum.querySelector(".si-row-filed time"), `${key}: filed`);
-    // line 2: side chip, the reason (one line), traded date and lag, the chevron
+    // line 2: side chip, the reason (one line) led by the grouping tag and any
+    // playbook chips, traded date and lag, the chevron
     assert.match(ownText(sum.querySelector(".si-chip")!), /^(BUY|SELL|.+)$/);
-    assert.equal(ownText(sum.querySelector(".si-row-why")!), row.sentence);
+    const why = sum.querySelector(".si-row-why")!;
+    const lead = why.querySelector(".si-row-tags");
+    const wantLead = row.grouping === "late-batch" ? "LATE BATCH" : row.grouping === "cluster" && row.cluster !== null ? "CLUSTER" : null;
+    assert.equal(lead ? ownText(lead) : null, wantLead, `${key}: the reason's lead is the grouping tag (no playbooks here)`);
+    assert.equal(ownText(why.querySelector(".si-row-say")!), row.sentence, `${key}: then the sentence, in its own span (the part that gives way)`);
+    assert.equal(ownText(why), (lead ? ownText(lead) : "") + row.sentence, `${key}: nothing else on the reason's line`);
+    // line 1's filer cell carries no tag that could squeeze the name
+    assert.equal(sum.querySelectorAll(".si-row-who .si-group-tag").length + sum.querySelectorAll(".si-row-who .pb-chip").length, 0, `${key}: no grouping tag or chip beside the name`);
     assert.ok(sum.querySelector(".si-row-traded time") || /trade date not disclosed/.test(sum.querySelector(".si-row-traded")!.textContent), `${key}: traded`);
     assert.ok(sum.querySelector(".si-row-chv[aria-hidden]"), "the chevron");
     // the receipt: a sibling of the <details>, never inside the summary
@@ -429,13 +437,15 @@ test("R12 golden render: Armstrong's row tags LATE 701/703 (\"701 of 703 lines l
   const c = domOf(triageRowHtml(spcx, CTX));
   assert.match(ownText(c.querySelector(".si-row-tk")!), /^SPCX$/);
   assert.match(ownText(c.querySelector(".si-row-member")!), /^6 members$/);
-  assert.match(ownText(c.querySelector(".si-row-who")!), /CLUSTER/);
+  assert.equal(ownText(c.querySelector(".si-row-why .si-row-tags")!), "CLUSTER", "the cluster says so, leading line 2");
+  assert.doesNotMatch(ownText(c.querySelector(".si-row-who")!), /CLUSTER/, "never beside the name");
   assert.match(ownText(c.querySelector(".si-row-facts")!), /Jared Moskowitz/, "the members, in the opened row");
   const batch = t.rows.find((r) => r.grouping === "late-batch")!;
   const b = domOf(triageRowHtml(batch, CTX));
   assert.match(ownText(b.querySelector(".si-row-who")!), /^Tommy Tuberville\s*×8/);
   assert.equal(b.querySelector(".si-row-n .visually-hidden")!.textContent, ", 8 filings");
-  assert.match(ownText(b.querySelector(".si-row-who")!), /LATE BATCH/);
+  assert.equal(ownText(b.querySelector(".si-row-why .si-row-tags")!), "LATE BATCH", "the late batch says so, leading line 2");
+  assert.doesNotMatch(ownText(b.querySelector(".si-row-who")!), /LATE BATCH/, "never beside the name");
   assert.match(ownText(b.querySelector(".si-row-facts")!), /A late batch: 8 filings by one member on one date/);
   assert.match(b.querySelector(".si-row-src")!.textContent, /\+7 filings · latest of 8 filings/);
   assert.match(ownText(b.querySelector(".si-row-latest")!), /^latest of 8 filings: \d{4}-\d{2}-\d{2}$/, "visible in the opened row");
