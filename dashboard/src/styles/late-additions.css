@@ -293,6 +293,9 @@ tbody[data-collapsed="true"] tr[data-compact-extra] {
    (`popovertarget`) and a tap on the scrim light-dismisses it; with it,
    `notes.ts` stops anchoring the panel at this width and appends one Close
    button. Screen only: paper lays every panel out in flow (below). */
+/* The sheet's scrim element (below) is inert above the fold and on paper;
+   this default must precede the sheet block, which overrides it. */
+.note-scrim { display: none; }
 @media screen and (max-width: 720px) {
   .note-pop:popover-open {
     position: fixed;
@@ -307,6 +310,18 @@ tbody[data-collapsed="true"] tr[data-compact-extra] {
     box-shadow: 0 -10px 40px rgb(0 0 0 / 50%);
   }
   .note-pop::backdrop { background: rgb(0 0 0 / 55%); }
+  /* The sheet's scrim ELEMENT, kept by `notes.ts` while a sheet is open
+     (never server markup). The `::backdrop` draws the dim but is not
+     hit-testable, so without this a tap on the dim also activated what lay
+     beneath it, such as the sticky tab strip. Transparent, over the page and
+     under the top-layer sheet. */
+  .note-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 2147483000;
+    background: transparent;
+  }
 }
 /* The sheet's Close button, appended once by `notes.ts` (never server
    markup); above the fold a panel closes on hover-out, Escape or outside
