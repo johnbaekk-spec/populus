@@ -942,8 +942,10 @@ function rowFact(label: string, html: string): string {
     `link: false` — the ticker page's own block (R18) — omits the ticker-page
     link, which would point at the page it is on; `open: true` renders the
     row opened. signals-v4 M3 (R21): `playbooks` — the playbooks the row
-    triggers — adds a dashed chip per playbook on line 1, `data-pb` tokens on
-    the row and the playbook section of the opened row. */
+    triggers — adds a dashed chip per playbook, `data-pb` tokens on the row
+    and the playbook section of the opened row. The chips and the grouping
+    tag lead line 2's reason (`.si-row-tags`), so line 1's filer name never
+    gives way to them. */
 export function triageRowHtml(row: TriageRow, ctx: RenderCtx, opts: { link?: boolean; open?: boolean; playbooks?: readonly PlaybookHit[] } = {}): string {
   const t = row.lead.txn;
   const filers = [...new Map(row.filings.map((f) => [f.memberKey, f.rows[0]!])).values()];
@@ -964,18 +966,29 @@ export function triageRowHtml(row: TriageRow, ctx: RenderCtx, opts: { link?: boo
         ? ` <span class="si-group-tag">CLUSTER</span>`
         : "";
   const aff = cluster ? "" : ` <span class="aff ${partyClass(t.party)}">${esc(affTextOf(t))}</span>`;
+  /* The grouping tag and the playbook chips lead line 2's reason, not line 1:
+     on line 1 they squeezed the filer's name. On production data (build
+     20261019.2) a late batch with LATE BATCH, LATE 22/32 and a CMTE chip left
+     the name 8.4px at 1440px and 0px at 1081px, and clipped its tags. Line 1
+     keeps the name, ×N, the party and state, the owner word and the LATE tag,
+     the row's honesty fields. On line 2 the tags never shrink; the reason's
+     sentence (`.si-row-say`), stated in full when the row opens, gives way
+     instead, and only tags wider than the whole track (the grouping tag with
+     all three Congress playbooks, at the narrowest split widths) wrap onto a
+     line of their own rather than being cut. */
+  const tags = (kindTag + playbookChipsHtml(opts.playbooks)).trim();
   const latestHtml = n > 1 ? `latest of ${fmtInt(n)} filings: <time datetime="${esc(row.filed)}">${esc(row.filed)}</time>` : "";
   const summary =
     `<summary class="si-row-sum">` +
     `<span class="si-row-tk mono-ticker">${esc(t.ticker ?? "no ticker")}</span>` +
     `<span class="si-chip si-side-${side.cls}">${esc(side.text)}</span>` +
-    `<span class="si-row-who"><span class="si-row-member">${esc(who)}</span>${count}${aff} ${ownerWordHtml(t.owner)}${kindTag}${lateTagHtml(row.lateLines, row.totalLines)}${playbookChipsHtml(opts.playbooks)}</span>` +
+    `<span class="si-row-who"><span class="si-row-member">${esc(who)}</span>${count}${aff} ${ownerWordHtml(t.owner)}${lateTagHtml(row.lateLines, row.totalLines)}</span>` +
     `<span class="si-row-amt">${esc(amountText(t))}</span>` +
     metersHtml(row.meters) +
     `<span class="si-row-filed">filed <time datetime="${esc(t.filed)}">${esc(t.filed)}</time></span>` +
     /* the receipt's reserved cell: the receipt itself sits outside the summary */
     `<span class="si-row-slot" aria-hidden="true"></span>` +
-    `<span class="si-row-why">${esc(row.sentence)}</span>` +
+    `<span class="si-row-why">${tags ? `<span class="si-row-tags">${tags}</span>` : ""}<span class="si-row-say">${esc(row.sentence)}</span></span>` +
     `<span class="si-row-traded">${tradedHtml(t)}</span>` +
     `<span class="si-row-chv" aria-hidden="true"></span>` +
     `</summary>`;

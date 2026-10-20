@@ -97,7 +97,7 @@ export function playbookStripHtml(id: PlaybookId): string {
   );
 }
 
-/** The dashed chips on a triggered row's first line (R21). */
+/** The dashed chips of a triggered row, leading line 2's reason (R21; `triageRowHtml`). */
 export function playbookChipsHtml(hits: readonly PlaybookHit[] | undefined): string {
   if (!hits || hits.length === 0) return "";
   return hits.map((h) => ` <span class="pb-chip"><span aria-hidden="true">${esc(playbookById(h.id).short)}</span><span class="visually-hidden">, triggers the ${esc(playbookById(h.id).name)} playbook</span></span>`).join("");
