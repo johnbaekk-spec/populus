@@ -94,6 +94,110 @@ export function ensureCloseButton(pop: HTMLElement): boolean {
   return true;
 }
 
+/* signals-v4 LD3: the sheet's scrim. The stylesheet draws the dim (the
+   popover's `::backdrop`), but a popover's backdrop is not hit-testable: the
+   tap that light-dismissed a sheet still landed on whatever lay beneath it.
+   Measured on the live page at 390px, a tap on the dim over the sticky tab
+   strip closed the sheet AND switched tabs. While a sheet is open the script
+   keeps ONE transparent full-viewport element under it (the sheet is in the
+   top layer, above everything else), so that tap lands on the scrim: the
+   light dismiss still closes the sheet, and nothing beneath is activated.
+   Script only: the server markup and every parity capture are unchanged.
+   Without JavaScript the native light dismiss still closes the sheet. */
+export const SCRIM_CLASS = "note-scrim";
+/** Set from the scrim's pointerdown until its gesture ends: a sheet the
+    pointerdown light-dismissed must keep its scrim until the click that
+    follows has landed on it (on touch that click can arrive after the
+    `toggle` that reports the close). */
+const PRESSED = "data-pressed";
+/** How long a pressed scrim outlives its sheet if its gesture never ends in a
+    click on it (dragged off, no pointercancel): never left over the page. */
+export const SCRIM_GRACE_MS = 400;
+
+function anySheetOpen(doc: Document, opening: Element | null = null): boolean {
+  return sheetMode() && (opening !== null || Array.from(doc.querySelectorAll<HTMLElement>(".note-pop")).some((p) => p.matches(":popover-open")));
+}
+
+/* While a scrim exists, any DOM change re-checks it: a re-render that removes
+   an open panel hides it with NO toggle event (the HTML removing steps), so
+   the sheet hooks never hear of it. Without this the invisible scrim would
+   stay over the page, eating the next tap (codex round 1, F1: the entity
+   pager replaces a note's table body when its data arrives).
+   Each scrim owns its watch, and counts its presses: a late grace timer from
+   a scrim already gone touches only that scrim, and one from an earlier
+   press on the same scrim does nothing. A sync never restarts a wait, so DOM
+   changes during it never extend it (codex round 2, F3: a single shared
+   watch let an old scrim's timer disconnect its replacement's). */
+const owned = new WeakMap<HTMLElement, { watch: MutationObserver | null; press: number }>();
+
+function dropScrim(scrim: HTMLElement): void {
+  scrim.remove();
+  owned.get(scrim)?.watch?.disconnect();
+}
+
+/** Keep the scrim in step with the sheets: present while a sheet is open,
+    gone when none is (a pressed scrim waits for its click, at most
+    `SCRIM_GRACE_MS`). `opening` is a panel about to open (its `beforetoggle`),
+    counted as open. Returns the scrim, or null when there is none. */
+export function syncScrim(doc: Document, opening: Element | null = null): HTMLElement | null {
+  let scrim = doc.querySelector<HTMLElement>(`.${SCRIM_CLASS}`);
+  if (anySheetOpen(doc, opening)) {
+    if (!scrim) {
+      const s = doc.createElement("div");
+      s.className = SCRIM_CLASS;
+      s.setAttribute("aria-hidden", "true");
+      const own = { watch: null as MutationObserver | null, press: 0 };
+      /* Every press begins its own bounded wait: a press on a scrim kept
+         after its sheet closed starts one at once, since no sheet change
+         will follow it (codex cycle 2, round 1, F1). A press while a sheet
+         is open changes nothing here; the closing it causes starts the wait. */
+      s.addEventListener("pointerdown", () => {
+        own.press += 1;
+        s.setAttribute(PRESSED, "");
+        syncScrim(doc);
+      });
+      s.addEventListener("pointercancel", () => {
+        s.removeAttribute(PRESSED);
+        syncScrim(doc);
+      });
+      /* The tap's click: it dismisses and goes no further — no default
+         action, no other listener (the document's outside-click handler
+         included, so the scrim closes the sheets itself). */
+      s.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        s.removeAttribute(PRESSED);
+        closeAll();
+        syncScrim(doc);
+      });
+      doc.body.appendChild(s);
+      if (typeof MutationObserver === "function") {
+        own.watch = new MutationObserver(() => {
+          if (!anySheetOpen(doc)) syncScrim(doc);
+        });
+        own.watch.observe(doc.body, { childList: true, subtree: true });
+      }
+      owned.set(s, own);
+      scrim = s;
+    }
+    return scrim;
+  }
+  if (!scrim) return null;
+  if (!scrim.hasAttribute(PRESSED)) {
+    dropScrim(scrim);
+    return null;
+  }
+  const pressed = scrim;
+  const own = owned.get(pressed);
+  const press = own?.press;
+  setTimeout(() => {
+    if (own?.press !== press) return; // a later press began a wait of its own
+    pressed.removeAttribute(PRESSED);
+    if (!anySheetOpen(doc)) dropScrim(pressed);
+  }, SCRIM_GRACE_MS);
+  return pressed;
+}
+
 function show(btn: HTMLElement, pop: HTMLElement): void {
   if (!supported(pop)) return; // the @supports CSS fallback owns this engine
   if (!pop.matches(":popover-open")) (pop as unknown as { showPopover(): void }).showPopover();
@@ -264,15 +368,34 @@ export function initNotes(): void {
     if (pop && !pop.hasAttribute(PINNED)) hide(pop);
   });
 
+  /* The scrim rises the moment a sheet opens. `beforetoggle` fires
+     synchronously as the panel opens; `toggle` is queued, and a tap made
+     before it fires is coalesced with the close into ONE "closed" toggle. So
+     a scrim raised from `toggle` was never there for a quick tap (measured in
+     a browser: reopen, tap at once, and the tab beneath activated). Nor does
+     the click listener's microtask work: it runs before `popovertarget`'s
+     activation behaviour, while the panel is still closed. */
+  document.addEventListener(
+    "beforetoggle",
+    (ev) => {
+      const pop = ev.target as HTMLElement | null;
+      if (pop?.classList?.contains("note-pop") && (ev as Event & { newState?: string }).newState === "open") syncScrim(document, pop);
+    },
+    true,
+  );
+
   /* Every opening, whatever opened it — the native `popovertarget` toggle
      (touch, keyboard, a click), hover or focus: the panel gets its Close
-     button and its placement once it IS open. `toggle` does not bubble, so it
-     is caught in the capture phase. */
+     button and its placement once it IS open. Every opening and closing
+     keeps the sheet's scrim in step. `toggle` does not bubble, so it is caught
+     in the capture phase. */
   document.addEventListener(
     "toggle",
     (ev) => {
       const pop = ev.target as HTMLElement | null;
-      if (!pop?.classList?.contains("note-pop") || (ev as Event & { newState?: string }).newState !== "open") return;
+      if (!pop?.classList?.contains("note-pop")) return;
+      syncScrim(document);
+      if ((ev as Event & { newState?: string }).newState !== "open") return;
       ensureCloseButton(pop);
       const btn = document.querySelector<HTMLElement>(`.note-btn[popovertarget="${pop.id}"]`);
       if (btn) positionPanel(btn, pop);
@@ -294,5 +417,13 @@ export function initNotes(): void {
     });
   };
   window.addEventListener("scroll", replace, { passive: true, capture: true });
-  window.addEventListener("resize", replace, { passive: true });
+  window.addEventListener(
+    "resize",
+    () => {
+      replace();
+      /* a resize across the fold turns a sheet into an anchored panel, or back */
+      syncScrim(document);
+    },
+    { passive: true },
+  );
 }

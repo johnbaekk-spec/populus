@@ -791,8 +791,24 @@ test("T1.2 (R1, LD3) @390: an open tip is a bottom sheet — fixed, within 12px 
     await page.keyboard.press("Escape");
     expect(await sheetBox(page), "Escape").toBeNull();
     await btn.click();
-    await page.mouse.click(195, 60);
+    /* The scrim tap lands on something interactive beneath it — the
+       Institutional tab — and must only dismiss the sheet. A tap at a fixed
+       point (195, 60) hid this: on small data nothing clickable sat there,
+       while on production data the sticky tab strip did, and the tap closed
+       the sheet AND switched tabs. */
+    const under = await page.evaluate(() => {
+      const r = document.getElementById("tab-institutional")!.getBoundingClientRect();
+      const sheet = Array.from(document.querySelectorAll<HTMLElement>(".note-pop")).find((x) => x.matches(":popover-open"))!.getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2, sheetTop: sheet.top, hash: location.hash };
+    });
+    expect(under.y, "the tab is on screen, above the sheet: the tap lands on the scrim over it").toBeGreaterThan(0);
+    expect(under.y).toBeLessThan(under.sheetTop);
+    await page.mouse.click(under.x, under.y);
     expect(await sheetBox(page), "a tap on the scrim").toBeNull();
+    expect(
+      await page.evaluate(() => [document.getElementById("tab-congress")!.getAttribute("aria-selected"), location.hash]),
+      "the tap only dismissed the sheet: the tab beneath the scrim did not activate",
+    ).toEqual(["true", under.hash]);
     await btn.click();
     await page.locator(".note-pop:popover-open .note-close").click();
     expect(await sheetBox(page), "Close").toBeNull();
@@ -807,6 +823,28 @@ test("T1.2 (R1, LD3) @390: an open tip is a bottom sheet — fixed, within 12px 
     expect([box!.pos, box!.bottomGap <= 12, box!.width >= box!.vw - 24]).toEqual(["fixed", true, true]);
   } finally {
     await off.ctx.close();
+  }
+});
+
+/* codex round 1, F1: a re-render that removes an open note hides its panel
+   with NO toggle event (the HTML removing steps). The scrim must go with it,
+   with no tap or resize, or the invisible layer would eat the next tap. */
+test("T1.2 (LD3) @390: an open sheet whose note a re-render removes takes its scrim with it — the next tap reaches the page", async ({ browser }, testInfo) => {
+  const { ctx, page } = await open(browser, testInfo, 390);
+  try {
+    await page.locator("#triage .panel-head .note-btn").first().click();
+    expect(await sheetBox(page), "the sheet is open").not.toBeNull();
+    expect(await page.locator(".note-scrim").count(), "with its scrim").toBe(1);
+    await page.evaluate(() => document.querySelector("#triage .panel-head .note")!.remove());
+    await page.waitForFunction(() => !document.querySelector(".note-scrim"), null, { timeout: 2000 });
+    const tab = await page.evaluate(() => {
+      const r = document.getElementById("tab-institutional")!.getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    });
+    await page.mouse.click(tab.x, tab.y);
+    expect(await page.evaluate(() => [document.getElementById("tab-institutional")!.getAttribute("aria-selected"), location.hash]), "nothing left over the page: the tab took the tap").toEqual(["true", "#institutional"]);
+  } finally {
+    await ctx.close();
   }
 });
 
