@@ -953,7 +953,7 @@ export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx,
        gone with the empty panels they fed; the joins are named ONCE in the
        planned line below. */
     disclosureLedger([
-      { label: "Disclosures", value: fmtInt(m.txns.length), detail: `${fmtInt(m.filingCount)} filings · ${fmtInt(m.paper.length)} paper · retained`, subKind: "count" },
+      { label: "Disclosures", value: fmtInt(m.txns.length), detail: `${countOf(m.filingCount, "filing", "filings")} · ${fmtInt(m.paper.length)} paper · retained`, subKind: "count" },
       /* A range value ("−$250K to −$75.0K") is WIDE (`data-wide`): the figure
          takes its width, never cutting it. The unbounded interval's wording is
          not a value: the value says "unbounded" and its sub says why (R15;
@@ -996,7 +996,7 @@ export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx,
     v2.band +
     `<section class="panel panel-wide" aria-labelledby="txns-h">` +
     `<div class="panel-head"><h2 id="txns-h" class="section-h">All disclosed transactions</h2>` +
-    `<span class="panel-note">${fmtInt(m.txns.length)} rows · filed date desc · ${asOfNote(stamps)}</span></div>` +
+    `<span class="panel-note">${countOf(m.txns.length, "row", "rows")} · filed date desc · ${asOfNote(stamps)}</span></div>` +
     entityTxnTable(m.txns, {
       kind: "member",
       caption: `All disclosed transactions for ${m.name}`,
@@ -1025,13 +1025,27 @@ export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx,
     topTable +
     `</section>` +
     briefingCards([
-      { tag: "Disclosed transactions", title: `${fmtInt(m.txns.length)} reported transactions`, body: "Amounts are the ranges in the filing. Purchases and sales are disclosures, not a statement of current holdings.", tone: "gold" },
-      { tag: "Reporting window", title: `Published ${stamps.generatedAtDate}`, body: "Trade date and filing date are retained separately. Late and unparseable records stay identified in the data.", tone: "gold" },
+      { tag: "Disclosed transactions", title: countOf(m.txns.length, "reported transaction", "reported transactions"), body: "Amounts are the ranges in the filing. Purchases and sales are disclosures, not a statement of current holdings.", tone: "gold" },
+      { tag: "Reporting window", title: filedWindow(m), body: "Trade date and filing date are retained separately. Late and unparseable records stay identified in the data.", tone: "gold" },
       { tag: "Holdings coverage", title: "Annual holdings are not in this view", body: "Periodic transaction reports do not establish a portfolio. Annual holdings and reconciliation require annual financial-disclosure records.", tone: "green" },
     ]) +
     `</div>` +
     `</details>`
   );
+}
+
+/** "1 filing", "3 filings": a count and its noun, agreeing. */
+function countOf(n: number, one: string, many: string): string {
+  return `${fmtInt(n)} ${n === 1 ? one : many}`;
+}
+
+/** The member's own reporting window: the span of filing dates across its
+    machine-readable rows and its paper filings, never the site's publish date. */
+function filedWindow(m: { txns: readonly { filed: string }[]; paper: readonly { filed: string }[] }): string {
+  const dates = [...m.txns.map((r) => r.filed), ...m.paper.map((p) => p.filed)].filter((d) => !!d).sort();
+  if (dates.length === 0) return "No filings on record";
+  const first = dates[0]!, last = dates[dates.length - 1]!;
+  return first === last ? `Filed ${first}` : `Filed ${first} → ${last}`;
 }
 
 /** The Signals cell the /e/ route renders when the server join is not
@@ -1176,7 +1190,7 @@ export function congressTickerBody(t: TickerEntity, stamps: BuildStamps, ctx: Re
     `</div>` +
     `<section class="panel panel-wide" aria-labelledby="recent-h">` +
     `<div class="panel-head"><h2 id="recent-h" class="section-h">Recent ${esc(t.ticker)} disclosures</h2>` +
-    `<span class="panel-note">${fmtInt(t.txns.length)} rows · filed date desc · ${asOfNote(stamps)}</span></div>` +
+    `<span class="panel-note">${countOf(t.txns.length, "row", "rows")} · filed date desc · ${asOfNote(stamps)}</span></div>` +
     entityTxnTable(t.txns, {
       kind: "ticker",
       caption: `Congressional disclosures mentioning ${t.ticker}`,

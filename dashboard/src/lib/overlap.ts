@@ -90,7 +90,17 @@ export type OverlapInstAbsence = "module-absent" | "artifact-missing" | "unmappe
     reason (the ticker page, which renders no PLANNED markup). */
 export interface OverlapRenderOpts {
   absence?: "badge" | "statement";
+  /** Print the §13107(c) sentence under the Congress half. Only a page whose
+      footer carries the 13F notice needs it (the holders page); a page with the
+      standard footer already states it once, in the footer. */
+  congressNotice?: boolean;
 }
+
+/** The congressional-disclosure use restriction, worded as the standard footer
+    words it (Base.astro `FOOTER_NOTICE.standard`, second sentence; pinned equal
+    by test/prelaunch-defects.test.ts). */
+export const CONGRESS_USE_NOTICE =
+  "Use of congressional disclosure reports for commercial purposes, credit decisions or solicitation is restricted by 5 U.S.C. §13107(c).";
 
 /** The plain-language absence statement, one per reason the band knows. */
 export function overlapAbsenceText(ticker: string, why: OverlapInstAbsence): string {
@@ -253,7 +263,9 @@ export function overlapBandHtml(b: OverlapBand, ctx: RenderCtx, filerHref: (cik:
     `<dl class="overlap-rows">` +
     `<div><dt>Buyers</dt><dd><span class="overlap-n c-buy">${fmtInt(b.buyers.length)}</span> ${memberList(b.buyers, ctx)} <span class="overlap-total c-num">${esc(b.buyTotal)}</span></dd></div>` +
     `<div><dt>Sellers</dt><dd><span class="overlap-n c-sell">${fmtInt(b.sellers.length)}</span> ${memberList(b.sellers, ctx)} <span class="overlap-total c-num">${esc(b.sellTotal)}</span></dd></div>` +
-    `</dl><p class="section-note">filed ${esc(b.window.start)} → ${esc(b.window.end)} · totals are statutory ranges</p></div>`;
+    `</dl><p class="section-note">filed ${esc(b.window.start)} → ${esc(b.window.end)} · totals are statutory ranges</p>` +
+    (opts.congressNotice ? `<p class="section-note overlap-notice">${esc(CONGRESS_USE_NOTICE)}</p>` : "") +
+    `</div>`;
   const inst = b.inst
     ? `<div class="overlap-half overlap-inst"><h3 class="section-h">Notable managers · quarter ended ${esc(b.inst.period)}</h3>` +
       `<dl class="overlap-rows">` +

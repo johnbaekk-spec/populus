@@ -81,8 +81,8 @@ test("T3.2 (LD15): the texts are the mock's playbooks.py word for word, except t
   assert.equal(by["leader"]!.evidence[0]!.url, "https://www.nber.org/papers/w34524");
   assert.equal(by["cmte"]!.trigger, "Cmte reads medium: a direct match in the committee table (v1). Context, never an allegation.");
   assert.equal(by["consensus"]!.verdict, "Weak. No study we found shows that names several hedge funds bought go on to outperform.");
-  assert.equal(by["overlap"]!.verdict, "No published evidence found. It stays descriptive: Populus uses no prices, so it cannot test the pairing itself.");
-  assert.equal(by["insider-opp"]!.verdict, "The strongest evidence of the set, and Populus cannot trigger it: there is no Form 4 data in Populus.");
+  assert.equal(by["overlap"]!.verdict, "No published evidence found. It stays descriptive: Public Filings uses no prices, so it cannot test the pairing itself.");
+  assert.equal(by["insider-opp"]!.verdict, "The strongest evidence of the set, and Public Filings cannot trigger it: there is no Form 4 data here yet.");
   // † edits
   assert.equal(by["best-ideas"]!.pattern, "A manager’s best idea — the position tilted furthest from its market weight — beat the rest of the book in the research below.");
   assert.equal(by["insider-opp"]!.name, "Opportunistic insider purchases");

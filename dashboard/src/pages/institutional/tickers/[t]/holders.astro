@@ -82,6 +82,9 @@ if (props.mode === "mapped") {
     }),
     ssrCtx,
     hrefOf,
+    /* The footer here is the 13F variant, so the Congress rows carry their
+       own §13107(c) line (DATA-LICENSE: the notice travels with the data). */
+    { congressNotice: true },
   );
   bodyHtml = tickerHoldersBody({
     ticker: props.ticker,

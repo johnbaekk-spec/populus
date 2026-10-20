@@ -211,7 +211,11 @@ test("R21 note: truncated + ZERO exclusions still renders the truncation clause"
     ambiguous_identity_exclusion_count: 0,
   });
   assert.match(html, /bounded by Public Filings/);
-  assert.match(html, /entity:x/, "the exact boundary is named");
+  // The exact boundary key stays on the element (data-boundary-key), out of the
+  // reader's words (pre-launch defects, 2026-10-20: "(iss:396)" read as noise);
+  // the value and manager count name the cut — test/prelaunch-defects.test.ts.
+  assert.match(html, /data-boundary-key="entity:x"/, "the exact boundary is recorded");
+  assert.doesNotMatch(html.replace(/<[^>]*>/g, ""), /entity:x/, "and not in the visible sentence");
   assert.doesNotMatch(html, /could not be attributed/);
 });
 

@@ -247,7 +247,10 @@ if (!inst.present) {
     `placeholder="filer name or CIK" aria-label="search filers by name or CIK — on this device" /></span></div>` +
     chipsHtml +
     /* LD19: the count stays visible; how to read and re-sort it is its tip */
-    `<p class="section-note"><span id="inst-index-count">${fmtInt(indexRows.length)} filers · sorted by reported 13(f) long value, largest first</span> ` +
+    /* The count is the note the client writes after every render, from the same
+       call that drew these rows: the server's table is already filtered to the
+       default chip, so a bare filer total above it contradicted the list. */
+    `<p class="section-note"><span id="inst-index-count">${esc(directory.note)}</span> ` +
     note(
       /* true of the reference rows (M3-D): the quarter is in the value's note */
       "Each value is the filer's latest period, named in the value's note. Choose a column header to re-sort.",

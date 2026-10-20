@@ -1626,7 +1626,7 @@ export function methodologyM1Tiles(stats: Record<string, any>, filedFrom: string
     {
       value: rowCount.toLocaleString("en-US"),
       label: `rows filed since ${filedFrom}`,
-      sub: "v_default_transactions",
+      sub: "superseded originals excluded",
       statsKeys: ["default.row_count"],
     },
     {
@@ -1639,7 +1639,7 @@ export function methodologyM1Tiles(stats: Record<string, any>, filedFrom: string
     {
       value: String(unresolved),
       label: "filer name-pairs unjoined",
-      sub: "bioguide_id = null",
+      sub: "no member match yet",
       muted: true,
       statsKeys: ["totals.unresolved_pair_count"],
     },
