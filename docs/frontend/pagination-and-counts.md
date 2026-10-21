@@ -136,6 +136,43 @@ viewport or by sink.
    cell's height (DESIGN-POLISH M2, coordinator decisions CD-1 and CD-5). No row
    may be unreachable: a table with no binder is never compacted.
 
+8. **Held rows live in JSON, never in the DOM (launch redesign LD26, R27).**
+   A table may go further than rule 7 and keep rows N+1.. out of the DOM
+   entirely. It then shows its first N rows, and the held rows reach the client
+   ONLY as JSON: an inline island (`<script type="application/json"
+   data-held-for="<tbody id>" data-held-render="<renderer name>">`, never
+   executable, serialized through `serializeInlineJson`) or a published
+   same-origin file the page already has. The binder is still the ONE binder of
+   rule 7 — `initDomDisclosures`, extended, never a second mechanism — and its
+   disclosure keeps rule 7's count grammar and step: "1–N of M nouns" from
+   `rangeOfTotal`, one press reveals every held row. Five things follow.
+   - **One row function, registered by name.** The server renders the first N
+     rows through a row function; the client renders the held rows through the
+     SAME function, registered with the binder under the island's
+     `data-held-render` name (`registerHeldRows`). A client that recomputes a
+     row from some other payload is prohibited, because it drifts.
+   - **The island carries every input the row function reads.** Rows, and any
+     table-wide input (a bar scale, a column set), and every per-row input the
+     server derived from its neighbours or from build context (an
+     overlaps-the-row-above flag, a budget-cut flag that changes a link). The
+     test of the rule is byte parity: for the same inputs, the binder's output
+     equals the server's row-function output, row for row.
+   - **No-JS reachability is preserved, never invented.** Where a reader
+     without JavaScript can reach the held rows today, a `<noscript>` element
+     AFTER the table holds a SECOND table of exactly those rows, rendered by the
+     same row function. A `<noscript>` never sits inside a `tbody` (the parser
+     hoists it out). With scripting on its content is inert text, so it costs
+     no DOM. Where a no-JS reader cannot see the rows today (a `hidden`
+     variant, a table whose Show-all needs a script), only the island ships.
+   - **The client never turns DOM text back into HTML.** It reads the island
+     with `JSON.parse` and writes rows only from the registered function's
+     output; it never reads a `<noscript>`'s text, and never moves
+     `textContent` into `innerHTML`.
+   - **Sort, filter and print cover every row.** A sort or filter over a held
+     table runs over all M rows of the island and shows the first N of the
+     result, and `beforeprint` renders and reveals every held row (restored on
+     `afterprint`).
+
 ## Changing this mechanism
 
 Add or amend an invariant here **before** editing the code, and add its test in
