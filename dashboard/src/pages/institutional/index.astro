@@ -185,7 +185,9 @@ if (!inst.present) {
        is what `headNotes` renders. The `<noscript>` stays visible here, because
        it is about scripting rather than about a column and no column note is
        the right home for it. */
-    `<p class="caveat-line"><noscript>Filtering by chip needs JavaScript; every manager is listed below regardless.</noscript></p>`;
+    /* launch M7b: true of the rows a reader without JavaScript gets — the
+       server's default view (the pressed chip, by value), not every manager */
+    `<p class="caveat-line"><noscript>Filtering by chip needs JavaScript; the rows below are the default view.</noscript></p>`;
   /* The page's figures are bound to ONE closed quarter — the newest whose
      45-day filing window has passed — never each filer's latest period folded
      into a falsely uniform total. The period comes from the concentration
