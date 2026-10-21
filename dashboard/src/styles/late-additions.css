@@ -1504,8 +1504,10 @@ details.si-tier > summary > .si-tier-h { display: inline; }
    control's own, wider --hit-min when it shifts a square, and a box sized by
    that would grow on every run. */
 @media (max-width: 720px) {
-  /* every tip (a mark or a label) and every disclosure summary */
-  .note-btn { min-height: calc(2 * var(--hit-half)); min-width: calc(2 * var(--hit-half)); }
+  /* every tip (a mark or a label) and every disclosure summary — not a
+     table head's: a card's head is folded, and while focus unfolds it its
+     triggers keep the square clamped to the head row (holders L9, G12) */
+  .note-btn:not(thead .note-btn) { min-height: calc(2 * var(--hit-half)); min-width: calc(2 * var(--hit-half)); }
   summary { min-height: calc(2 * var(--hit-half)); }
   .etable td.c-pos details.holding-group-rows > summary { display: inline-flex; align-items: center; }
   .ranking-options > summary { min-width: calc(2 * var(--hit-half)); }
