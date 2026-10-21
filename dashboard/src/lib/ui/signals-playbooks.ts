@@ -257,7 +257,7 @@ export const TRIGGER_COLUMNS = ["Ticker", "Member · owner", "Side", "Range", "T
     and its own receipt column. Explicit table roles at every width (R40) and
     the ledger role classes, so the phone card (M1) keys on them. */
 export function triggerTableHtml(p: Playbook, rows: readonly TriageRow[], ctx: RenderCtx, to: PlaybooksTargets = FULL_PAGE): string {
-  const head = TRIGGER_COLUMNS.map((c, i) => `<th scope="col" role="columnheader" class="${TRIGGER_CELL_CLASSES[i]}"><span class="visually-hidden">${esc(c)}</span></th>`).join("");
+  const head = TRIGGER_COLUMNS.map((c, i) => `<th scope="col" role="columnheader" class="${TRIGGER_CELL_CLASSES[i]}" data-label="${esc(c)}"><span class="visually-hidden">${esc(c)}</span></th>`).join("");
   const body = rows
     .map((r) => {
       const f = congressLineFields(r.lead.txn, ctx);
@@ -416,7 +416,7 @@ export function signalsPlaybooksMethodHtml(): string {
     `<p class="metho-body">The leadership roster (v${ROSTER_VERSION}, from ${ROSTER_FROM}, every row checked ${ROSTER_CHECKED} against its primary source):</p>` +
     `<div class="table-scroll"><table class="etable etable-compact">` +
     `<caption class="visually-hidden">Leadership roster, version ${ROSTER_VERSION}</caption>` +
-    `<thead><tr><th scope="col" class="c-secondary">Post</th><th scope="col" class="c-secondary c-flex">Member</th><th scope="col" class="c-num">From</th><th scope="col" class="c-num">To</th><th scope="col" class="c-secondary">Dated by</th><th scope="col" class="c-secondary">Source</th></tr></thead>` +
+    `<thead><tr><th scope="col" class="c-secondary" data-label="Post">Post</th><th scope="col" class="c-secondary c-flex" data-label="Member">Member</th><th scope="col" class="c-num" data-label="From">From</th><th scope="col" class="c-num" data-label="To">To</th><th scope="col" class="c-secondary" data-label="Dated by">Dated by</th><th scope="col" class="c-secondary" data-label="Source">Source</th></tr></thead>` +
     `<tbody>${roster}</tbody></table></div>` +
     `</section>`
   );

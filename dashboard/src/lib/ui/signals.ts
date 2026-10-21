@@ -709,7 +709,7 @@ export function ruleBookHtml(artifact: SignalArtifact): string {
        flexible column. */
     `<div class="table-scroll"><table class="etable etable-compact si-table" data-multiline>` +
     `<caption class="visually-hidden">Signal rules — family, kind, exact rule, why it is informative, hits in the retained window, status</caption>` +
-    `<thead><tr><th scope="col">Family</th><th scope="col" class="c-kind">Kind</th><th scope="col">Rule</th><th scope="col">Why it's informative</th><th scope="col" class="c-num">Hits</th><th scope="col" class="c-num">Status</th></tr></thead>` +
+    `<thead><tr><th scope="col" data-label="Family">Family</th><th scope="col" class="c-kind" data-label="Kind">Kind</th><th scope="col" data-label="Rule">Rule</th><th scope="col" data-label="Why it&#39;s informative">Why it's informative</th><th scope="col" class="c-num" data-label="Hits">Hits</th><th scope="col" class="c-num" data-label="Status">Status</th></tr></thead>` +
     `<tbody>${rows.join("\n")}</tbody></table></div>` +
     `<p class="section-note">Thresholds are calibrated per kind and versioned; a kind whose measured volume falls outside its declared bounds is <span class="si-late">WITHHELD</span> with a typed reason, never emitted anyway. ` +
     `Institutional kinds wait on closed 13F periods and are not simulated. Every hit on <a href="/signals/">/signals</a> opens its rule from its kind word.</p>` +
@@ -1719,7 +1719,7 @@ export function committeeDirectHtml(): string {
     `<p class="metho-body si-cmte-context">${esc(COMMITTEE_CAVEAT)}</p>` +
     `<div class="table-scroll"><table class="etable etable-compact si-direct-table">` +
     `<caption class="visually-hidden">Committee direct-match SIC ranges, version ${COMMITTEE_DIRECT_VERSION}</caption>` +
-    `<thead><tr><th scope="col" class="c-ticker">Committee</th><th scope="col" class="c-secondary c-flex">Name</th><th scope="col" class="c-num">Direct SIC ranges</th></tr></thead>` +
+    `<thead><tr><th scope="col" class="c-ticker" data-label="Committee">Committee</th><th scope="col" class="c-secondary c-flex" data-label="Name">Name</th><th scope="col" class="c-num" data-label="Direct SIC ranges">Direct SIC ranges</th></tr></thead>` +
     `<tbody>${rows}</tbody></table></div>` +
     `</section>`
   );
@@ -1928,7 +1928,7 @@ export function memberSignalsPanel(artifact: SignalArtifact, bioguide: string, _
     `<span class="panel-note">${note(`${artifact.lagCaveat}${lifecycleNote}`, { scope: "member-signals-foot" }, "lag", { trigger: "label", textHtml: `last ${fmtInt(artifact.retentionDays)} days` })} · <a href="/signals/">all signals ↗</a></span></div>` +
     `<div class="table-scroll"><table class="etable etable-compact">` +
     `<caption class="visually-hidden">Signals for this member</caption>` +
-    `<thead><tr><th scope="col" class="c-ticker">Ticker</th><th scope="col" class="c-secondary c-flex">What</th><th scope="col" class="c-kind">Kind</th><th scope="col" class="c-num">Filed</th><th scope="col" class="c-num">Size</th><th scope="col" class="c-src">Src</th></tr></thead>` +
+    `<thead><tr><th scope="col" class="c-ticker" data-label="Ticker">Ticker</th><th scope="col" class="c-secondary c-flex" data-label="What">What</th><th scope="col" class="c-kind" data-label="Kind">Kind</th><th scope="col" class="c-num" data-label="Filed">Filed</th><th scope="col" class="c-num" data-label="Size">Size</th><th scope="col" class="c-src" data-label="Src">Src</th></tr></thead>` +
     `<tbody>${rows}</tbody></table></div>` +
     `</section>`
   );

@@ -1563,7 +1563,7 @@ export function congressTickerBody(t: TickerEntity, stamps: BuildStamps, ctx: Re
       : `<div class="table-scroll"><table class="etable etable-compact"><caption class="visually-hidden">Members disclosing ${esc(
           t.ticker,
         )}, trailing 12 months</caption>` +
-        `<thead><tr><th scope="col" class="c-member c-flex">Member</th><th scope="col" class="c-num">Buys</th><th scope="col" class="c-num">Sales</th><th scope="col" class="c-num">Flow range</th></tr></thead>` +
+        `<thead><tr><th scope="col" class="c-member c-flex" data-label="Member">Member</th><th scope="col" class="c-num" data-label="Buys">Buys</th><th scope="col" class="c-num" data-label="Sales">Sales</th><th scope="col" class="c-num" data-label="Flow range">Flow range</th></tr></thead>` +
         `<tbody>${memberRows}</tbody></table></div>`) +
     cardFoot({ short: "Counts of filed transactions", full: "Counts are filed transactions, not net positions; disclosed ranges cannot be netted into a position.", scope: "ticker-members-foot", key: "counts" }) +
     `</section>` +
@@ -1944,7 +1944,7 @@ function memberV2Parts(
       ? `<p class="section-note">None in the last 90 days${recent.unrankable > 0 ? ` (${fmtInt(recent.unrankable)} rows disclose no lower bound)` : ""}.</p>`
       : `<div class="table-scroll"><table class="etable etable-compact" role="table" data-card="generic">` +
         `<caption class="visually-hidden">Largest recent disclosures for ${esc(m.name)}</caption>` +
-        `<thead role="rowgroup"><tr role="row">${thHtml({ label: "Filed", cls: "c-num", order: "descending" })}<th scope="col" class="c-ticker c-flex" role="columnheader">Asset</th><th scope="col" class="c-kind" role="columnheader">Side</th><th scope="col" class="c-num" role="columnheader">Amount</th><th scope="col" class="c-src" role="columnheader">Src</th></tr></thead>` +
+        `<thead role="rowgroup"><tr role="row">${thHtml({ label: "Filed", cls: "c-num", order: "descending" })}<th scope="col" class="c-ticker c-flex" role="columnheader" data-label="Asset">Asset</th><th scope="col" class="c-kind" role="columnheader" data-label="Side">Side</th><th scope="col" class="c-num" role="columnheader" data-label="Amount">Amount</th><th scope="col" class="c-src" role="columnheader" data-label="Src">Src</th></tr></thead>` +
         `<tbody role="rowgroup">${recentRows}</tbody></table></div>` +
         (recent.unrankable > 0 ? `<p class="section-note">${fmtInt(recent.unrankable)} rows with no lower bound cannot rank.</p>` : "");
 

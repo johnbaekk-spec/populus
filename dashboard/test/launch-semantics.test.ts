@@ -205,6 +205,42 @@ test("R40: every parity surface, through the layout's function, cards every tabl
   assert.ok(tables >= 30, `the surfaces carry tables to check (${tables})`);
 });
 
+/** Every body number of a non-feed card table that names no column (M4): the
+    ≤720px card prints a cell's `data-label` before its value, and a bare
+    "12" means nothing once the head folds away. */
+function unlabelledNumbers(html: string): string[] {
+  const out: string[] = [];
+  let n = 0;
+  for (const table of walk(parse(html))) {
+    if (table.tagName !== "table" || !table.hasAttribute("data-card") || table.getAttribute("data-card") === "feed") continue;
+    n += 1;
+    for (const body of table.children.filter((c) => c.tagName === "tbody")) {
+      for (const tr of body.children.filter((c) => c.tagName === "tr")) {
+        for (const cell of tr.children) {
+          const cls = ` ${cell.getAttribute("class") ?? ""} `;
+          if (!/\sc-num\s/.test(cls) || (Number.parseInt(cell.getAttribute("colspan") ?? "1", 10) || 1) > 1) continue;
+          if (!(cell.getAttribute("data-label") ?? "").trim()) out.push(`table #${n}: "${cell.textContent.trim().slice(0, 24)}"`);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+test("M4 (launch review): every number of every card table on every parity surface names its column (data-label), whether its head came from thHtml or by hand; a head stripped of its label fails", async () => {
+  const all = await surfaces();
+  let numbers = 0;
+  for (const [name, html] of Object.entries(all)) {
+    const out = withTableRoles(html);
+    numbers += (out.match(/class="[^"]*\bc-num\b[^"]*"/g) ?? []).length;
+    assert.deepEqual(unlabelledNumbers(out), [], `${name}: a card number without its column's label`);
+  }
+  assert.ok(numbers > 300, `the surfaces carry numbers to check (${numbers})`);
+  /* control: the Members-disclosing table (congress.ts) with its hand-written heads unlabelled */
+  const planted = withTableRoles(all["congressTickerBody"]!.replace(/(<th scope="col" class="c-num") data-label="[^"]*"/g, "$1"));
+  assert.ok(unlabelledNumbers(planted).length >= 3, "Buys, Sales and Flow range lose their labels");
+});
+
 /** The marking property of a card row's main link (M2): the first link of the
     row's main cell — the member, else the filer, position or issuer, else the
     ticker; never a receipt, never a tip's link — is the ONE link its renderer
