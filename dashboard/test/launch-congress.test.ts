@@ -423,6 +423,10 @@ test("R18: every ledger figure equals an independent recomputation from the rows
     ["E-filings read", "95.3%", "3,061 paper not yet read"],
   ]);
   assert.match(items[2]!.noteHtml!, /Filed late: 2 of 5 rows with a late status \(40\.0%\)/, "N of M in the tip");
+  /* launch review H8: the Trades figure counts every row, so its tip names All rows, never the default (With ticker) view */
+  assert.equal(congressLedgerFigures([txn({ ticker: null }), txn({})], { buildDate: BUILD_DATE, filedFrom: "2014" }).trades, 2, "a row without a ticker counts in Trades");
+  assert.match(items[0]!.noteHtml!, /^Transactions in All rows \(with or without a ticker; the default With ticker view shows only those with one\), filed since 2014:/);
+  assert.doesNotMatch(items[0]!.noteHtml!, /in the default view/, "re-planted control: the reviewed wording is gone");
   assert.match(items[1]!.noteHtml!, /2026-07-25 to 2026-08-23 inclusive/);
   assert.match(items[1]!.noteHtml!, /and 1 filer not yet matched to a member record/);
   assert.match(items[3]!.noteHtml!, /House: 5,600 of 5,960 e-filings read \(93\.9%\)\. Senate: 1,828 of 1,828 \(100%\)\. 3,061 paper filings are counted but not machine-read until OCR/);

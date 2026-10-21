@@ -843,7 +843,9 @@ export function congressLedgerItems(
       detail: `since ${f.filedFrom}`,
       subKind: "date",
       noteHtml:
-        `Transactions in the default view, filed since ${esc(f.filedFrom)}: active filings minus the originals an amendment replaced. ` +
+        /* launch review H8: the figure counts every row — All rows — while
+           the feed's default view is With ticker, a subset */
+        `Transactions in All rows (with or without a ticker; the default With ticker view shows only those with one), filed since ${esc(f.filedFrom)}: active filings minus the originals an amendment replaced. ` +
         `<a href="/methodology/#defaults">Default view ↗</a>`,
     },
     {
