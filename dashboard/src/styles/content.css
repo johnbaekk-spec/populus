@@ -401,7 +401,7 @@
 @media (max-width: 720px) {
   /* the contents menu sticks below the header and scrolls sideways as one
      named chip row; anchors land below both */
-  .metho-toc { position: sticky; top: var(--masthead-h, 0px); z-index: 4; flex-wrap: nowrap; overflow-x: auto; gap: 8px; margin: 16px calc(-1 * var(--gutter)) 0; padding: 8px var(--gutter); background: var(--paper); border-bottom: 1px solid var(--rule2); scrollbar-width: none; }
+  .metho-toc { position: sticky; top: var(--masthead-h, 0px); z-index: 4; flex-wrap: nowrap; overflow-x: auto; gap: 8px; margin: 16px 0 0; padding: 8px 0; background: var(--paper); border-bottom: 1px solid var(--rule2); scrollbar-width: none; }
   .metho-toc a { flex: 0 0 auto; white-space: nowrap; }
   .methodology [id] { scroll-margin-top: calc(var(--masthead-h, 0px) + 64px); }
   .metho-section { margin-top: 24px; padding-top: 12px; }
