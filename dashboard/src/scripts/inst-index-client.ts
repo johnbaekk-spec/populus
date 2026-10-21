@@ -768,9 +768,9 @@ function bindHeldTargets(): void {
     root.addEventListener("click", (ev) => {
       const e = ev as { target?: { closest?: (s: string) => Element | null }; defaultPrevented?: boolean; preventDefault?: () => void } | undefined;
       if (e?.defaultPrevented) return;
-      const a = e?.target?.closest?.('a[href^="#"]');
+      const a = e?.target?.closest?.("a[href]");
       const href = a?.getAttribute("href") ?? "";
-      if (href.length < 2) return;
+      if (!href.startsWith("#") || href.length < 2) return;
       const el = revealHeldTarget(heldHashId(href));
       if (!el) return;
       e?.preventDefault?.();

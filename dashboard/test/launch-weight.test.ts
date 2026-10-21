@@ -400,3 +400,116 @@ test("rule 8 + R40 (launch integration): the member page's compact table draws i
     restore();
   }
 });
+
+/* ---------------------------------------------------------------------------
+   Launch integration: a deep link or an in-page link to a HELD row opens what
+   holds it (`revealHeldTarget`, bound by `initDomDisclosures` on every page
+   that uses the binder — the member page and /e/ among them; the Signals
+   reveal sequence calls it after its own pagers). */
+
+import { compactDisclosure } from "../src/lib/format.ts";
+import { heldHoldersHtml } from "../src/lib/ui/institutional.ts";
+import { revealHeldTarget } from "../src/scripts/inst-index-client.ts";
+
+/** A compact held table of seven rows, three shown, each row carrying an id. */
+function deepTable(render = "deep-rows"): string {
+  const rows = Array.from({ length: 7 }, (_, i) => ({ n: i }));
+  const p = heldTableParts({ rootId: "deep-tbody", render, rowFn: deepRow, rows, shown: 3, shared: { tag: "row" } });
+  return (
+    `<p><a id="to-held" href="#deep-r5">row 6</a> <a id="to-shown" href="#deep-r1">row 2</a> <a id="to-none" href="#deep-r99">nothing</a></p>` +
+    `<table class="etable" role="table" data-card="generic"><thead role="rowgroup"><tr role="row"><th scope="col" data-label="N">N</th></tr></thead>` +
+    `<tbody id="deep-tbody" role="rowgroup" data-collapsed="true" data-held="json">${p.bodyRows}</tbody></table>${p.island}` +
+    compactDisclosure({ rootId: "deep-tbody", total: 7, shown: 3, noun: "rows", domBacked: true })
+  );
+}
+function deepRow(r: { n: number }, i: number, s: { tag: string }): string {
+  return `<tr id="deep-r${r.n}" role="row"><td role="cell">${s.tag} ${r.n + 1} @${i}</td></tr>`;
+}
+function withWindow<T>(hash: string, run: () => T): T {
+  const g = globalThis as unknown as Record<string, unknown>;
+  const prev = { window: g.window, location: g.location };
+  g.window = { addEventListener() {} };
+  g.location = { hash };
+  try {
+    return run();
+  } finally {
+    g.window = prev.window;
+    g.location = prev.location;
+  }
+}
+
+test("deep links (launch integration): an in-page link to a held row expands its compact table and the row is there; controls: a shown row, a missing id, an unregistered renderer", () => {
+  registerHeldRows("deep-rows", deepRow);
+  {
+    const { doc, restore } = installDom(deepTable());
+    try {
+      withWindow("", () => initDomDisclosures());
+      assert.equal(doc.getElementById("deep-r5"), null, "the row is held: not in the DOM");
+      doc.getElementById("to-shown")!.bubbleClick();
+      assert.equal(doc.getElementById("deep-tbody")!.getAttribute("data-collapsed"), "true", "control: a link to a shown row is left to the browser");
+      doc.getElementById("to-none")!.bubbleClick();
+      assert.equal(doc.getElementById("deep-tbody")!.getAttribute("data-collapsed"), "true", "control: an id no held row carries expands nothing");
+      doc.getElementById("to-held")!.bubbleClick();
+      assert.ok(doc.getElementById("deep-r5"), "the held row is drawn");
+      assert.equal(doc.getElementById("deep-tbody")!.getAttribute("data-collapsed"), "false", "through the table's own Show all");
+      assert.equal(doc.querySelector(".compact-disclosure")!.getAttribute("data-compact-expanded"), "1", "the control is in step");
+      assert.equal(doc.getElementById("deep-tbody")!.children.length, 7, "every held row, once");
+    } finally {
+      restore();
+    }
+  }
+  {
+    // a hash on load lands the same way
+    const { doc, restore } = installDom(deepTable());
+    try {
+      withWindow("#deep-r6", () => initDomDisclosures());
+      assert.ok(doc.getElementById("deep-r6"), "a hash naming a held row draws it on load");
+    } finally {
+      restore();
+    }
+  }
+  {
+    // control: no registered renderer — nothing claims a row it cannot draw
+    const { doc, restore } = installDom(deepTable("deep-unregistered"));
+    try {
+      withWindow("", () => initDomDisclosures());
+      assert.equal(revealHeldTarget("deep-r5"), null);
+      assert.equal(doc.getElementById("deep-tbody")!.getAttribute("data-collapsed"), "true");
+    } finally {
+      restore();
+    }
+  }
+});
+
+test("deep links (launch integration): a link to a row a holders list holds opens the list and draws through it", () => {
+  const rows = Array.from({ length: 60 }, (_, i) => ({ rank: i + 1 }));
+  const rowHtml = (r: { rank: number }): string => `<tr id="h-${r.rank}" role="row"><td role="cell" class="c-num">${r.rank}</td></tr>`;
+  const table = (body: string, caption: string, id: string | null): string =>
+    `<table class="etable" role="table" data-card="holders"><caption>${caption}</caption><thead role="rowgroup"><tr role="row"><th scope="col" data-label="#">#</th></tr></thead><tbody role="rowgroup"${id ? ` id="${id}"` : ""}>${body}</tbody></table>`;
+  const html = `<a id="to-h40" href="#h-40">holder 40</a>` + heldHoldersHtml({ rootId: "deep-holders", render: "deep-holder", rows, rowHtml, ctx: null, table, caption: "Holders" });
+  registerHeldRows("deep-holder", (r: { rank: number }) => rowHtml(r), { text: (r: { rank: number }) => String(r.rank) });
+  /* with scripting on, a <noscript>'s content is inert text, not elements;
+     the mini DOM parses it, so the scripted page is mounted without it */
+  const { doc, restore } = installDom(html.replace(/<noscript>[\s\S]*?<\/noscript>/g, ""));
+  try {
+    withWindow("", () => initDomDisclosures());
+    assert.equal(doc.getElementById("h-40"), null, "holder 40 is held");
+    doc.getElementById("to-h40")!.bubbleClick();
+    assert.ok(doc.getElementById("h-40"), "the link draws through it");
+    assert.ok(doc.querySelector("details.tk-holders-more")!.hasAttribute("open"), "with its disclosure open");
+    assert.equal(doc.getElementById("deep-holders")!.querySelectorAll("tr").length, 25, "one step: holders 26–50");
+  } finally {
+    restore();
+  }
+});
+
+test("deep links (launch integration): every page that holds rows binds them — the member page, /e/, the ticker page and the holders page call initDomDisclosures; Signals falls back to the binder after its pagers", () => {
+  const SRC = path.resolve(import.meta.dirname, "..", "src");
+  for (const page of ["pages/congress/members/[bioguide].astro", "pages/e/index.astro", "pages/tickers/[ticker].astro", "pages/institutional/tickers/[t]/holders.astro"]) {
+    const src = readFileSync(path.join(SRC, page), "utf-8");
+    assert.match(src, /initDomDisclosures\(\);/, `${page} binds its held rows (and their deep links)`);
+    assert.ok(src.indexOf("registerHeldRows(") < src.lastIndexOf("initDomDisclosures();"), `${page} registers before it binds`);
+  }
+  const sig = readFileSync(path.join(SRC, "scripts", "signals-client.ts"), "utf-8");
+  assert.equal((sig.match(/overlap\?\.materialize\(id\) \?\? revealHeldTarget\(id\)/g) ?? []).length, 2, "the hash and the in-page links both fall back to the binder");
+});
