@@ -252,6 +252,12 @@ test("H2: the quarter readout counts purchases and sales (never 'trades'), state
   // re-planted controls: a build date past the quarter end closes it; no build date states nothing about openness
   assert.doesNotMatch(quarterReadout(cur, "2026-10-01"), /so far/);
   assert.doesNotMatch(quarterReadout(cur), /so far/);
+  /* launch gate (SC5): a quarter with nothing drawn says so once; with exchange
+     rows it names what is absent and still counts what is not drawn */
+  const none = { q: "26Q4", quarterEnd: "2026-12-31", buy: { kind: "empty" } as const, sell: { kind: "empty" } as const };
+  assert.equal(quarterReadout(none, "2026-10-19"), "26Q4 so far (inside the 45-day filing window): none disclosed");
+  assert.equal(quarterReadout({ ...none, other: 2 }, "2026-10-19"), "26Q4 so far (inside the 45-day filing window): no purchases or sales · 2 exchange/unparsed-side rows not drawn");
+  assert.doesNotMatch(quarterReadout({ ...none, other: 2 }), /none disclosed/, "control: exchanges are never read as nothing disclosed");
   // both callers render the build-dated readout
   for (const html of [memberBody(member(4, { txns: rows }), STAMPS, CTX, 0, deps()), congressTickerBody({ ticker: "T1", txns: rows }, STAMPS, CTX)]) {
     assert.match(html, /26Q3 so far \(inside the 45-day filing window\): 1 purchase or sale/);
@@ -337,7 +343,9 @@ test("R26: Profile only at 10+ trades; Sectors only with 2+ sectors (gap counts 
   // gap counts: one row without a ticker, one unresolved
   const gapRows = [...member(10).txns, txn(40, { ticker: null }), txn(41, { ticker: "ZZZ" })];
   const gap = memberBody(member(12, { txns: gapRows }), STAMPS, CTX, 0, deps({ resolveSector: (t: string) => (t === "ZZZ" ? { state: "unresolved-ticker" } : t === "T0" ? { state: "sector", sector: "energy" } : { state: "sector", sector: "manufacturing" }) }));
-  assert.match(visibleText(domOf(gap).querySelector(".sx-gap")!), /2 more without a sector: 1 no ticker, 1 unmatched/);
+  /* launch gate (SC5): the gap stays in view, its two causes in its tip */
+  assert.match(visibleText(domOf(gap).querySelector(".sx-gap")!), /2 more without a sector/);
+  assert.match(gap, /1 row has no ticker; 1 ticker is not matched to an SEC SIC code\. Neither is folded into a sector\./);
   // the dataset absent: a stated absence, not silence
   assert.match(memberBody(member(10), STAMPS, CTX, 0, deps({ resolveSector: null, sectorMeta: null })), /Sector data is not in this build/);
   // history: one filing → none; two → present

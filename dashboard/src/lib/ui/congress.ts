@@ -261,9 +261,17 @@ export function quarterReadout(q: { q: string; quarterEnd?: string; buy: SumRang
   const part = (s: SumRanges): string => (s.kind === "empty" ? "none" : sumRangesText(s));
   const open = asOf !== null && q.quarterEnd !== undefined && asOf < q.quarterEnd;
   const other = q.other ?? 0;
+  /* launch gate (SC5): a quarter with nothing drawn says so once — "0
+     purchases and sales · purchases none · sales none" stated it three times.
+     With exchange rows (not drawn) it names what is absent, and the suffix
+     below counts the rest. */
+  const empty = n === 0 && q.buy.kind === "empty" && q.sell.kind === "empty";
+  const facts = empty
+    ? (q.other ?? 0) > 0 ? "no purchases or sales" : "none disclosed"
+    : `${fmtInt(n)} ${n === 1 ? "purchase or sale" : "purchases and sales"} · purchases ${part(q.buy)} · sales ${part(q.sell)}`;
   return (
     `${q.q}${open ? " so far (inside the 45-day filing window)" : ""}: ` +
-    `${fmtInt(n)} ${n === 1 ? "purchase or sale" : "purchases and sales"} · purchases ${part(q.buy)} · sales ${part(q.sell)}` +
+    facts +
     (other > 0 ? ` · ${fmtInt(other)} exchange/unparsed-side ${other === 1 ? "row" : "rows"} not drawn` : "")
   );
 }
@@ -1921,7 +1929,15 @@ function memberV2Parts(
           )
           .join("\n")}</tbody></table></div>` +
         (gap > 0
-          ? `<p class="section-note sx-gap">${fmtInt(gap)} more without a sector: ${fmtInt(noTicker)} no ticker, ${fmtInt(unmatched)} unmatched</p>`
+          ? /* launch gate (SC5): the gap stays in view; its two causes open as a tip */
+            `<p class="section-note sx-gap">` +
+            note(
+              `${fmtInt(noTicker)} ${noTicker === 1 ? "row has" : "rows have"} no ticker; ${fmtInt(unmatched)} ${unmatched === 1 ? "ticker is" : "tickers are"} not matched to an SEC SIC code. Neither is folded into a sector.`,
+              { scope: "member-sectors" },
+              "sector-gap",
+              { trigger: "label", textHtml: `${fmtInt(gap)} more without a sector`, name: `${fmtInt(gap)} more without a sector` },
+            ) +
+            `</p>`
           : "") +
         `</section>`;
     }

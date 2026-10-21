@@ -341,6 +341,11 @@ test("R8 (LD8, D2): the drawer is #site-nav with each section's count as a sibli
   const nav = BASE_SRC.slice(BASE_SRC.indexOf('<nav class="site-nav"'), BASE_SRC.indexOf("</nav>", BASE_SRC.indexOf('<nav class="site-nav"')));
   assert.equal((nav.match(/<a\b/g) ?? []).length, 3, "the nav stays exactly three links");
   assert.equal((nav.match(/class="nav-count"/g) ?? []).length, 3, "one count per section, outside its link");
+  /* launch gate (SC5): no default view shows the counts or the sheet hint, so
+     the served HTML marks them `hidden`; the drawer's and sheet's `.open`
+     rules (author display, below) override the UA's [hidden] */
+  assert.equal((nav.match(/class="nav-count" hidden>/g) ?? []).length, 3, "each count is hidden until the drawer opens");
+  assert.match(BASE_SRC, /<span class="search-sheet-hint" hidden>\{searchHint\}<\/span>/, "the sheet hint is hidden until the sheet opens");
   assert.match(BASE_SRC, /congress: `\$\{fmtInt\(build\.txnCount\)\} trades`/, "Congress counts the build's transactions");
   assert.match(BASE_SRC, /const instFilers = build\.inst\.present \? build\.inst\.filers\.length : 0;/, "Institutional counts the 13F filers on record");
   assert.match(BASE_SRC, /\$\{fmtInt\(instFilers\)\} 13F filers/);

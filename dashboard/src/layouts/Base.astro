@@ -59,7 +59,12 @@ const pageBody = withTableRoles(await Astro.slots.render("default"));
    section shows a count computed here from the memoised build, as a SIBLING
    span after its link (so the nav stays exactly three links, link text without
    tags), shown only in the phone drawer. The search sheet's hint counts what
-   the search index is built from. No account control of any kind (D2). */
+   the search index is built from. No account control of any kind (D2).
+   Launch gate (SC5): both carry `hidden`, because neither is visible at page
+   load on any device — the drawer and the sheet open by script, and the CSS
+   that shows them there (media.css, `.open`) overrides the attribute. The
+   served HTML then says what a reader sees: the SC5 ruler counted these 17
+   words on every page although no default view shows them. */
 const signalArtifact = getSignalArtifact();
 const activeHits = signalArtifact.signals.filter((s) => s.status === "active").length;
 const instFilers = build.inst.present ? build.inst.filers.length : 0;
@@ -124,11 +129,11 @@ const FOOTER_NOTICE = {
           </a>
           <nav class="site-nav" id="site-nav" aria-label="Modules">
             <a href="/congress/" aria-current={active === "congress" ? "page" : undefined}>Congress</a>
-            <span class="nav-count">{navCounts.congress}</span>
+            <span class="nav-count" hidden>{navCounts.congress}</span>
             <a href="/institutional/" aria-current={active === "institutional" ? "page" : undefined}>Institutional</a>
-            {navCounts.institutional && <span class="nav-count">{navCounts.institutional}</span>}
+            {navCounts.institutional && <span class="nav-count" hidden>{navCounts.institutional}</span>}
             <a href="/signals/" aria-current={active === "signals" ? "page" : undefined}>Signals</a>
-            <span class="nav-count">{navCounts.signals}</span>
+            <span class="nav-count" hidden>{navCounts.signals}</span>
           </nav>
         </div>
         <div class="masthead-right">
@@ -147,7 +152,7 @@ const FOOTER_NOTICE = {
               aria-haspopup="listbox"
             />
             <kbd class="search-kbd" aria-hidden="true">/</kbd>
-            <span class="search-sheet-hint">{searchHint}</span>
+            <span class="search-sheet-hint" hidden>{searchHint}</span>
             <div class="search-panel" id="search-panel" hidden>
               <div id="search-panel-list" role="listbox" aria-label="Search results"></div>
               <div class="search-panel-foot">Search runs on this device.</div>

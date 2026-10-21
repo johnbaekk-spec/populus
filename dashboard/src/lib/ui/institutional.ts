@@ -1612,7 +1612,17 @@ export function tickerHoldersBody(i: TickerHoldersPageInputs): string {
     (i.window?.open ? s7Banner(i.window) : "") +
     `<section class="panel panel-wide" id="ticker-holders" aria-label="Holders ranked by value">` +
     `<div class="panel-head"><h2 class="section-h">Holders — quarter ended ${esc(t.period_of_report)}</h2>` +
-    `<span class="panel-note">ranked by reported value · Δ shares vs ${esc(t.prev_period ?? "the prior quarter")} · kind by shares</span></div>` +
+    /* launch gate (SC5, holders 296 vs 275 on 20261019.2): the method line
+       keeps the ranking basis and the comparison quarter in view; how the
+       change kind is read moves into its tip (no caveat leaves the page) */
+    `<span class="panel-note">by reported value · Δ shares vs ${esc(t.prev_period ?? "the prior quarter")}` +
+    noteFromHtml(
+      "Holders rank by reported value. The change kind — new, add, trim or exit — is read from the share count against the prior quarter, never from the reported value.",
+      { scope: "ticker-holders" },
+      "kind",
+      { trigger: "mark", name: "How the holders are ranked and the change read" },
+    ) +
+    `</span></div>` +
     table(list.slice(0, HOLDERS_VISIBLE).map(holdersPageRowHtml).join("\n"), paged ? `${caption}, ${rangeOfTotal(1, HOLDERS_VISIBLE, Math.max(list.length, t.holder_count), "holders")}` : caption, "ticker-holders-rows") +
     heldHoldersHtml({ rootId: "ticker-holders-held", render: HOLDERS_PAGE_HELD.render, rows: list, rowHtml: holdersPageRowHtml, ctx: null, table, caption, of: t.holder_count }) +
     /* launch review H1: the list keeps the top TICKER_HOLDERS_RANK_CAP; when
