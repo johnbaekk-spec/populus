@@ -127,9 +127,11 @@ const membersHtml = congressRankingSection(
   },
 );
 /* SIGNALS-CLARITY M3 (R16–R19): 36 trade months of purchases vs sales, both
-   variants (listed stocks, the default, and all asset types) rendered here from
+   variants (listed stocks, the default, and all asset types) built here from
    the full row set; `congress-sections.ts` flips `hidden` between them with no
-   fetch (L4). The build date is the window end and the completeness clock. */
+   fetch (L4) — launch F2: the views not shown at load ride as island data and
+   are drawn on first use. The build date is the window end and the
+   completeness clock. */
 const monthlyFlowHtml = monthlyFlowPanel(build.txns, build.generatedAtDate);
 /* Launch M3a (copy item congress-27, adapted): the † on an unjoined filer is
    the trigger of its own note on the row it marks, so its footnote line is
