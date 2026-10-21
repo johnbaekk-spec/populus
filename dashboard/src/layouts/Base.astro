@@ -65,12 +65,13 @@ const activeHits = signalArtifact.signals.filter((s) => s.status === "active").l
 const instFilers = build.inst.present ? build.inst.filers.length : 0;
 const navCounts = {
   congress: `${fmtInt(build.txnCount)} trades`,
-  institutional: instFilers > 0 ? `${fmtInt(instFilers)} 13F filers` : "",
+  /* launch review H10: every filer in the build, not a count of active ones */
+  institutional: instFilers > 0 ? `${fmtInt(instFilers)} 13F filers on record` : "",
   signals: `${fmtInt(activeHits)} hits · ${signalArtifact.coverageFrom} → ${signalArtifact.coverageTo}`,
 };
 const searchHint =
   `${fmtInt(build.members.length)} members · ${fmtInt(build.tickers.length)} tickers` +
-  (instFilers > 0 ? ` · ${fmtInt(instFilers)} 13F filers` : "");
+  (instFilers > 0 ? ` · ${fmtInt(instFilers)} 13F filers on record` : "");
 
 /* The footer's one notice sentence (docs/design/SIGNALS-CLARITY-DECISIONS.md,
    L1). It keeps, on every page, what the former notice paragraph carried: the
