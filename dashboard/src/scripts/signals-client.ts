@@ -32,8 +32,8 @@ import { hitsBodyHtml, hitsRangeText, sortHits, SIGNAL_HITS_PAGE_SIZE, SIGNAL_HI
 import { ctxOfCut, type HeldHits, type HitLine } from "../lib/ui/signals.ts";
 import type { Signal, SignalArtifact } from "../lib/signals.ts";
 import { NAMED_MOVES_MIN, NAMED_MOVES_STEP, namedMovesSliceKey } from "../lib/notable-moves.ts";
-import { moveDetailHtml, moveRowFrom, namedMovesBoundText, namedMovesRangeText, overlapLinkFor, parseNamedMovesTotals, type HeldMoves, type MoveDetail, type MoveRowData } from "../lib/ui/signals-institutional.ts";
-import { overlapBoundText, overlapRangeText } from "../lib/ui/signals-overlap.ts";
+import { congressBankBlockFrom, moveDetailHtml, moveRowFrom, namedMovesBoundText, namedMovesRangeText, overlapLinkFor, parseNamedMovesTotals, type HeldBank, type HeldMoves, type MoveDetail, type MoveRowData } from "../lib/ui/signals-institutional.ts";
+import { overlapBoundText, overlapItemHtml, overlapRangeText, type HeldOverlap, type HeldOverlapItem } from "../lib/ui/signals-overlap.ts";
 import { bindFit, type FitBinding, type FitElement, type FitTarget } from "./column-fit.ts";
 import { initTabs, selectTabFor, type TabsEnv } from "./tabs.ts";
 import { expandDomDisclosureFor } from "./inst-index-client.ts";
@@ -472,6 +472,17 @@ export function initNamedMoves(): MovesPager | null {
       for a name filter the page's own count, which is complete for that key. */
   const total = (): number => (name !== null ? matchingCount() : Number(totals[namedMovesSliceKey(kind, type)] ?? 0));
   const bank = document.getElementById("mv-bank");
+  /* launch M7a (D5): the blocks only held rows link wait in the bank's island */
+  const heldBank = readHeld<HeldBank>("mv-bank");
+  const bankBlockHtml = (k: string): string | null => {
+    const inPage = bank?.querySelector<HTMLElement>(`[data-cong="${k}"]`) ?? null;
+    if (inPage) return inPage.innerHTML;
+    const b = heldBank?.blocks.find((x) => x.k === k);
+    if (!b || !heldBank) return null;
+    /* the block's inner markup, as the bank would hold it */
+    const html = congressBankBlockFrom(b, ctxOfCut(heldBank.cut));
+    return html.slice(html.indexOf(">") + 1, html.lastIndexOf("</section>"));
+  };
   /** LD11: a held row's opened body, from the row's own data and its
       section's — the server's renderer, so the two cannot differ */
   const detailOf = (row: Element): MoveDetail => {
@@ -502,9 +513,9 @@ export function initNamedMoves(): MovesPager | null {
     }
     for (const ref of Array.from(root.querySelectorAll<HTMLElement>(".mv-cong[data-cong]"))) {
       if (ref.hasAttribute("data-cong-filled") || ref.closest("#mv-bank")) continue;
-      const block = bank?.querySelector<HTMLElement>(`[data-cong="${ref.getAttribute("data-cong") ?? ""}"]`) ?? null;
-      if (!block) continue;
-      ref.innerHTML = block.innerHTML;
+      const block = bankBlockHtml(ref.getAttribute("data-cong") ?? "");
+      if (block === null) continue;
+      ref.innerHTML = block;
       ref.setAttribute("data-cong-filled", "");
     }
   }
@@ -672,6 +683,8 @@ export interface OverlapPager {
       the page until it shows */
   reveal(item: Element): void;
   state(): { variant: "core" | "all"; rel: "all" | "same" | "opposite"; extra: number; shown: number };
+  /** launch M7a: render a carried name from the island (a hash naming it) */
+  materialize(id: string): Element | null;
 }
 
 type OvRel = "all" | "same" | "opposite";
@@ -698,30 +711,47 @@ export function initOverlap(): OverlapPager | null {
   let extra = 0;
   let shownNow = 0;
   const items = (): HTMLElement[] => Array.from(list.querySelectorAll<HTMLElement>("article.ov-item"));
-  const ordOf = (el: Element, v: 0 | 1): number | null => {
-    const raw = el.getAttribute(v === 0 ? "data-oc" : "data-oa");
-    return raw === null || raw === "" ? null : Number(raw);
-  };
-  const relOf = (el: Element, v: 0 | 1): string | null => el.getAttribute(v === 0 ? "data-core" : "data-all") || null;
+  /* launch M7a (D5, LD27): the carried names past the first view wait in the
+     island and render through `overlapItemHtml` when a view shows them; a
+     view is read over the page's names and the island's alike */
+  type OvEntry = { id: string; core: string | null; all: string | null; oc: number | null; oa: number | null };
+  const held = readHeld<HeldOverlap>("ov-list");
+  const fromEl = (el: Element): OvEntry => ({
+    id: el.getAttribute("id") ?? "",
+    core: el.getAttribute("data-core") || null,
+    all: el.getAttribute("data-all") || null,
+    oc: el.getAttribute("data-oc") ? Number(el.getAttribute("data-oc")) : null,
+    oa: el.getAttribute("data-oa") ? Number(el.getAttribute("data-oa")) : null,
+  });
+  const pendingItems = (): HeldOverlapItem[] => (held ? held.items.filter((it) => list.querySelector(`#${it.id}`) === null) : []);
+  const fromHeld = (it: HeldOverlapItem): OvEntry => ({ id: it.id, core: it.core?.rel ?? null, all: it.all.rel, oc: it.ord.core, oa: it.ord.all });
+  const entries = (): OvEntry[] => [...items().map(fromEl), ...pendingItems().map(fromHeld)];
+  function materialize(ids: ReadonlySet<string>): void {
+    const take = pendingItems().filter((it) => ids.has(it.id));
+    if (take.length === 0 || !held) return;
+    list!.insertAdjacentHTML("beforeend", take.map((it) => overlapItemHtml(it.core, it.all, it.ord, held.q, ctxOfCut(held.cut), false)).join("\n"));
+  }
+  const ordOf = (e: OvEntry, v: 0 | 1): number | null => (v === 0 ? e.oc : e.oa);
+  const relOf = (e: OvEntry, v: 0 | 1): string | null => (v === 0 ? e.core : e.all);
   /** The active view: its carried names in the variant's order, the length of
       the run the page carries from the view's first name (a view is a
       contiguous run of the variant's order: same, then opposite, then mixed),
       and its true total. */
-  function view(): { inView: HTMLElement[]; run: number; total: number } {
+  function view(): { inView: OvEntry[]; run: number; total: number } {
     const n = totals.all[variant];
     const sm = totals.same[variant];
     const op = totals.opposite[variant];
     const start = rel === "opposite" ? sm : 0;
     const total = rel === "all" ? n : rel === "same" ? sm : op;
-    const inView = items()
-      .filter((el) => {
-        const r = relOf(el, variant);
+    const inView = entries()
+      .filter((e) => {
+        const r = relOf(e, variant);
         return r !== null && (rel === "all" || r === rel);
       })
       .sort((a, b) => ordOf(a, variant)! - ordOf(b, variant)!);
     let run = 0;
-    for (const el of inView) {
-      if (ordOf(el, variant) === start + run) run++;
+    for (const e of inView) {
+      if (ordOf(e, variant) === start + run) run++;
       else break;
     }
     return { inView, run, total };
@@ -730,12 +760,14 @@ export function initOverlap(): OverlapPager | null {
     const { inView, run, total } = view();
     const want = Math.min(run, step + extra);
     shownNow = want;
+    materialize(new Set(inView.slice(0, want).map((e) => e.id)));
     /* the list in the variant's order (the other variant's names after) */
     const all = items();
-    const sorted = [...all].sort((a, b) => (ordOf(a, variant) ?? Infinity) - (ordOf(b, variant) ?? Infinity) || all.indexOf(a) - all.indexOf(b));
+    const ord = (el: Element): number => ordOf(fromEl(el), variant) ?? Infinity;
+    const sorted = [...all].sort((a, b) => ord(a) - ord(b) || all.indexOf(a) - all.indexOf(b));
     if (sorted.some((el, i) => el !== all[i])) (list as unknown as { append(...n: Element[]): void }).append(...sorted);
-    const shown = new Set(inView.slice(0, want));
-    for (const el of all) el.hidden = !shown.has(el);
+    const shown = new Set(inView.slice(0, want).map((e) => e.id));
+    for (const el of all) el.hidden = !shown.has(el.getAttribute("id") ?? "");
     const v = variant === 0 ? "core" : "all";
     for (const sp of Array.from(section!.querySelectorAll<HTMLElement>("[data-v]"))) sp.hidden = sp.getAttribute("data-v") !== v;
     for (const b of Array.from(section!.querySelectorAll<HTMLElement>("button[data-ov-rel]"))) b.setAttribute("aria-pressed", String(b.getAttribute("data-ov-rel") === rel));
@@ -758,9 +790,11 @@ export function initOverlap(): OverlapPager | null {
   /** the name's place in the active view's carried run, or -1 */
   const reach = (item: Element): number => {
     const { inView, run } = view();
-    const at = inView.indexOf(item as HTMLElement);
+    const id = item.getAttribute("id");
+    const at = inView.findIndex((e) => e.id === id);
     return at >= 0 && at < run ? at : -1;
   };
+  const relOfEl = (item: Element, v: 0 | 1): string | null => relOf(fromEl(item), v);
   section.addEventListener("click", (ev) => {
     const btn = (ev?.target as HTMLElement | undefined)?.closest?.("button[data-ov-rel], #ov-broad, #ov-more") as HTMLElement | null | undefined;
     if (!btn) return;
@@ -782,17 +816,21 @@ export function initOverlap(): OverlapPager | null {
         rel = "all";
         extra = 0;
       }
-      if (reach(item) < 0) rel = (relOf(item, variant) as OvRel | null) === "same" || relOf(item, variant) === "opposite" ? (relOf(item, variant) as OvRel) : "all";
-      if (reach(item) < 0 && relOf(item, variant === 0 ? 1 : 0) !== null) {
+      if (reach(item) < 0) rel = (relOfEl(item, variant) as OvRel | null) === "same" || relOfEl(item, variant) === "opposite" ? (relOfEl(item, variant) as OvRel) : "all";
+      if (reach(item) < 0 && relOfEl(item, variant === 0 ? 1 : 0) !== null) {
         variant = variant === 0 ? 1 : 0;
         rel = "all";
-        if (reach(item) < 0) rel = relOf(item, variant) === "same" || relOf(item, variant) === "opposite" ? (relOf(item, variant) as OvRel) : "all";
+        if (reach(item) < 0) rel = relOfEl(item, variant) === "same" || relOfEl(item, variant) === "opposite" ? (relOfEl(item, variant) as OvRel) : "all";
       }
       const at = reach(item);
       if (at >= step + extra) extra = at + 1 - step;
       render(true);
     },
     state: () => ({ variant: variant === 0 ? "core" : "all", rel, extra, shown: shownNow }),
+    materialize(id: string): Element | null {
+      materialize(new Set([id]));
+      return list!.querySelector(`#${id}`);
+    },
   };
 }
 
@@ -963,8 +1001,8 @@ export function hashTargetId(hash: string): string {
     sequence (a row opens, a hidden pane is selected, a held move shows). */
 export function revealHash(hash: string): Element | null {
   const id = hashTargetId(hash);
-  /* launch M7a: a held move row is rendered from its island first */
-  return id ? revealTarget(document.getElementById(id) ?? moves?.materialize(id) ?? null) : null;
+  /* launch M7a: a held move row or Overlap name is rendered from its island first */
+  return id ? revealTarget(document.getElementById(id) ?? moves?.materialize(id) ?? overlap?.materialize(id) ?? null) : null;
 }
 
 export function initRowLinks(): void {
@@ -1018,7 +1056,9 @@ export function initInPageLinks(): void {
       if (!a || a.classList.contains("si-card-open")) return;
       const href = a.getAttribute("href") ?? "";
       if (!href.startsWith("#") || href.length < 2) return;
-      const target = document.getElementById(hashTargetId(href));
+      const id = hashTargetId(href);
+      /* launch M7a: a held move row or Overlap name renders from its island first */
+      const target = document.getElementById(id) ?? moves?.materialize(id) ?? overlap?.materialize(id) ?? null;
       if (!target || !target.closest('[role="tabpanel"]')) return;
       (ev as Event | undefined)?.preventDefault?.();
       const filter = a.getAttribute("data-pb-filter");

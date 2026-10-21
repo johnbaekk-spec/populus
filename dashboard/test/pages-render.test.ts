@@ -768,7 +768,7 @@ test("T3.6 (R27): Methodology renders #signals-overlap and #signals-playbooks th
    ====================================================================== */
 
 import { tickerOnSignalsHtml } from "../src/lib/ui/index.ts";
-import { onSignalsLines, COMMITTEE_CAVEAT } from "../src/lib/ui/signals.ts";
+import { onSignalsLines, COMMITTEE_CAVEAT, COMMITTEE_CAVEAT_SHORT } from "../src/lib/ui/signals.ts";
 import { TICKER_HOLDERS_VISIBLE, TICKER_PREVIEW_ROWS, TIMELINE_GRIDLINES } from "../src/lib/ui/ticker.ts";
 import { amountText, sideLabel, universalFlags, effectiveFlagKeys } from "../src/lib/format.ts";
 import { affTextOf, excludeDateAnomalies, legacyTrailingMonthsBounds, windowMembership } from "../src/lib/derive.ts";
@@ -836,7 +836,8 @@ function fullBlockProblems(html: string, row: TRIAGE.TriageRow): string[] {
   /* the block's own caveat paragraph (the opened row's Cmte line says
      "context, never an allegation" on every row) */
   const caveat = block.querySelector("p.si-cmte-context");
-  if (row.meters.cmte >= 1 && (caveat ? visibleText(caveat).trim() : "") !== COMMITTEE_CAVEAT) out.push("the committee caveat is missing");
+  /* launch M7a (signals-03): the block states the short caveat; the full wording is the bars tip's */
+  if (row.meters.cmte >= 1 && (caveat ? visibleText(caveat).trim() : "") !== COMMITTEE_CAVEAT_SHORT) out.push("the committee caveat is missing");
   if (row.meters.cmte < 1 && caveat) out.push("a committee caveat with no committee context");
   return out;
 }
@@ -919,7 +920,7 @@ test("T3.3 (R18): a full block with no committee context carries no committee ca
   assert.ok(row.meters.cmte < 1, `precondition: Cmte ${row.meters.cmte}`);
   const html = goldenPage("MLM");
   assert.deepEqual(fullBlockProblems(html, row), []);
-  assert.ok(!html.includes(COMMITTEE_CAVEAT), "no caveat without committee context");
+  assert.ok(!html.includes(COMMITTEE_CAVEAT) && !html.includes(COMMITTEE_CAVEAT_SHORT), "no caveat without committee context");
 });
 
 /** Every R18 field of the COMPACT block, per hit row. */
@@ -946,7 +947,7 @@ function compactBlockProblems(html: string, hits: readonly import("../src/lib/si
     if (tr.querySelector("td.c-src a")?.getAttribute("href") !== s.receipts[0]) out.push(`${s.id}: the receipt`);
   }
   const caveat = block.querySelector(".si-cmte-context");
-  if (committee && !(caveat && visibleText(caveat).includes(COMMITTEE_CAVEAT))) out.push("the committee caveat is missing beside a COMMITTEE hit");
+  if (committee && !(caveat && visibleText(caveat).toLowerCase().includes(COMMITTEE_CAVEAT_SHORT.toLowerCase()))) out.push("the committee caveat is missing beside a COMMITTEE hit");
   if (!committee && caveat) out.push("a committee caveat with no COMMITTEE hit");
   return out;
 }
@@ -982,7 +983,7 @@ test("T3.3 (R18): a ticker with hits and no Stands-out or Worth-a-look row rende
   const snow = t.hitsByTicker.get("SNOW")!;
   assert.ok(snow.every((h) => h.kind !== "s5-jurisdiction") && !(t.byTicker.get("SNOW") ?? []).some((r) => r.tier !== "routine"));
   assert.deepEqual(compactBlockProblems(goldenPage("SNOW"), snow), []);
-  assert.ok(!goldenPage("SNOW").includes(COMMITTEE_CAVEAT));
+  assert.ok(!goldenPage("SNOW").includes(COMMITTEE_CAVEAT) && !goldenPage("SNOW").includes(COMMITTEE_CAVEAT_SHORT));
 });
 
 test("T3.3 (R18): no active hit, no block; /e/ (no deps) never renders one, and the parity capture holds none", () => {

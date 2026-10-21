@@ -13,7 +13,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { signalsBody, triageRowHtml, lagBandHtml, groupHits, hitMatches, hitsView, hitsHiddenText, signalSentence, memberSignalsPanel, hitsBodyHtml, sortHits, type HitFilter } from "../src/lib/ui/index.ts";
-import { COMMITTEE_CAVEAT, DEFAULT_HIT_FILTER, ctxOfCut, leadCardsHtml, memberLastName, SIGNAL_HITS_COMPACT_ROWS, SIGNAL_HITS_DOM_ROWS, SIGNAL_HITS_PAGE_SIZE, triageRowId, type HeldHits } from "../src/lib/ui/signals.ts";
+import { COMMITTEE_CAVEAT, COMMITTEE_CAVEAT_SHORT, DEFAULT_HIT_FILTER, ctxOfCut, leadCardsHtml, memberLastName, SIGNAL_HITS_COMPACT_ROWS, SIGNAL_HITS_DOM_ROWS, SIGNAL_HITS_PAGE_SIZE, triageRowId, type HeldHits } from "../src/lib/ui/signals.ts";
 import type { Signal, SignalArtifact } from "../src/lib/signals.ts";
 import type { TxnRow } from "../src/lib/format.ts";
 import { buildTriage, daysBetween, type TriageResult } from "../src/lib/signal-triage.ts";
@@ -274,10 +274,16 @@ test("LD9 / signals-v4 LD19 (T1.8): every caveat that left the visible page is i
   // the hits panel note and key → "About hits"
   const hitsTip = tipText(root, "About hits");
   for (const d of ["Every rule hit, newest filed first; every hit carries its receipt.", "Sizes are the row's statutory range, never narrowed.", "Each kind word opens its exact rule."]) assert.ok(hitsTip.includes(d), d);
-  // the committee caveat → card foot, the bars tip, and every opened row's Cmte line
-  assert.equal(ownText(root.querySelector("#lead-cards .si-card-context")!).trim(), COMMITTEE_CAVEAT);
+  /* Reversal record (launch M7a, copy items signals-03 and signals-07): the
+     card foot states the short caveat; the full wording is the bars tip's
+     (asserted above) and Methodology's; an opened row states each meter's
+     level in words, its definition said once in the bars tip. Property kept:
+     the committee caveat is visible wherever a committee overlap is surfaced. */
+  assert.equal(ownText(root.querySelector("#lead-cards .si-card-context")!).trim(), COMMITTEE_CAVEAT_SHORT);
+  assert.equal(COMMITTEE_CAVEAT_SHORT, "Context, not an allegation.");
   for (const a of root.querySelectorAll("#triage article.si-row")) {
-    assert.ok(ownText(a.querySelector(".si-row-mw")!).includes("context, never an allegation"), "each opened row's Cmte line");
+    assert.equal(a.querySelectorAll(".si-row-mw .si-mw-word").length, 4, "each opened row states every meter's level");
+    assert.equal(a.querySelector(".si-row-mw .si-mw-def"), null, "no per-row definition (signals-07)");
   }
   // the per-kind exact rule → each hit's kind word
   const kindNote = root.querySelector("#hits tbody td.c-kind .note-pop")!;
@@ -398,7 +404,8 @@ test("R12 / signals-v4 R2 (LD4): every triage row is an article holding a <detai
     if (row.lateLines > 0) assert.ok(facts.includes("Late"), `${key}: the LATE detail`);
     const words = det.querySelectorAll(".si-row-mw dd .si-mw-word").map((x) => ownText(x));
     assert.deepEqual(words, (["size", "pattern", "others", "cmte"] as const).map((k) => ({ 3: "strong", 2: "medium", 1: "low", 0: "none", [-1]: "unknown" } as Record<number, string>)[row.meters[k]]));
-    for (const dd of det.querySelectorAll(".si-row-mw dd")) assert.ok(ownText(dd.querySelector(".si-mw-def")!).length > 20, "each meter's definition");
+    /* launch M7a (signals-07): the definitions are the column head's bars tip, said once */
+    assert.equal(det.querySelectorAll(".si-row-mw .si-mw-def").length, 0, "no per-row definition");
     const links = det.querySelectorAll(".si-row-links a").map((x) => x.getAttribute("href")!);
     if (row.lead.txn.ticker) assert.ok(links.some((h) => /^\/tickers\/[^/]+\/#on-signals$|^\/e\/\?k=t:/.test(h)), `${key}: the ticker page`);
     if (row.lead.txn.bioguide) assert.ok(links.some((h) => h.includes(row.lead.txn.bioguide!)), `${key}: the member page`);

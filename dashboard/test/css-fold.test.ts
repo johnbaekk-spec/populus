@@ -39,7 +39,7 @@ import {
 } from "../src/lib/ui/index.ts";
 import { fixtureInstitutional, fixtureMoves, fixtureTxns } from "./lib/inst-signals-fixture.ts";
 import { fixtureOverlap } from "./lib/overlap-fixture.ts";
-import { buildOverlap } from "../src/lib/ui/signals-overlap.ts";
+import { buildOverlap, overlapCarried, overlapRowId } from "../src/lib/ui/signals-overlap.ts";
 import { playbookTriggers } from "../src/lib/playbooks.ts";
 import { signalsOverlapHtml, signalsPlaybooksHtml, signalsOverlapMethodHtml, signalsPlaybooksMethodHtml } from "../src/lib/ui/index.ts";
 import { redactFiledNames } from "./lib/banned-scan.ts";
@@ -1154,6 +1154,9 @@ function renderCorpus(): string {
       playbooks: m3Playbooks(),
     }),
     signalsOverlapHtml(null, CTX),
+    /* launch M7a (D5): every carried Overlap name rendered in the page, so the
+       relation classes the island's names carry are in the corpus */
+    signalsOverlapHtml(fixtureOverlap(), CTX, { keep: new Set([...overlapCarried(fixtureOverlap())].map(overlapRowId)) }),
     signalsPlaybooksHtml(null, CTX),
     /* a move's "See {TICKER} in Overlap →": the Institutional tab beside the Overlap of its own moves */
     signalsBody(goldenTriage().artifact, CTX, { rowsEvaluated: 2051, triage: null, institutional: fixtureInstitutional(), overlap: buildOverlap(fixtureInstitutional().quarter, fixtureInstitutional().moves) }),

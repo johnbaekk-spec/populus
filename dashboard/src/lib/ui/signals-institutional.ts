@@ -81,7 +81,7 @@ import {
 import type { NewPositionLeaders } from "../inst-analytics.ts";
 import { convictionCountsText, convictionRuleText } from "./institutional.ts";
 import { disclosureLedger, pairBandHtml, type LedgerItem } from "./shared.ts";
-import { congressLineHtml, heldIslandHtml, paneSwitchHtml } from "./signals.ts";
+import { congressLineHtml, heldIslandHtml, paneSwitchHtml, type HeldCut } from "./signals.ts";
 import { playbookStripHtml } from "./signals-playbooks.ts";
 
 /** LD20: the owner's reference label for the new-position leaders. Outside
@@ -307,7 +307,7 @@ export function congressSideFor(ticker: string | null, side: QuarterSide, quarte
   return (
     `<div class="mv-cong" data-cong="${esc(congKey(ticker, side))}">` +
     congressHeadHtml(n, ticker, side, quarter) +
-    `<p class="mv-cong-link"><a href="#${esc(congId(ticker, side))}">Their lines — range, both dates, receipt — are under “Congress lines behind the counts” ↓</a></p>` +
+    `<p class="mv-cong-link"><a href="#${esc(congId(ticker, side))}">Their lines — range, both dates, receipt — are under “Congress lines” ↓</a></p>` +
     `</div>`
   );
 }
@@ -350,34 +350,93 @@ function congressSideHtml(q: CongressQuarter | null, ticker: string | null, side
     lines through `congressLineHtml`, the rest on the ticker page, and the
     broad accounts not counted. A closed disclosure at the Named moves' foot,
     reachable without script. */
-function congressBankHtml(q: CongressQuarter | null, keys: readonly { ticker: string; side: QuarterSide }[], ctx: RenderCtx): string {
+/** One bank block as DATA (launch M7a, D5): the side's key and anchor, its
+    head, its first `CONGRESS_DETAIL_LINES` lines, how many more sit on the
+    ticker page and where, and the broad accounts not counted — every input
+    `congressBankBlockFrom` reads. */
+export interface BankBlock {
+  k: string;
+  id: string;
+  ticker: string;
+  side: QuarterSide;
+  quarter: string;
+  n: number;
+  lines: TxnRow[];
+  more: number;
+  href: string;
+  broad: string | null;
+}
+function bankBlockOf(q: CongressQuarter, ticker: string, side: QuarterSide, ctx: RenderCtx): BankBlock | null {
+  const members = quarterMembers(q, ticker, side);
+  if (members.length === 0) return null;
+  const broad = quarterMembers(q, ticker, side, { includeBroad: true }).filter((m) => !members.includes(m));
+  const rows: TxnRow[] = members.flatMap((m: MemberLines) => m.rows);
+  const shown = rows.slice(0, CONGRESS_DETAIL_LINES);
+  return {
+    k: congKey(ticker, side),
+    id: congId(ticker, side),
+    ticker,
+    side,
+    quarter: quarterLabel(q.period) ?? q.period,
+    n: members.length,
+    lines: shown,
+    more: rows.length - shown.length,
+    href: tickerHrefFor(shown[0]!.ticker ?? ticker, ctx),
+    broad: broad.length > 0 ? broadAccountsText(broad) : null,
+  };
+}
+/** The ONE bank block renderer (the server's bank and the client's island blocks). */
+export function congressBankBlockFrom(b: BankBlock, ctx: RenderCtx): string {
+  return (
+    `<section class="mv-cong" id="${esc(b.id)}" data-cong="${esc(b.k)}">` +
+    congressHeadHtml(b.n, b.ticker, b.side, b.quarter) +
+    `<ul class="cl-list">${b.lines.map((t) => congressLineHtml(t, ctx)).join("")}</ul>` +
+    (b.more > 0 ? `<p class="mv-cong-more"><a href="${esc(b.href)}">${plural(b.more, "more line", "more lines")} on the ticker page ↗</a></p>` : "") +
+    (b.broad !== null ? `<p class="mv-cong-none">Not counted, broad accounts: ${esc(b.broad)}.</p>` : "") +
+    `</section>`
+  );
+}
+/** The bank's island: the blocks no visible row or name links, with the
+    budget-cut flags of the members their lines link. */
+export interface HeldBank {
+  blocks: BankBlock[];
+  cut: HeldCut;
+}
+
+/** LD10: the bank — each (ticker, side) the page's moves and names show, with
+    members of Congress on it, ONCE: the count, up to `CONGRESS_DETAIL_LINES`
+    lines through `congressLineHtml`, the rest on the ticker page, and the
+    broad accounts not counted. A closed disclosure at the Named moves' foot,
+    reachable without script. Launch M7a (D5): a block only held rows link
+    ships in the island and renders into a row when it opens; the bank states
+    how many. */
+function congressBankHtml(q: CongressQuarter | null, keys: readonly { ticker: string; side: QuarterSide }[], ctx: RenderCtx, linked: ReadonlySet<string> | null = null): string {
   if (!q) return "";
-  const blocks: string[] = [];
+  const inPage: BankBlock[] = [];
+  const held: BankBlock[] = [];
   const seen = new Set<string>();
   for (const { ticker, side } of keys) {
     const k = congKey(ticker, side);
     if (seen.has(k)) continue;
     seen.add(k);
-    const members = quarterMembers(q, ticker, side);
-    if (members.length === 0) continue;
-    const broad = quarterMembers(q, ticker, side, { includeBroad: true }).filter((m) => !members.includes(m));
-    const rows: TxnRow[] = members.flatMap((m: MemberLines) => m.rows);
-    const shown = rows.slice(0, CONGRESS_DETAIL_LINES);
-    const more = rows.length - shown.length;
-    const href = tickerHrefFor(shown[0]!.ticker ?? ticker, ctx);
-    blocks.push(
-      `<section class="mv-cong" id="${esc(congId(ticker, side))}" data-cong="${esc(k)}">` +
-        congressHeadHtml(members.length, ticker, side, quarterLabel(q.period) ?? q.period) +
-        `<ul class="cl-list">${shown.map((t) => congressLineHtml(t, ctx)).join("")}</ul>` +
-        (more > 0 ? `<p class="mv-cong-more"><a href="${esc(href)}">${plural(more, "more line", "more lines")} on the ticker page ↗</a></p>` : "") +
-        (broad.length > 0 ? `<p class="mv-cong-none">Not counted, broad accounts: ${esc(broadAccountsText(broad))}.</p>` : "") +
-        `</section>`,
-    );
+    const b = bankBlockOf(q, ticker, side, ctx);
+    if (!b) continue;
+    (linked === null || linked.has(k) ? inPage : held).push(b);
   }
-  if (blocks.length === 0) return "";
+  const total = inPage.length + held.length;
+  if (total === 0) return "";
+  const members = new Set<string>();
+  for (const b of held) for (const t of b.lines) if (t.bioguide && ctx.cutMembers?.has(t.bioguide)) members.add(t.bioguide);
+  const tickers = new Set<string>();
+  for (const b of held) if (ctx.cutTickers?.has(b.lines[0]?.ticker ?? b.ticker)) tickers.add(b.lines[0]?.ticker ?? b.ticker);
   return (
-    `<details class="mv-bank" id="mv-bank"><summary>Congress lines behind the counts · ${plural(blocks.length, "name and side", "names and sides")}</summary>` +
-    blocks.join("") +
+    /* copy item signals-18: the label is the noun and its count */
+    `<details class="mv-bank" id="mv-bank"><summary>Congress lines · ${fmtInt(total)}</summary>` +
+    inPage.map((b) => congressBankBlockFrom(b, ctx)).join("") +
+    (held.length > 0
+      ? `<p class="section-note">${plural(held.length, "more name and side opens", "more names and sides open")} with ${held.length === 1 ? "its row" : "their rows"}; each ticker page lists every line.</p>` +
+        heldIslandHtml("mv-bank", { blocks: held, cut: { members: [...members].sort(), tickers: [...tickers].sort() } } satisfies HeldBank)
+      : "") +
     `</details>`
   );
 }
@@ -625,7 +684,8 @@ export function namedMovesRangeText(shown: number, total: number): string {
 
 /** LD11: the page's own bound, stated where the DOM runs out before the total. */
 export function namedMovesBoundText(n: number): string {
-  return `This page carries the first ${fmtInt(n)} for this filter; each manager's filer page lists all of its moves.`;
+  /* copy item signals-12 */
+  return `This page carries the first ${fmtInt(n)} — filer pages list every move.`;
 }
 
 /** The detail a name filter shows above its moves (LD10's "Consensus
@@ -692,7 +752,11 @@ function namedMovesHtml(model: SignalsInstitutional, ctx: RenderCtx, overlapIds:
   const bankKeys: { ticker: string; side: QuarterSide }[] = [];
   for (const m of model.domSet) if (m.ticker) bankKeys.push({ ticker: m.ticker, side: moveSide(m.kind) });
   for (const [, v] of withTicker) for (const side of ["buy", "sell"] as const) bankKeys.push({ ticker: v.ticker!, side });
-  const bank = congressBankHtml(model.quarter, bankKeys, ctx);
+  /* the blocks a reader can reach without script: the visible rows' and the names' */
+  const linked = new Set<string>();
+  for (const m of model.domSet.slice(0, shown)) if (m.ticker) linked.add(congKey(m.ticker, moveSide(m.kind)));
+  for (const [, v] of withTicker) for (const side of ["buy", "sell"] as const) linked.add(congKey(v.ticker!, side));
+  const bank = congressBankHtml(model.quarter, bankKeys, ctx, linked);
   const cgTip = note(
     `Members of Congress with a listed-stock purchase (beside a new stake or an add) or sale (beside a trim or an exit) of the same ticker, ` +
       `traded inside the quarter${model.quarter ? ` (${model.quarter.start} → ${model.quarter.end})` : ""} and filed at any date, each counted once. ` +
@@ -729,7 +793,7 @@ function namedMovesHtml(model: SignalsInstitutional, ctx: RenderCtx, overlapIds:
     `</div>` +
     `<div class="mv-list" id="mv-list">${rows}</div>` +
     (heldRows.rows.length > 0 ? heldIslandHtml("mv-list", heldRows) : "") +
-    `<p class="section-note" id="mv-empty" hidden>Nothing in this quarter matches this filter — a computed answer over the whole population.</p>` +
+    `<p class="section-note" id="mv-empty" hidden>No moves match this filter.</p>` +
     `<div class="feed-foot"><div class="pager">` +
     `<span class="pager-range" id="mv-range" tabindex="-1">${esc(namedMovesRangeText(shown, total))}</span>` +
     `<button type="button" class="pager-btn${shown < model.domSet.length ? "" : " is-unavailable"}" id="mv-more" aria-disabled="${shown < model.domSet.length ? "false" : "true"}">Show ${fmtInt(NAMED_MOVES_STEP)} more</button>` +

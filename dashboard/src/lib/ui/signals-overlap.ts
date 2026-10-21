@@ -34,7 +34,7 @@ import { affTextOf } from "../derive.ts";
 import { BROAD_ACCOUNT_NAMES, CONGRESS_DETAIL_LINES, quarterLabel, quarterMembers, type BroadMember, type CongressQuarter, type MemberLines } from "../congress-quarter.ts";
 import type { NotableMove } from "../notable-moves.ts";
 import { signedUsd } from "../notable-moves.ts";
-import { congressLineHtml, memberLastName } from "./signals.ts";
+import { congressLineHtml, heldIslandHtml, memberLastName, type HeldCut } from "./signals.ts";
 import { playbookStripHtml } from "./signals-playbooks.ts";
 import type { LedgerItem } from "./shared.ts";
 import { disclosureLedger } from "./shared.ts";
@@ -275,7 +275,7 @@ function overlapDetailHtml(core: OverlapRow | null, all: OverlapRow, q: Pick<Ove
   const side = (members: MemberLines[], label: string): string => {
     const kept = members.filter((m) => counted.has(m.key));
     const broad = members.filter((m) => !counted.has(m.key));
-    const total = members.reduce((n, m) => n + m.rows.length, 0);
+    const total = members.reduce((n, m) => n + lineCount(m), 0);
     if (total === 0) return "";
     /* one line a member, its newest: the count is of members */
     const shown = [...kept, ...broad].slice(0, CONGRESS_DETAIL_LINES).map((m) => m.rows[0]!);
@@ -320,8 +320,34 @@ function overlapDetailHtml(core: OverlapRow | null, all: OverlapRow, q: Pick<Ove
   );
 }
 
+/** A member's lines as the island carries them (launch M7a, D5): the newest
+    line — the one the opened row lists — and the count of all of them, which
+    is every input the row reads. */
+type HeldMemberLines = MemberLines & { lineCount?: number };
+function lineCount(m: MemberLines): number {
+  return (m as HeldMemberLines).lineCount ?? m.rows.length;
+}
+function slimRow(r: OverlapRow): OverlapRow {
+  const slim = (ms: MemberLines[]): HeldMemberLines[] => ms.map((m) => ({ ...m, rows: m.rows.slice(0, 1), lineCount: m.rows.length }));
+  return { ...r, buy: slim(r.buy), sell: slim(r.sell) };
+}
+/** One held name (launch M7a, D5): its two variants' rows as data, its
+    ordinals, and its anchor — `overlapItemHtml`'s inputs. */
+export interface HeldOverlapItem {
+  id: string;
+  core: OverlapRow | null;
+  all: OverlapRow;
+  ord: { core: number | null; all: number };
+}
+/** The Overlap's island: the carried names past the first view. */
+export interface HeldOverlap {
+  q: Pick<Overlap, "period" | "start" | "end">;
+  items: HeldOverlapItem[];
+  cut: HeldCut;
+}
+
 /** One name (both variants): an `article.ov-item` holding a `<details>`. */
-function overlapItemHtml(core: OverlapRow | null, all: OverlapRow, ord: { core: number | null; all: number }, q: Overlap, ctx: RenderCtx, shown: boolean): string {
+export function overlapItemHtml(core: OverlapRow | null, all: OverlapRow, ord: { core: number | null; all: number }, q: Pick<Overlap, "period" | "start" | "end">, ctx: RenderCtx, shown: boolean): string {
   const c = core ? variantCells(core) : null;
   const a = variantCells(all);
   /* the managers by their largest change, the buy side's first; a manager on
@@ -357,7 +383,8 @@ function overlapItemHtml(core: OverlapRow | null, all: OverlapRow, ord: { core: 
 
 /** LD11's grammar for the Overlap's own bound. */
 export function overlapBoundText(n: number): string {
-  return `This page carries the first ${fmtInt(n)} names for this view; each ticker page lists its Congress lines, and each manager's filer page its 13F changes.`;
+  /* copy item signals-12 */
+  return `This page carries the first ${fmtInt(n)} names — ticker and filer pages have the rest.`;
 }
 
 export function overlapRangeText(shown: number, total: number): string {
@@ -397,7 +424,10 @@ export function overlapLedgerHtml(o: Overlap | null): string {
 /** The Overlap tabpanel's content (the panel element is `signalsBody`'s).
     `null` is the artifact-only view. `playbooks` adds the head's playbook
     strip — only where the page renders the Playbooks tab it links to. */
-export function signalsOverlapHtml(o: Overlap | null, ctx: RenderCtx, opts: { playbooks?: boolean } = {}): string {
+/** `keep`: the names another tab's visible rows link (a move's "See {TICKER}
+    in Overlap →"); they stay in the page, held, so the link works without
+    script (launch M7a). */
+export function signalsOverlapHtml(o: Overlap | null, ctx: RenderCtx, opts: { playbooks?: boolean; keep?: ReadonlySet<string> } = {}): string {
   const tip = noteFromHtml(
     `<span class="si-tip-p">${esc(overlapTipText(o ?? { start: null, end: null }))}</span>` +
       `<span class="si-tip-p">The managers' side is 13F: quarter-end, long-only snapshots filed up to 45 days after the quarter — never current holdings; an exit is inferred from absence in the next filing.</span>` +
@@ -416,7 +446,8 @@ export function signalsOverlapHtml(o: Overlap | null, ctx: RenderCtx, opts: { pl
     return open(true) + head + `<p class="section-note">No Overlap: ${esc(o.absent ?? "no closed calendar quarter to join")}. Absence is stated, never simulated.</p></section>`;
   }
   const quarter = quarterLabel(o.period) ?? o.period;
-  const lede = `<p class="section-note ov-lede">Names traded in Congress and changed by notable managers in ${esc(quarter)} — a co-occurrence in public filings, never coordination or intent.</p>`;
+  /* copy item signals-15, adapted (wording-ban: "move" as a verb): the tab's one visible not-coordination line */
+  const lede = `<p class="section-note ov-lede">Names Congress traded and notable managers changed in ${esc(quarter)} — co-occurrence, not coordination or intent.</p>`;
   if (o.all.length === 0) {
     return (
       open(true) + head + lede +
@@ -440,12 +471,31 @@ export function signalsOverlapHtml(o: Overlap | null, ctx: RenderCtx, opts: { pl
       const cy = coreBy.get(y.ticker)?.i ?? Infinity;
       return cx !== cy ? cx - cy : allIdx.get(x.ticker)! - allIdx.get(y.ticker)!;
     });
+  /* launch M7a (D5, LD27): the first view's names are in the page; every
+     other carried name ships in the island as data and renders through
+     `overlapItemHtml` when a view needs it */
+  const firstView = (r: OverlapRow): boolean => (coreBy.get(r.ticker)?.i ?? Infinity) < OVERLAP_STEP;
+  const inPage = (r: OverlapRow): boolean => firstView(r) || (opts.keep?.has(overlapRowId(r.ticker)) ?? false);
   const rows = items
+    .filter(inPage)
     .map((r) => {
       const c = coreBy.get(r.ticker) ?? null;
-      return overlapItemHtml(c?.r ?? null, r, { core: c?.i ?? null, all: allIdx.get(r.ticker)! }, o, ctx, c !== undefined && c !== null && c.i < OVERLAP_STEP);
+      return overlapItemHtml(c?.r ?? null, r, { core: c?.i ?? null, all: allIdx.get(r.ticker)! }, o, ctx, firstView(r));
     })
     .join("\n");
+  const heldItems: HeldOverlapItem[] = items
+    .filter((r) => !inPage(r))
+    .map((r) => {
+      const c = coreBy.get(r.ticker) ?? null;
+      return { id: overlapRowId(r.ticker), core: c ? slimRow(c.r) : null, all: slimRow(r), ord: { core: c?.i ?? null, all: allIdx.get(r.ticker)! } };
+    });
+  const cutMembers = new Set<string>();
+  const cutTickers = new Set<string>();
+  for (const it of heldItems) {
+    if (ctx.cutTickers?.has(it.all.ticker)) cutTickers.add(it.all.ticker);
+    for (const m of [...it.all.buy, ...it.all.sell]) for (const t of m.rows) if (t.bioguide && ctx.cutMembers?.has(t.bioguide)) cutMembers.add(t.bioguide);
+  }
+  const island = heldItems.length > 0 ? heldIslandHtml("ov-list", { q: { period: o.period, start: o.start, end: o.end }, items: heldItems, cut: { members: [...cutMembers].sort(), tickers: [...cutTickers].sort() } } satisfies HeldOverlap) : "";
   const count = (k: "same" | "opposite" | "all"): string => {
     const core = fmtInt(nc[k]);
     const all = fmtInt(na[k]);
@@ -477,7 +527,8 @@ export function signalsOverlapHtml(o: Overlap | null, ctx: RenderCtx, opts: { pl
     `</div>` +
     `<div class="ov-head" aria-hidden="true"><span>Ticker</span><span>Issuer · members</span><span>Congress</span><span>Notable managers</span></div>` +
     `<div class="ov-list" id="ov-list">${rows}</div>` +
-    `<p class="section-note" id="ov-empty"${o.core.length === 0 ? "" : " hidden"}>No name in this view — a computed answer over the quarter.${o.core.length === 0 ? " Every name here was traded only by broad accounts; turn Broad accounts on to list them." : ""}</p>` +
+    island +
+    `<p class="section-note" id="ov-empty"${o.core.length === 0 ? "" : " hidden"}>No names in this view.${o.core.length === 0 ? " Every name here was traded only by broad accounts; turn Broad accounts on to list them." : ""}</p>` +
     `<div class="feed-foot"><div class="pager">` +
     `<span class="pager-range" id="ov-range" tabindex="-1">${esc(overlapRangeText(coreShown, nc.all))}</span>` +
     `<button type="button" class="pager-btn${coreShown < coreCarried ? "" : " is-unavailable"}" id="ov-more" aria-disabled="${coreShown < coreCarried ? "false" : "true"}">Show ${fmtInt(OVERLAP_STEP)} more</button>` +

@@ -559,7 +559,7 @@ test("LD5 templates: the fixed sentences, joined by a space, at most 160 charact
     one(line({ meters: M(0, 0, 0, 2), cmte: { grade: "direct", committees: [{ committeeId: "HSBA", name: "House Committee on Financial Services" }], sector: "finance-insurance-realestate", sic: 6021 } })),
     "BAC sits inside House Committee on Financial Services, where the member serves.",
   );
-  assert.equal(one(line({ meters: M(0, 0, 0, 1), cmte: { grade: "broad", committees: [{ committeeId: "HSBA", name: "x" }], sector: "s", sic: null } })), "Rules matched: none named.", "a broad grade has no sentence of its own");
+  assert.equal(one(line({ meters: M(0, 0, 0, 1), cmte: { grade: "broad", committees: [{ committeeId: "HSBA", name: "x" }], sector: "s", sic: null } })), "No rule named.", "a broad grade has no sentence of its own");
   // strongest first, and a clause that would pass 160 is dropped, never cut
   const both = line({ meters: M(3, 3, 0, 2), pattern: { firstOnRecord: false, lastPrior: "2023-02-14", gapDays: 900 }, bracketDelta: 2, history: { rows: 12, withLow: 12, maxLow: 1001, spanDays: 900 }, cmte: { grade: "direct", committees: [{ committeeId: "X", name: "A Committee With A Long Name ".repeat(3).trim() }], sector: "s", sic: 1 } });
   const clauses = sentenceClauses({ ...base, lines: [both], lead: both, filings: [filing(3)] });
@@ -583,7 +583,7 @@ test("R9 / R25: every generated sentence is pronoun-free, within 160 characters 
     "The largest disclosure on the member's record.", "3 brackets above anything in 408 prior disclosures.",
     "6 members disclosed SPCX purchases traded 2026-06-12 to 2026-06-18.", "4 members disclosed CVX sales traded 2025-12-16 to 2025-12-24.",
     "8 late filings on 2026-08-05 completed 10 clusters from 2024–2025.", "BAC sits inside House Committee on Financial Services, where the member serves.",
-    "Rules matched: large disclosure, first disclosure of the ticker, co-occurrence, infrequent discloser, committee overlap, late and large.",
+    "Large disclosure, first disclosure of the ticker, co-occurrence, infrequent discloser, committee overlap, late and large.",
   ];
   assert.deepEqual(facts.flatMap(sentenceProblems), []);
 });

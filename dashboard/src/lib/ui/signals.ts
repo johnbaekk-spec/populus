@@ -95,6 +95,7 @@ import { overlapCarried, overlapCounts, overlapLedgerHtml, overlapRowId, signals
 import { playbookChipsHtml, playbookFilterHtml, playbookRowSectionHtml, playbooksLedgerHtml, signalsPlaybooksHtml, type PlaybooksModel } from "./signals-playbooks.ts";
 import { PLAYBOOKS, type PlaybookHit } from "../playbooks.ts";
 import { BROAD_ACCOUNT_NAMES, CONGRESS_DETAIL_LINES, QUARTER_ENDS_TEXT } from "../congress-quarter.ts";
+import { NAMED_MOVES_MIN } from "../notable-moves.ts";
 
 /* ================================================================================
    D-2 — /signals surfaces. Every signal renders its EXACT rule, its magnitude
@@ -107,6 +108,10 @@ import { BROAD_ACCOUNT_NAMES, CONGRESS_DETAIL_LINES, QUARTER_ENDS_TEXT } from ".
     wherever a committee grade or overlap renders (R5, LD9). */
 export const COMMITTEE_CAVEAT =
   "The overlap is context, never an allegation — it states a sector-to-committee fact and nothing about intent.";
+/** Copy item signals-03 (launch M7a): the visible committee line wherever a
+    committee overlap shows on a card or in the "On Signals" block; the full
+    wording above stays in the Cmte meter's tip and on Methodology. */
+export const COMMITTEE_CAVEAT_SHORT = "Context, not an allegation.";
 
 const SIGNAL_KIND_LABELS: Record<Signal["kind"], string> = {
   "s1-large": "S-1 · Large disclosure",
@@ -956,14 +961,11 @@ function leadDatesHtml(t: TxnRow): string {
 /** The four meters in words, each with its definition (LD4's opened row).
     The Cmte line carries "context, never an allegation" on every row. */
 function meterWordsHtml(m: Record<MeterKey, Level>): string {
-  const defs = meterDefinitions();
+  /* copy item signals-07 (launch M7a): the level words only — each meter's
+     definition is the column head's bars tip, said once, not on every row */
   return (
     `<dl class="si-row-mw">` +
-    METER_KEYS.map(
-      (k) =>
-        `<div><dt>${esc(METER_LABELS[k])}</dt><dd><span class="si-mw-word" data-level="${m[k]}">${esc(LEVEL_WORDS[m[k]])}</span> ` +
-        `<span class="si-mw-def">${esc(defs[k].short)}${k === "cmte" ? ` — <span class="si-cmte-context">context, never an allegation</span>` : ""}</span></dd></div>`,
-    ).join("") +
+    METER_KEYS.map((k) => `<div><dt>${esc(METER_LABELS[k])}</dt><dd><span class="si-mw-word" data-level="${m[k]}">${esc(LEVEL_WORDS[m[k]])}</span></dd></div>`).join("") +
     `</dl>`
   );
 }
@@ -1423,7 +1425,7 @@ export function leadCardsHtml(triage: TriageResult | null, ctx: RenderCtx): stri
     `<div class="seg si-rank-seg" role="group" aria-label="Rank the largest buy and sell by"><label for="si-rank-record">Own record</label><label for="si-rank-absolute">Absolute $</label></div></div>` +
     `<div class="si-cards" data-scroll-region="Lead cards · swipe for more">` +
     `<article class="si-card" data-card="committee" data-tone="amber"><div class="si-card-tag">${esc(leadCardTag(triage, "committee"))}</div>${leadCardBodyHtml(triage, "committee", "record", ctx)}` +
-    `<p class="si-card-context">${esc(COMMITTEE_CAVEAT)}</p></article>` +
+    `<p class="si-card-context">${esc(COMMITTEE_CAVEAT_SHORT)}</p></article>` +
     `<article class="si-card" data-card="buy" data-tone="green">${variant("record", "buy")}${variant("absolute", "buy")}</article>` +
     `<article class="si-card" data-card="sell" data-tone="red">${variant("record", "sell")}${variant("absolute", "sell")}</article>` +
     `</div>` +
@@ -1506,16 +1508,17 @@ function congressHowHtml(artifact: SignalArtifact, superseded: number, unevaluat
     head tip. */
 function footLinksHtml(superseded: number): string {
   const links: readonly (readonly [string, string])[] = [
-    ["/methodology/#signal-rules", "Rule book"],
-    ["/methodology/#signals-ranking", "How rows are ranked"],
-    ["/methodology/#signal-lag", "Lag distribution"],
-    ["/methodology/#committee-direct", "Committee table"],
-    ["/signals/data/signals.v1.json", "signals.v1.json"],
+    /* copy item signals-09: link labels to one or two words */
+    ["/methodology/#signal-rules", "Rules"],
+    ["/methodology/#signals-ranking", "Ranking"],
+    ["/methodology/#signal-lag", "Filing lag"],
+    ["/methodology/#committee-direct", "Committees"],
+    ["/signals/data/signals.v1.json", "Data (JSON)"],
   ];
   return (
     `<p class="si-foot" id="signal-method-links">` +
-    links.map(([href, text]) => `<a href="${href}">${esc(text)} ↗</a>`).join(" ") +
-    (superseded > 0 ? ` <a href="/signals/data/signals.v1.json" id="signal-changes-foot">changes since last build ↗</a>` : "") +
+    links.map(([href, text]) => `<a href="${href}">${esc(text)} ↗</a>`).join(" · ") +
+    (superseded > 0 ? ` · <a href="/signals/data/signals.v1.json" id="signal-changes-foot">Changes ↗</a>` : "") +
     `</p>`
   );
 }
@@ -1603,13 +1606,24 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
     signalsInstitutionalHtml(inst, ctx, { playbooks: pb !== null, overlapIds: overlap && overlap.period !== null ? new Set([...overlapCarried(overlap)].map(overlapRowId)) : null }) +
     `</section>` +
     `<section class="tk-panel sig-panel" role="tabpanel" id="overlap" aria-labelledby="tab-overlap">` +
-    signalsOverlapHtml(overlap, ctx, { playbooks: pb !== null }) +
+    /* launch M7a: the names the visible move rows link stay in the page */
+    signalsOverlapHtml(overlap, ctx, { playbooks: pb !== null, keep: visibleMoveOverlapIds(inst, overlap) }) +
     `</section>` +
     `<section class="tk-panel sig-panel" role="tabpanel" id="playbooks" aria-labelledby="tab-playbooks">` +
     /* R9 / LD8: the tab links only to what this page renders */
     signalsPlaybooksHtml(pb, ctx, { institutionalPanels: inst !== null && inst.present && inst.period !== null, triageRows: triage !== null && pb !== null && pb.triage === triage }) +
     `</section>`
   );
+}
+
+/** The Overlap anchors the Named moves' visible rows link (launch M7a): the
+    first NAMED_MOVES_MIN rows' names the Overlap tab carries. */
+function visibleMoveOverlapIds(inst: SignalsInstitutional | null, overlap: Overlap | null): ReadonlySet<string> {
+  if (!inst || !overlap || overlap.period === null) return new Set();
+  const carried = new Set([...overlapCarried(overlap)].map(overlapRowId));
+  const out = new Set<string>();
+  for (const m of inst.domSet.slice(0, NAMED_MOVES_MIN)) if (m.ticker && carried.has(overlapRowId(m.ticker))) out.add(overlapRowId(m.ticker));
+  return out;
 }
 
 /* ---------- R14: Methodology's ranking and committee sections ---------- */
@@ -1753,7 +1767,7 @@ export function tickerOnSignalsHtml(triageRows: readonly TriageRow[], hits: read
       rowHeadHtml(null) +
       /* signals-v4 LD4: the same row, opened, with no link to the page it is on */
       triageRowHtml(row, ctx, { link: false, open: true }) +
-      (row.meters.cmte >= 1 ? `<p class="section-note si-cmte-context">${esc(COMMITTEE_CAVEAT)}</p>` : "") +
+      (row.meters.cmte >= 1 ? `<p class="section-note si-cmte-context">${esc(COMMITTEE_CAVEAT_SHORT)}</p>` : "") +
       `</section>`
     );
   }
@@ -1771,7 +1785,7 @@ export function tickerOnSignalsHtml(triageRows: readonly TriageRow[], hits: read
     `<thead><tr>${cols.map((c) => thHtml({ label: c, mark: null, cls: SIGNAL_HIT_COLUMN_CLASSES[c], col: SIGNAL_HIT_COLUMN_KEYS[c] })).join("")}</tr></thead>` +
     `<tbody>${hitsBodyHtml(view.lines, ctx, cols.map((c) => SIGNAL_HIT_COLUMN_KEYS[c]))}</tbody></table></div>` +
     `<p class="section-note">${esc(hitsRangeText(0, view.lines.length, view.allLines, view.hits, ON_SIGNALS_COMPACT_LINES))} · each kind word opens its exact rule · every hit is in <a href="/signals/data/signals.v1.json">signals.v1.json</a>.</p>` +
-    (committee ? `<p class="section-note si-cmte-context">COMMITTEE: ${esc(COMMITTEE_CAVEAT)}</p>` : "") +
+    (committee ? `<p class="section-note si-cmte-context">COMMITTEE: ${esc(COMMITTEE_CAVEAT_SHORT)}</p>` : "") +
     `</section>`
   );
 }
