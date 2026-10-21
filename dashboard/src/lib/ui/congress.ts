@@ -250,12 +250,22 @@ function rowsOf(s: SumRanges): number {
   return s.kind === "empty" ? 0 : s.rows;
 }
 
-/** The readout a quarter states when it is selected (LD13): its trade count
-    and both full ranges — the same facts the screen-reader summary carries. */
-export function quarterReadout(q: { q: string; buy: SumRanges; sell: SumRanges }): string {
+/** The readout a quarter states when it is selected (LD13): its count of
+    purchases and sales and both full ranges — the same facts the
+    screen-reader summary carries. Launch review H2: the count is named for
+    what it counts (purchases and sales, never "trades": exchanges are not
+    drawn, and the readout says how many were not); a quarter the build date
+    has not closed says it is so far, inside the 45-day filing window. */
+export function quarterReadout(q: { q: string; quarterEnd?: string; buy: SumRanges; sell: SumRanges; other?: number }, asOf: string | null = null): string {
   const n = rowsOf(q.buy) + rowsOf(q.sell);
   const part = (s: SumRanges): string => (s.kind === "empty" ? "none" : sumRangesText(s));
-  return `${q.q}: ${fmtInt(n)} ${n === 1 ? "trade" : "trades"} · purchases ${part(q.buy)} · sales ${part(q.sell)}`;
+  const open = asOf !== null && q.quarterEnd !== undefined && asOf < q.quarterEnd;
+  const other = q.other ?? 0;
+  return (
+    `${q.q}${open ? " so far (inside the 45-day filing window)" : ""}: ` +
+    `${fmtInt(n)} ${n === 1 ? "purchase or sale" : "purchases and sales"} · purchases ${part(q.buy)} · sales ${part(q.sell)}` +
+    (other > 0 ? ` · ${fmtInt(other)} exchange/unparsed-side ${other === 1 ? "row" : "rows"} not drawn` : "")
+  );
 }
 
 /** The quarterly flow ribbon — ONE renderer for both callers, the member page
@@ -274,15 +284,17 @@ export function quarterReadout(q: { q: string; buy: SumRanges; sell: SumRanges }
     (R13) is member-only: a window with nothing to plot becomes ONE line. */
 export function flowRibbon(
   flow: QuarterlyFlowResult,
-  opts: { twoSided: boolean; sourceLine: string; notes?: NoteCtx; emptyWindow?: { latestTraded: string | null; asOf?: string } },
+  opts: { twoSided: boolean; sourceLine: string; notes?: NoteCtx; emptyWindow?: { latestTraded: string | null; asOf?: string }; asOf?: string },
 ): string {
+  /* H2: the build date, so the open quarter's readout says "so far" */
+  const asOf = opts.asOf ?? opts.emptyWindow?.asOf ?? null;
   const empty = opts.emptyWindow !== undefined && flowWindowEmpty(flow);
   const top = ribbonAxisTop(flow.quarters.flatMap((q) => [q.buy, q.sell]));
   const cols = flow.quarters
     .map((q) => {
       const none = q.buy.kind === "empty" && q.sell.kind === "empty";
       return (
-        `<div class="rb-col" data-rb-col data-readout="${esc(quarterReadout(q))}">` +
+        `<div class="rb-col" data-rb-col data-readout="${esc(quarterReadout(q, asOf))}">` +
         `<div class="rb-up">${axisBarHtml(q.buy, top, "buy")}</div>` +
         `<div class="rb-axis" aria-hidden="true"></div>` +
         `<div class="rb-down">${axisBarHtml(q.sell, top, "sell")}</div>` +
@@ -352,7 +364,7 @@ export function flowRibbon(
     `<div class="rb-track">${cols}</div>` +
     `</div>` +
     `<div class="rb-labels">${labels}</div>` +
-    `<p class="rb-readout" id="rb-readout" role="status" aria-live="polite">${esc(quarterReadout(last))}</p>` +
+    `<p class="rb-readout" id="rb-readout" role="status" aria-live="polite">${esc(quarterReadout(last, asOf))}</p>` +
     /* The caption is a DEFINITION — how the chart is drawn, what the
        hatching means, what is excluded — so on the member page it is a note
        anchored on the chart, with the marker left visible as its cue (LD3).
@@ -1474,7 +1486,7 @@ export function congressTickerBody(t: TickerEntity, stamps: BuildStamps, ctx: Re
     `<section class="panel" aria-labelledby="flow2-h">` +
     `<div class="panel-head"><h2 id="flow2-h" class="section-h">Disclosed flow by quarter, both sides</h2>` +
     `<span class="panel-note">bar = [min, max] bucket sums · purchases above axis, sales below</span></div>` +
-    flowRibbon(flow, { twoSided: true, sourceLine: "source: House Clerk + Senate eFD" }) +
+    flowRibbon(flow, { twoSided: true, sourceLine: "source: House Clerk + Senate eFD", asOf: stamps.generatedAtDate }) +
     `</section>` +
     `<section class="panel" aria-labelledby="md-h">` +
     `<div class="panel-head"><h2 id="md-h" class="section-h">Members disclosing ${esc(t.ticker)}</h2><span class="panel-note">trailing 12m</span></div>` +

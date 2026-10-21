@@ -213,12 +213,40 @@ test("R24: both flowRibbon callers draw one labelled axis, cut markers that stat
     assert.ok(r.cuts.includes("↓ open"), `${caller}: the open sale says open`);
     assert.ok(r.cuts.includes("↓ not disclosed"), `${caller}: the undisclosed sale is hatched and said`);
     assert.equal(r.nones, flow.quarters.filter((q) => q.buy.kind === "empty" && q.sell.kind === "empty").length, `${caller}: '–' in every empty quarter`);
-    assert.deepEqual(r.readouts, flow.quarters.map(quarterReadout), `${caller}: one readout per quarter`);
+    assert.deepEqual(r.readouts, flow.quarters.map((q) => quarterReadout(q, STAMPS.generatedAtDate)), `${caller}: one readout per quarter`);
     assert.match(r.summary, /purchases \$1M–\$5\.0M|purchases \$1\.0M–\$5M|purchases \$1M–\$5M/, `${caller}: the summary keeps the full range past the axis`);
   }
   // no midpoint: every drawn bar starts at its side's axis (a solid part anchored at 0)
   const html = memberBody(m, STAMPS, CTX, 0, deps());
   assert.ok(!/class="rb-bar rb-(buy|sell) rb-lo" style="(bottom|top):(?!0;)/.test(html), "every solid part is anchored at the axis");
+});
+
+/* Launch review H2: the readout names what it counts and says when a quarter is still open. */
+test("H2: the quarter readout counts purchases and sales (never 'trades'), states the exchanges it does not draw, and marks the open quarter 'so far'", () => {
+  const rows = [
+    txn(1, { side: "purchase", low: 1001, high: 15000, traded: "2026-07-20" }),
+    txn(2, { side: "exchange", low: 1001, high: 15000, traded: "2026-07-21" }),
+    txn(3, { side: "exchange", low: 1001, high: 15000, traded: "2026-07-22" }),
+    txn(4, { side: "sale", low: 1001, high: 15000, traded: "2026-05-02" }),
+  ];
+  const flow = quarterlyFlow(rows, STAMPS.generatedAtDate, 8); // as of 2026-08-12: 26Q3 is open
+  const cur = flow.quarters.at(-1)!;
+  const prev = flow.quarters.at(-2)!;
+  assert.equal(cur.q, "26Q3");
+  assert.equal(cur.other, 2, "the quarter's exchange rows are counted");
+  const r = quarterReadout(cur, STAMPS.generatedAtDate);
+  assert.match(r, /^26Q3 so far \(inside the 45-day filing window\): 1 purchase or sale · purchases /);
+  assert.match(r, / · 2 exchange\/unparsed-side rows not drawn$/);
+  assert.doesNotMatch(r, /\btrades?\b/);
+  assert.match(quarterReadout(prev, STAMPS.generatedAtDate), /^26Q2: 1 purchase or sale · purchases none · sales /, "a closed quarter is not 'so far'");
+  // re-planted controls: a build date past the quarter end closes it; no build date states nothing about openness
+  assert.doesNotMatch(quarterReadout(cur, "2026-10-01"), /so far/);
+  assert.doesNotMatch(quarterReadout(cur), /so far/);
+  // both callers render the build-dated readout
+  for (const html of [memberBody(member(4, { txns: rows }), STAMPS, CTX, 0, deps()), congressTickerBody({ ticker: "T1", txns: rows }, STAMPS, CTX)]) {
+    assert.match(html, /26Q3 so far \(inside the 45-day filing window\): 1 purchase or sale/);
+    assert.doesNotMatch(html, /data-readout="[^"]*\btrades?\b/);
+  }
 });
 
 /* ------------------------------------------------------------ R25 trades */

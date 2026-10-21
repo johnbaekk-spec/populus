@@ -511,6 +511,9 @@ export interface QuarterFlow {
   quarterEnd: string; // YYYY-MM-DD
   buy: SumRanges;
   sell: SumRanges;
+  /** launch review H2: exchange/unparsed-side rows traded in the quarter —
+      not drawn, and said so in the quarter's readout */
+  other?: number;
 }
 
 export interface QuarterlyFlowResult {
@@ -555,8 +558,8 @@ export function quarterlyFlow(
     ends.unshift(cursor);
     cursor = prevQuarterEnd(cursor);
   }
-  const byEnd = new Map<string, { buys: TxnRow[]; sells: TxnRow[] }>();
-  for (const end of ends) byEnd.set(end, { buys: [], sells: [] });
+  const byEnd = new Map<string, { buys: TxnRow[]; sells: TxnRow[]; other: number }>();
+  for (const end of ends) byEnd.set(end, { buys: [], sells: [], other: 0 });
   let undated = 0;
   let excludedSides = 0;
   for (const t of txns) {
@@ -569,7 +572,10 @@ export function quarterlyFlow(
     if (!bucket) continue; // outside the window — not an exclusion to disclose
     if (t.side === "purchase") bucket.buys.push(t);
     else if (t.side === "sale" || t.side === "sale_partial") bucket.sells.push(t);
-    else excludedSides++;
+    else {
+      excludedSides++;
+      bucket.other++;
+    }
   }
   return {
     quarters: ends.map((end) => ({
@@ -577,6 +583,7 @@ export function quarterlyFlow(
       quarterEnd: end,
       buy: sumRanges(byEnd.get(end)!.buys),
       sell: sumRanges(byEnd.get(end)!.sells),
+      other: byEnd.get(end)!.other,
     })),
     undated,
     excludedSides,
