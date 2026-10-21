@@ -15,9 +15,8 @@
 
    Mode. M1a measured every predicate and gated nothing. From M1c the phone
    predicates GATE (R4, R5, R6, R7, R10, R13, plus R40's roles); the DOM
-   budget (R35, ≤3,000 elements) gates only on the routes LD31 hands to M1c —
-   filer, Congress data and the 404 — and is measured, never gated, on the
-   routes a later milestone owns. Every result is written to the test's output
+   budget (R35, ≤3,000 elements) gates on every LD31 route (dom-budget.ts),
+   and /signals/ is measured and recorded under D6, never gated. Every result is written to the test's output
    directory as JSON (the measure-mode report, and the font map for the T0
    diff), so the evidence survives the run.
 
@@ -29,6 +28,7 @@ import { existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { HONESTY_SELECTORS } from "../lib/honesty-selectors.ts";
 import { phoneAuditInPage, servedWordsInPage, skipDecision, type PhoneAudit, type PhoneAuditArg } from "./geometry.ts";
+import { DOM_D6_MEASURED, domBudgetProblem } from "./dom-budget.ts";
 
 const WIDTHS = [360, 390, 430] as const;
 type Width = (typeof WIDTHS)[number];
@@ -59,10 +59,10 @@ const GATED = {
   gutters: true, // R13
   roles: true, // R40
 } as const;
-/** LD31: the routes whose ≤3,000-element budget M1c gates; every other route
-    is measured and reported until the milestone that owns it. */
-const DOM_GATED = new Set(["filer", "congress-data", "not-found"]);
-const DOM_BUDGET = 3000;
+/* LD31 / D6: which views the ≤3,000-element budget gates lives in one map,
+   `dom-budget.ts` (pinned by test/launch-dom-budget.test.ts): every LD31
+   route gates now that its milestone is integrated; /signals/ is D6's
+   measured exception; the Congress ticker page and the stubs are measured. */
 
 interface View {
   id: string;
@@ -270,7 +270,9 @@ for (const view of VIEWS) {
           problems.push(`R13 side gutters ${audit.gutterL}/${audit.gutterR}px, want 16 ±1`);
         }
         if (GATED.roles && audit.roleProblems.length) problems.push(`R40 table roles:\n  ${list(audit.roleProblems)}`);
-        if (DOM_GATED.has(view.id) && audit.dom > DOM_BUDGET) problems.push(`R35 DOM ${audit.dom} elements, budget ${DOM_BUDGET} (LD31)`);
+        const dom = domBudgetProblem(view.id, audit.dom);
+        if (dom) problems.push(dom);
+        if (DOM_D6_MEASURED.has(view.id)) testInfo.annotations.push({ type: "D6 measured", description: `${view.id} @${width}: ${audit.dom} elements at first load (recorded, not gated)` });
         expect(problems, `${view.id} @${width} (${resolved.path})`).toEqual([]);
       } finally {
         await ctx.close();

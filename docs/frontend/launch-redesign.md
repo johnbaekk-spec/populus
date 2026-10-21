@@ -176,3 +176,18 @@ added: ./institutional/data/directory/{n}.v1.json max 8 (M7b, LD28, LD29: the /i
 <!-- launch-routes:end -->
 
 Each line reads `added: <path pattern> max <n> (<reason>)`. `{n}` stands for a non-negative integer. The redesign adds no page route and removes none.
+
+## D6 — /signals/ first-load DOM (measured exception, not gated)
+
+D6 keeps the triage-row bodies in the page. LD27's step 1 moved the held move rows, the Congress-lines bank, the Overlap names past the first view and the hit lines past the first ten into JSON islands. Whatever the page still carries above the 3,000-element budget is recorded here for the owner. Nothing more is cut without a new owner decision.
+
+The phone harness measures each Signals tab's hash load at 360, 390 and 430 and reports it as a `D6 measured` annotation. It does not gate the count. The map is `dashboard/test/geometry/dom-budget.ts`, pinned by `dashboard/test/launch-dom-budget.test.ts`.
+
+| Measurement | Elements |
+|---|---|
+| T0, production data 20261019.2, every tab, JavaScript on, 390 | 35,446 (Congress 5,932; Institutional 21,288; Overlap 7,645; Playbooks 442; outside the panels 139) |
+| Integrated tree, fixture body, served HTML (the R31 test's element counter) | 5,069, with the Named moves island holding 192 rows (4,024 elements not built until revealed) |
+| Review measurement, fixture page, first load | 7,280 |
+| Integrated tree, production data | not measured yet: the owner-tier run on the integrated tree records it |
+
+Every other LD31 route gates at 3,000 from this tree on. That includes /congress/, whose board slimming lands separately: until it does, /congress/ fails the gate, which is the honest state (T0: 5,341).
