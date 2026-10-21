@@ -206,6 +206,8 @@ export function clipHitAreas(): void {
   const cache = new Map<Element, boolean>();
   const views = new Map<HTMLElement, Rect>();
   const withLinks = linksTakeSquares();
+  /* the layout viewport's width: no square reaches past the page's sides */
+  const pageR = document.documentElement.clientWidth;
   const PSEUDO = withLinks ? `${BASE_PSEUDO}, ${LINKS}` : BASE_PSEUDO;
   const CONTROLS = withLinks ? `${BASE_CONTROLS}, ${LINKS}` : BASE_CONTROLS;
   for (const el of Array.from(document.querySelectorAll<HTMLElement>(CONTROLS))) {
@@ -274,6 +276,15 @@ export function clipHitAreas(): void {
     const w = a.r - a.l;
     const reach = Math.max(ext.l, ext.r);
     const ownMin = reach > Math.max(0, (min - w) / 2) + 0.01 ? `${(w + 2 * reach).toFixed(2)}px` : "";
+    /* A square stops at the page's sides (launch fix round, gate on 75e9920):
+       a narrow target on the 16px gutter — a card's receipt tip, 11px wide,
+       reaches 16.5px — pushed the page half a pixel sideways on a phone, and
+       no finger lands past the edge of the screen. A cut, like the midpoint
+       split: the target's own box never shrinks. */
+    if (pageR > 0) {
+      ext.l = Math.min(ext.l, a.l);
+      ext.r = Math.min(ext.r, pageR - a.r);
+    }
     const visit = (j: number): void => {
       const sb = squares[j]!;
       if (!squareOverlaps(sa, sb)) return;
