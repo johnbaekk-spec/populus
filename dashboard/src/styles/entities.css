@@ -505,7 +505,6 @@ table:is(.etable, .feed-table.reference-feed) {
   border-top: 1px dashed var(--rule);
   white-space: normal;
 }
-.etable .mix-bucket td { color: var(--ink3); font-style: italic; }
 .etable td sup,
 .reference-feed td sup {
   font-size: var(--fs-meta);

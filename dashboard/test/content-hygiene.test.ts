@@ -30,6 +30,7 @@ import { qoqPresentation } from "../src/lib/derive.ts";
 import {
   changesTableHtml,
   entityTxnRowsHtml,
+  entityTxnTable,
   filerEdgarBlock,
   hitRowHtml,
   memberV2Sections,
@@ -268,7 +269,12 @@ test("T3.3 (R17): the default asset text drops [ST], the ticker and 'Common Stoc
   assert.match(print, /\.asset-line > \.asset-text,[\s\S]*?white-space: normal/);
 });
 
-test("T3.3 (R17; W-9, CD3-4): the member's net-flow Issuer cell shows the NAME, its note keyed on the ticker, only when more than the mechanical parts differ", () => {
+/* launch M4b (R26): the net-flow table became the side column's Top
+   tickers (Ticker · bar · B·S · Net) and its Issuer column left with the
+   mock's layout. The property it pinned — the asset as filed is reachable
+   from the member page, its mechanical parts dropped only where nothing else
+   differs — now lives on the trades table's asset line (R17), pinned here. */
+test("T3.3 → launch M4b (R17): the member's trades show each asset's default text, with the as-filed note only when more than the mechanical parts differ", () => {
   const m = {
     bioguide: "T000001", name: "Fixture Member", party: "R", state: "OK", district: null, chamber: "senate", servingSince: "1999", filingCount: 1,
     txns: [
@@ -277,24 +283,19 @@ test("T3.3 (R17; W-9, CD3-4): the member's net-flow Issuer cell shows the NAME, 
     ],
     paper: [],
   };
-  const html = memberV2Sections(m as never, { buildId: "b", generatedAt: "2026-07-24 06:56 UTC", generatedAtDate: "2026-07-24" }, CTX, { resolveSector: null, sectorMeta: null, committees: null });
+  const html = entityTxnTable(m.txns as never, { kind: "member", caption: "c", page: 0, ctx: CTX, notes: { scope: "member-txns" } });
   const dom = domOf(html);
   const cellOf = (ticker: string) =>
-    dom.querySelectorAll("tr.design-net-row").find((tr) => visibleText(tr.querySelector("td.c-ticker")!).trim() === ticker)!.querySelector("td.design-issuer")!;
-  // a mechanical-only row: the name, and NO per-row note (the header states the rule)
+    dom.querySelectorAll("tbody tr").find((tr) => visibleText(tr.querySelector("td.c-ticker")!).trim() === ticker)!.querySelector("td.c-asset")!;
   const cvx = cellOf("CVX");
   assert.equal(visibleText(cvx).trim(), "Chevron Corporation");
   assert.equal(cvx.querySelectorAll(".note-pop").length, 0, "CD3-4 (c): no per-row note for a mechanical-only difference");
-  // a row whose newest trade is an option: the NAME only (W-9), the note gives the filing and the code
   const nflx = cellOf("NFLX");
-  assert.equal(visibleText(nflx.querySelectorAll(".note-label")[0]!).replace(", explain", "").trim(), "Netflix, Inc.", "W-9: no type words on a row that nets every trade");
-  assert.equal(visibleText(nflx.querySelectorAll(".note-pop")[0]!).trim(), "As filed: Netflix, Inc. (NFLX) [OP] · type code OP: Options");
-  assert.equal(nflx.querySelectorAll(".note-pop")[0]!.getAttribute("id"), "n-mf-nflx", "CD3-4 (a): keyed on the ticker");
-  // the Issuer header carries the rule once
-  const issuerHead = dom.querySelectorAll("th").find((th) => /^Issuer/.test(visibleText(th).trim()))!;
-  assert.match(visibleText(issuerHead.querySelectorAll(".note-pop")[0]!), /a trailing “\(TICKER\)” that is the row's ticker, the stock code “\[ST\]”/);
-  // controls: the retired forms — the type words in the label, a txn-keyed id
-  assert.doesNotMatch(visibleText(nflx), /· Options/);
+  assert.match(visibleText(nflx.querySelectorAll(".note-pop")[0]!), /As filed: Netflix, Inc\. \(NFLX\) \[OP\]/, "the note gives the filing as filed");
+  // the Asset · owner header carries the asset rule once
+  const head = dom.querySelectorAll("th").find((th) => /^Asset · owner/.test(visibleText(th).trim()))!;
+  assert.match(visibleText(head.querySelectorAll(".note-pop")[0]!), /a trailing “\(TICKER\)” that is the row's ticker, the stock code “\[ST\]”/);
+  // control: the retired txn-keyed net-flow ids are not back
   assert.doesNotMatch(html, /n-member-flow-asset-/);
 });
 

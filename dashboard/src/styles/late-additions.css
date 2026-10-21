@@ -70,7 +70,7 @@
 .rail-filed { font: 400 var(--fs-cell) var(--mono); color: var(--ink3); }
 .rail-caption { font: 400 var(--fs-note) var(--mono); color: var(--ink3); margin-top: 8px; }
 
-/* C-3: member v2 panels (the mix-bucket cell style is in the ledger region) */
+/* C-3: member v2 panels */
 .non-allegation { font-weight: 600; }
 
 /* The exact rule inside per-entity signal rows */
@@ -590,22 +590,11 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 .design-page > .design-briefing, .entity-page > .design-briefing { margin-left:calc(-1 * var(--design-gutter)); margin-right:calc(-1 * var(--design-gutter)); margin-bottom:0; }
 .design-band { display:grid; gap:0; margin:0 calc(-1 * var(--design-gutter)); border-bottom:1px solid var(--rule); }
 .design-band > * { min-width:0; padding:10px var(--gutter) 14px; }
-/* D-11: 28px gutters only on the inner gutters of the member's Filing
-   history │ Signals pair, as the exports draw them; every other pair keeps
-   32px (Institutional's band I1, whose left cell also took 28px, moved to
-   /signals/#institutional as a different band in signals-v4 M2). The table
-   inside follows its cell. */
-@media (min-width: 1081px) {
-  .design-member-history-band:not([data-collapsed]) > :first-child { padding-right: 28px; }
-  .design-member-history-band:not([data-collapsed]) > :first-child .table-scroll { --gutter-r: 28px; }
-  .design-member-history-band:not([data-collapsed]) > :last-child { padding-left: 28px; }
-  .design-member-history-band:not([data-collapsed]) > :last-child .table-scroll { --gutter-l: 28px; }
-}
+/* launch M4b: the member page's Filing history │ Signals pair and its
+   net-flow band are retired (Signals joined the side column, the history
+   stands alone), so their 28px inner-gutter rules went with them. */
 .design-band > * + * { border-left:1px solid var(--rule); }
 .design-band .panel { margin:0; border:0; }
-.design-member-band { grid-template-columns:minmax(0,1.7fr) minmax(0,1fr); }
-/* A paired band (R10): two cells of equal width with the 1px seam. */
-.design-pair { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
 /* Band F1: Reported positions (1.7fr) │ Book shape + Filing history (1fr). */
 .design-filer-band { grid-template-columns:minmax(0,1.7fr) minmax(0,1fr); }
 .design-filer-band > [data-holdings-surface] { margin:0; border:0; }
@@ -681,7 +670,7 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
    here is page composition (recomposed in DESIGN-POLISH M2). */
 @media(max-width:1080px) {
  /* Bands stack below 1080px. This stays HERE, after every band's own
-    column rule (.design-member-band and its siblings), or those win. */
+    column rule (.design-filer-band and its siblings), or those win. */
  .design-band, .design-rankings { grid-template-columns:minmax(0,1fr); }
  .design-band > * + *, .design-rankings > * + * { border-left:0; border-top:1px solid var(--rule); }
  .design-rankings .reference-ranking .etable { min-width:680px; }
@@ -1420,3 +1409,63 @@ details.si-tier > summary > .si-tier-h { display: inline; }
 /* R21 */
 .card-foot-more summary { cursor: pointer; }
 
+
+/* ==================================================== launch M4b — member pages
+   Desktop layout only (the phone cards are the M1 contract's, keyed on the
+   role classes these tables emit). The active layout is a main column (the
+   quarterly chart, then the trades) beside a side column (Top tickers,
+   Profile, Sectors, Signals); the compact layout is one card per trade and
+   three computed facts. Every honesty element stays visible at every width. */
+.member-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 8px 40px; align-items: start; }
+.member-main, .member-side { min-width: 0; }
+@media (max-width: 1100px) { .member-grid { grid-template-columns: minmax(0, 1fr); } }
+.member-side-sec { margin-bottom: 6px; }
+.member-cmte { white-space: nowrap; }
+.chair-badge { font: 600 var(--fs-label)/1.3 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--gold, var(--ink2)); border: 1px solid var(--rule2); border-radius: 2px; padding: 0 4px; margin-left: 2px; }
+.member-side-filter, .member-top-window { display: inline-flex; gap: 4px; margin-left: auto; }
+.member-side-filter button, .member-top-window button { font: 500 var(--fs-control) var(--mono); border: 1px solid var(--rule2); border-radius: 2px; background: transparent; color: var(--ink3); padding: 4px 10px; min-height: var(--hit-min, 24px); cursor: pointer; }
+.member-side-filter button[aria-pressed="true"], .member-top-window button[aria-pressed="true"] { color: var(--ink); border-color: var(--ink3); }
+.member-side-filter .n { color: var(--ink3); margin-left: 4px; }
+.member-top .c-bs { white-space: nowrap; }
+.sx-bar { display: block; height: 6px; background: var(--rule); position: relative; min-width: 40px; }
+.sx-bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--ink3); }
+/* the quarterly ribbon's labelled axis (R24, LD13) */
+.ribbon-axis .rb-plot { position: relative; display: flex; gap: 8px; outline-offset: 2px; }
+.ribbon-axis .rb-yaxis { position: relative; flex: 0 0 48px; height: 190px; }
+.ribbon-axis .rb-ytick { position: absolute; right: 0; transform: translateY(50%); font: 400 var(--fs-meta) var(--mono); color: var(--ink3); white-space: nowrap; }
+.ribbon-axis .rb-track { flex: 1; min-width: 0; }
+.ribbon-axis .rb-down { flex: 1; }
+.ribbon-axis .rb-col { position: relative; cursor: crosshair; }
+.ribbon-axis .rb-col[data-selected] { background: var(--rule); }
+.ribbon-axis .rb-hi { opacity: .4; }
+.ribbon-axis .rb-cutoff { opacity: .3; border-style: dashed; }
+.ribbon-axis .rb-cut { position: absolute; left: 50%; transform: translateX(-50%); font: 600 var(--fs-label)/1 var(--mono); color: var(--ink2); white-space: nowrap; }
+.ribbon-axis .rb-up .rb-cut { top: -2px; }
+.ribbon-axis .rb-down .rb-cut { bottom: -2px; }
+.ribbon-axis .rb-up, .ribbon-axis .rb-down { position: relative; }
+.ribbon-axis .rb-none { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); font: 500 var(--fs-meta) var(--mono); color: var(--ink3); }
+.ribbon-axis .rb-labels { padding-left: 56px; }
+.ribbon-axis .rb-label-cur { color: var(--ink2); }
+.rb-legend { display: flex; flex-wrap: wrap; gap: 14px; font: 500 var(--fs-meta) var(--mono); color: var(--ink2); margin-bottom: 6px; }
+.rb-lg { display: inline-block; width: 10px; height: 10px; vertical-align: -1px; margin-right: 6px; }
+.rb-lg-buy { background: var(--buy); }
+.rb-lg-sell { background: var(--sell); }
+.rb-lg-max { background: var(--rule2); }
+.rb-readout { font: 500 var(--fs-note) var(--mono); color: var(--ink2); margin: 6px 0 0; }
+/* the compact layout (R23) */
+.one-trades { list-style: none; margin: 6px 0 0; padding: 0; border-top: 1px solid var(--rule); }
+.one-r { display: grid; grid-template-columns: 62px minmax(0, 1fr) auto; gap: 6px 18px; align-items: center; padding: 16px 6px; border-bottom: 1px solid var(--rule); }
+.one-side { font: 600 var(--fs-small)/1 var(--mono); letter-spacing: .08em; }
+.one-what { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.one-l1, .one-l2 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+.one-tk { font: 600 var(--fs-display) var(--mono); }
+.one-iss { font: 400 var(--fs-body) var(--sans); color: var(--ink2); }
+.one-l2 { font: 500 var(--fs-small) var(--mono); color: var(--ink3); }
+.one-amt { font: 600 var(--fs-title) var(--mono); color: var(--ink); }
+.member-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; border-bottom: 1px solid var(--rule); }
+.member-facts > div { padding: 14px 18px 16px; border-left: 1px solid var(--rule); min-width: 0; }
+.member-facts > div:first-child { border-left: 0; padding-left: 6px; }
+.member-facts dt { font: 500 var(--fs-label) var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink3); }
+.member-facts dd { margin: 8px 0 0; font: 400 var(--fs-small)/1.5 var(--sans); color: var(--ink); }
+.fact-dim { color: var(--ink3); }
+@media (max-width: 720px) { .member-facts { grid-template-columns: minmax(0, 1fr); } .member-facts > div { border-left: 0; padding-left: 6px; border-top: 1px solid var(--rule); } .member-facts > div:first-child { border-top: 0; } }

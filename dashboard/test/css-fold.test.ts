@@ -999,6 +999,23 @@ function renderCorpus(): string {
       () => "/institutional/filers/0000000001/",
     ),
     memberBody(m, stamps, CTX),
+    /* launch M4b (R23): a member with four trades over two filings renders
+       the ACTIVE layout — the one-trade member above renders the compact one
+       — so both layouts' classes are swept */
+    memberBody(
+      {
+        ...m,
+        filingCount: 2,
+        txns: [
+          t,
+          { ...t, txnId: "t-2", side: "purchase", low: 1001, high: 15000 },
+          { ...t, txnId: "t-3", doc: "https://efdsearch.senate.gov/y/" },
+          { ...t, txnId: "t-4", ticker: "XOM", side: "purchase", low: 15001, high: 50000, late: 0 },
+        ],
+      },
+      stamps,
+      CTX,
+    ),
     congressTickerBody({ ticker: "WMB", txns: [t] }, stamps, CTX),
     tickerUnifiedBody(
       { ticker: "WMB", txns: [t] },
@@ -1174,9 +1191,9 @@ const NEW_RENDERER_CLASSES = [
      filer parts (T2.3–T2.5), column presence's foot reason (T2.1), the hit
      evidence row (T2.7). `.explainer` left this list with M2: filerHeadHtml
      replaced the paragraph with the provenance strip (see RETIRED below). */
-  "ledger-fig", "ledger-value", "ledger-sub", "design-pair", "design-filer-band",
+  "ledger-fig", "ledger-value", "ledger-sub", "design-filer-band",
   "design-filer-side", "filer-ledger-root", "filer-data-note", "head-controls", "head-control",
-  "table-foot-reason", "design-member-history-band",
+  "table-foot-reason",
   /* SIGNALS-CLARITY M2 (R10–R12): the WHAT sentence and its asset-type chip,
      the ×n repeat mark, and the listed-stock filter's hidden count. (The
      evidence row, its rule restatement and its member list left with
@@ -1291,6 +1308,11 @@ const NEW_HOOK_CLASSES = [
    marks), and the classic nine-cell feed only that page rendered — its filed
    cell, its paper-row name and its visible `.col-why` header reasons. */
 const RETIRED_CLASSES = [
+  /* launch M4b (R23, R26): the member page's paired bands — Filing history │
+     Signals and the net-flow band — are gone: Signals sits in the side column
+     and the history stands alone, so their band classes and CSS left with
+     them (design-pair had no other caller). */
+  "design-pair", "design-member-history-band", "design-member-band",
   "explainer", "explainer-h", "design-rankings-single", "coverage-strip",
   "design-triptych", "design-triptych-single", "design-activity-band",
   "nav-shell", "footer-block", "footer-build",

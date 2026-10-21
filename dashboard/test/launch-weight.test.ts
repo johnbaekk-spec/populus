@@ -83,19 +83,17 @@ function islandOf<R, S>(html: string, id: string): { render: string; data: HeldI
   return { render: m![1]!, data: data as HeldIsland<R, S> };
 }
 
-/** The whole net-by-ticker table rendered from inputs recomputed HERE, from
-    the rows — the reference the two carriers together must reproduce. */
+/** The whole Top tickers table (all history) rendered from inputs
+    recomputed HERE, from the rows — the reference the two carriers together
+    must reproduce. */
 function referenceNetRows(): string[] {
   const { rows } = memberNetByTicker(TXNS);
   const { ranked, undisclosedBucket } = rankNetRows(rows, (r) => r.net, (r) => r.ticker);
   const low = (s: SumRanges): number => (s.kind === "closed" || s.kind === "open" ? s.low : 0);
-  const shared: MemberNetShared = { scale: Math.max(1, ...rows.flatMap((r) => [low(r.purchases), low(r.sales)])), cols: 8 };
-  const newest = new Map<string, TxnRow>();
-  for (const t of TXNS) if (t.ticker && (!newest.has(t.ticker) || (t.traded ?? "") > (newest.get(t.ticker)!.traded ?? ""))) newest.set(t.ticker, t);
+  const shared: MemberNetShared = { scale: Math.max(1, ...rows.flatMap((r) => [low(r.purchases), low(r.sales)])), cols: 4 };
   const input = (r: (typeof rows)[number], overlapsPrev: boolean): MemberNetRowIn => ({
-    ticker: r.ticker, cut: r.ticker === CUT, asset: newest.get(r.ticker)?.asset ?? null,
-    assetType: newest.get(r.ticker)?.assetType ?? null, purchases: r.purchases, sales: r.sales,
-    buys: r.buys, sells: r.sells, net: r.net, overlapsPrev, last: newest.get(r.ticker)?.traded ?? "",
+    ticker: r.ticker, cut: r.ticker === CUT, purchases: r.purchases, sales: r.sales,
+    buys: r.buys, sells: r.sells, net: r.net, overlapsPrev,
   });
   const all: MemberNetRowIn[] = [
     ...ranked.map((r, i) => input(r, i > 0 && netOverlaps(r.net, ranked[i - 1]!.net) === true)),
@@ -105,28 +103,32 @@ function referenceNetRows(): string[] {
   return all.map((r, i) => memberNetRowHtml(r, i, shared));
 }
 
-test("R27: the net-by-ticker table ships 20 tickers in the DOM and the rest in an island, with the count exact", () => {
-  const dom = tbodyRows(HTML, "member-flows-tbody");
-  assert.equal(dom.length, 20, "20 ticker rows in the DOM (the separator sits past them)");
+const ROOT = "member-top-all-tbody";
+
+test("R27: Top tickers ships 8 tickers per window in the DOM and the rest in an island, with the count exact", () => {
+  for (const root of ["member-top-24m-tbody", ROOT]) {
+    const dom = tbodyRows(HTML, root);
+    assert.equal(dom.length, 8, `${root}: 8 ticker rows in the DOM (the separator sits past them)`);
+    const { render, data } = islandOf<MemberNetRowIn, MemberNetShared>(HTML, root);
+    assert.equal(render, MEMBER_NET_ROWS);
+    assert.equal(data.offset, 8);
+    assert.equal(data.rows.length, 18 + 1 + 2, "T08..T25, the separator, U1 and U2");
+    assert.match(HTML, new RegExp(`<tbody id="${root}" role="rowgroup" data-collapsed="true" data-held="json">`));
+    assert.match(HTML, new RegExp(`data-compact-for="${root}" data-compact-total="28" data-compact-shown="8"`));
+  }
   assert.ok(!HTML.includes("data-compact-extra"), "no held row is in the DOM");
-  const { render, data } = islandOf<MemberNetRowIn, MemberNetShared>(HTML, "member-flows-tbody");
-  assert.equal(render, MEMBER_NET_ROWS);
-  assert.equal(data.offset, 20);
-  assert.equal(data.rows.length, 6 + 1 + 2, "T20..T25, the separator, U1 and U2");
-  assert.match(HTML, /<tbody id="member-flows-tbody" data-collapsed="true" data-held="json">/);
-  assert.match(HTML, /data-compact-for="member-flows-tbody" data-compact-total="28" data-compact-shown="20"/);
-  assert.match(HTML, /1–20 of 28 tickers/, "the count is rule 6's grammar over every ticker");
+  assert.match(HTML, /1–8 of 28 tickers/, "the count is rule 6's grammar over every ticker");
 });
 
 test("R27: DOM rows + island rows = the whole table from independently recomputed inputs, byte for byte", () => {
-  const dom = tbodyRows(HTML, "member-flows-tbody");
-  const { data } = islandOf<MemberNetRowIn, MemberNetShared>(HTML, "member-flows-tbody");
+  const dom = tbodyRows(HTML, ROOT);
+  const { data } = islandOf<MemberNetRowIn, MemberNetShared>(HTML, ROOT);
   const held = data.rows.map((r, j) => memberNetRowHtml(r, data.offset + j, data.shared));
   assert.deepEqual([...dom, ...held], referenceNetRows());
 });
 
 test("R27 controls: the island carries the inputs a client could not recompute from the held rows alone", () => {
-  const { data } = islandOf<MemberNetRowIn, MemberNetShared>(HTML, "member-flows-tbody");
+  const { data } = islandOf<MemberNetRowIn, MemberNetShared>(HTML, ROOT);
   const ref = referenceNetRows().slice(data.offset);
   const render = (rows: MemberNetRowIn[], shared: MemberNetShared): string[] =>
     rows.map((r, j) => memberNetRowHtml(r, data.offset + j, shared));
@@ -210,17 +212,18 @@ test("R27: the binder renders the held rows through the registered function, onc
     registerHeldRows(MEMBER_NET_ROWS, memberNetRowHtml);
     registerHeldRows(MEMBER_HISTORY_ROWS, memberHistoryRowHtml);
     initDomDisclosures();
-    const tbody = doc.getElementById("member-flows-tbody")!;
-    const wrap = doc.querySelector('.compact-disclosure[data-compact-for="member-flows-tbody"]')!;
+    const tbody = doc.getElementById(ROOT)!;
+    const wrap = doc.querySelector(`.compact-disclosure[data-compact-for="${ROOT}"]`)!;
     const btn = wrap.querySelector("button")!;
-    assert.equal(tbody.children.length, 20);
+    assert.equal(tbody.children.length, 8);
     assert.equal(btn.hidden, false, "the binder reveals the control");
     assert.equal(btn.textContent, "Show all 28 tickers");
 
     // print first: beforeprint renders and reveals, afterprint restores
     winListeners.get("beforeprint")!.forEach((fn) => fn());
     assert.equal(tbody.getAttribute("data-collapsed"), "false", "print shows every held row");
-    assert.equal(tbody.children.length, 29, "20 + T20..T25, the separator, U1, U2");
+    assert.equal(doc.getElementById("member-history-tbody")!.getAttribute("data-collapsed"), "false", "the history's too");
+    assert.equal(tbody.children.length, 29, "8 + T08..T25, the separator, U1, U2");
     winListeners.get("afterprint")!.forEach((fn) => fn());
     assert.equal(tbody.getAttribute("data-collapsed"), "true", "afterprint collapses what it opened");
 
@@ -229,10 +232,10 @@ test("R27: the binder renders the held rows through the registered function, onc
     assert.equal(tbody.getAttribute("data-collapsed"), "false");
     assert.equal(tbody.children.length, 29, "rendered once — no duplicate rows");
     const tickers = tbody.querySelectorAll("td.c-ticker a").map((a) => a.textContent);
-    assert.deepEqual(tickers.slice(18, 22), ["T18", "T19", "T20", "T21"], "held rows continue the order");
-    assert.equal(tbody.children.slice(20).every((tr) => tr.hasAttribute("data-compact-extra")), true, "held rows are marked held");
-    assert.equal(tbody.children.slice(0, 20).some((tr) => tr.hasAttribute("data-compact-extra")), false);
-    assert.equal(btn.textContent, "Show only the first 20 tickers");
+    assert.deepEqual(tickers.slice(6, 10), ["T06", "T07", "T08", "T09"], "held rows continue the order");
+    assert.equal(tbody.children.slice(8).every((tr) => tr.hasAttribute("data-compact-extra")), true, "held rows are marked held");
+    assert.equal(tbody.children.slice(0, 8).some((tr) => tr.hasAttribute("data-compact-extra")), false);
+    assert.equal(btn.textContent, "Show only the first 8 tickers");
     btn.bubbleClick();
     assert.equal(tbody.getAttribute("data-collapsed"), "true");
   } finally {

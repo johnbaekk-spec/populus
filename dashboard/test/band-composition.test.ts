@@ -342,7 +342,12 @@ function partnerTunedRows(o: { partnerPx: number; chromePx: number; max: number;
   return Math.max(Math.min(3, o.max), Math.min(o.max, Math.round((o.partnerPx - o.chromePx) / (o.rowPx ?? 30))));
 }
 
-test("CD-1 (Q2-10): member flows show 20 and the filing history 12 whatever the side cell holds; a partner-tuned N fails", async () => {
+/* launch M4b (R26, LD24): the member page's net-by-ticker table became the
+   side column's Top tickers — 8 per window, its "Show all N tickers" over the
+   island (rule 8) — and the Filing history left its pair band. The property
+   is unchanged: each default N is FIXED, never tuned to whatever sits beside
+   it; the mechanism (a band partner) became a side column. */
+test("CD-1 (Q2-10): member Top tickers show 8 and the filing history 12 whatever the side column holds; a partner-tuned N fails", async () => {
   const { memberBody, memberSignalsPanel } = await import("../src/lib/ui/index.ts");
   const stamps = { buildId: "b", generatedAt: "2026-07-24 06:56 UTC", generatedAtDate: "2026-07-24" };
   const ctx = {};
@@ -358,11 +363,11 @@ test("CD-1 (Q2-10): member flows show 20 and the filing history 12 whatever the 
   for (const deps of [noSector, sectors]) {
     for (const sig of signals) {
       const html = memberBody(member, stamps, ctx, 0, deps, sig);
-      flows.push(shownOf(html, "member-flows-tbody"));
+      flows.push(shownOf(html, "member-top-24m-tbody"));
       history.push(shownOf(html, "member-history-tbody"));
     }
   }
-  assert.deepEqual(fixedDefaultProblems(flows, 20), [], "member flows: 20, fixed");
+  assert.deepEqual(fixedDefaultProblems(flows, 8), [], "member Top tickers: 8, fixed");
   assert.deepEqual(fixedDefaultProblems(history, 12), [], "filing history: 12, fixed");
   /* control: the M2-D1 model — N tuned to the partner cell by a height
      estimate (the no-sector profile, then a 14-row sector mix beside it) —
@@ -678,7 +683,8 @@ test("T2.8: every page header renders its figures through the ONE ledger; statTi
   for (const rel of ["pages/congress/index.astro", "pages/institutional/index.astro"]) assert.match(read(rel), /disclosureLedger\(/, rel);
   for (const [rel, fn] of [
     ["lib/ui/signals.ts", "signalsBody"],
-    ["lib/ui/congress.ts", "memberBody"],
+    // launch M4b: memberBody's header ledger is composed in memberLedgerHtml
+    ["lib/ui/congress.ts", "memberLedgerHtml"],
     ["lib/ui/congress.ts", "congressTickerBody"],
     ["lib/ui/institutional.ts", "filerLedgerHtml"],
     ["lib/ui/institutional.ts", "holdersBody"],

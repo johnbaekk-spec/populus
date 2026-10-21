@@ -27,6 +27,7 @@ import {
 import {
   QOQ_FOOTNOTES,
   hitRowHtml,
+  memberBody,
   memberSignalsPanel,
   memberV2Sections,
   notableRailHtml,
@@ -217,12 +218,16 @@ test("CD3-4 (a): the net-flow notes are keyed on the ticker, injectively, and ev
     txns: tickers.map((t, i) => txn({ ticker: t, asset: `Issuer ${i} Holdings (XYZ${i}) [OP]`, assetType: "OP", txnId: `t-${i}` })),
     paper: [],
   };
-  const html = memberV2Sections(m as never, { buildId: "b", generatedAt: "2026-07-24 06:56 UTC", generatedAtDate: "2026-07-24" }, CTX, { resolveSector: null, sectorMeta: null, committees: null });
+  /* launch M4b (R26): the net-flow table became Top tickers and its Issuer
+     column (the `n-mf-<ticker>` notes) left with the approved layout; the
+     as-filed note lives on the trades' asset line. What stays pinned: the
+     ticker key is injective, and every id on the member page — two Top
+     tickers windows over the same tickers included — is unique. */
+  const html = memberBody(m as never, { buildId: "b", generatedAt: "2026-07-24 06:56 UTC", generatedAtDate: "2026-07-24" }, CTX, 0, { resolveSector: null, sectorMeta: null, committees: null });
   const ids = [...html.matchAll(/ id="([^"]+)"/g)].map((x) => x[1]!);
-  const mf = ids.filter((id) => id.startsWith("n-mf-"));
-  assert.equal(mf.length, tickers.length, "one note per ticker row (each name differs non-mechanically)");
+  assert.ok(ids.length > tickers.length, "the fixture renders the active page's ids");
   assert.equal(new Set(ids).size, ids.length, `duplicate ids: ${ids.filter((id, i) => ids.indexOf(id) !== i).join(", ")}`);
-  assert.ok(mf.every((id) => id.length <= 20), "short ids: the 75-character txn-keyed id is gone");
+  assert.ok(!ids.some((id) => /^n-member-flow-asset-/.test(id)), "the 75-character txn-keyed net-flow id is gone");
   // control: the slug of the plain ticker would collide
   assert.equal("BRK.B".toLowerCase().replace(/[^a-z0-9]+/g, "-"), "BRK-B".toLowerCase().replace(/[^a-z0-9]+/g, "-"));
 });
@@ -282,7 +287,7 @@ test("K-7: one receipt rule — the link names its regime; where it cannot, or t
   } as Signal);
   assert.match(visibleText(domOf(hitRowHtml(s(["https://example.gov/doc"]), CTX)).querySelectorAll("td.c-src")[0]!), /PTR src/);
   // the member panel prints the same rule over the same fields
-  const artifact = { coverageFrom: "2026-01-01", coverageTo: "2026-06-30", lagCaveat: "c", signals: [s(["https://example.gov/doc"]), { ...s([]), id: "s2" }] } as never;
+  const artifact = { coverageFrom: "2026-01-01", coverageTo: "2026-06-30", retentionDays: 90, lagCaveat: "c", signals: [s(["https://example.gov/doc"]), { ...s([]), id: "s2" }] } as never;
   const panel = domOf(memberSignalsPanel(artifact, "A000001", CTX)).querySelectorAll("td.c-src").map((td) => visibleText(td).replace(/\s+/g, " ").trim());
   assert.deepEqual(panel, ["PTR src ↗", "PTR —"]);
   /* The watch band's own client-side receipt cell went with the band
@@ -364,7 +369,8 @@ test("W-10: FLAT only inside the smallest bucket; a wider zero-spanning range re
     paper: [],
   };
   const html = memberV2Sections(m as never, { buildId: "b", generatedAt: "2026-07-24 06:56 UTC", generatedAtDate: "2026-07-24" }, CTX, { resolveSector: null, sectorMeta: null, committees: null });
-  const kind = domOf(html).querySelectorAll("tr.design-net-row td.c-kind")[0]!;
+  // launch M4b: Top tickers speaks the direction word inside the ticker cell
+  const kind = domOf(html).querySelectorAll("tr.design-net-row td.c-ticker .visually-hidden")[0]!;
   assert.equal(visibleText(kind).trim(), "± net range spans zero");
   // control: the retired rule called a range of millions either way "FLAT"
   assert.notEqual(visibleText(kind).trim().split(" ")[0], "FLAT");

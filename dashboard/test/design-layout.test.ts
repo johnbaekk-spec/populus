@@ -6,92 +6,64 @@ import { feedHeadHtml, txnRowHtml, type TxnRow } from '../src/lib/format.ts';
 import { MiniElement } from './lib/mini-dom.ts';
 import { domOf } from './lib/ledger-dom.ts';
 
-test('R16: member bands read identity → chart → tickers ranked → transactions → signals; the empty annual/overlap frames are ONE planned line', async () => {
-  const html = (await renderParitySurfaces()).memberBody!;
-  const titles = ['Disclosed flow by quarter', 'Net disclosed flow by ticker', 'Trading profile', 'All disclosed transactions', 'Filing history'];
-  let previous = -1;
-  for (const title of titles) {
-    const at = html.indexOf(`>${title}</h2>`);
-    assert.ok(at > previous, `${title} must be present in source reading order`);
-    previous = at;
-  }
-  for (const gone of ['Holdings from annual disclosure', 'Reconciliation', 'Institutional overlap']) {
-    assert.ok(!html.includes(`>${gone}</h2>`), `${gone} is no longer a frame on the page`);
-  }
-  assert.doesNotMatch(html, /annual records unavailable|join unavailable/, 'no em-dash stat tiles remain');
-  assert.equal((html.match(/class="planned-line"/g) ?? []).length, 1, 'exactly one planned line');
-  assert.match(html, /planned-line"><span class="badge-planned">PLANNED<\/span> annual holdings · 13F overlap</);
-  // the honesty fold: the relocated explainer is still on the page
-  assert.match(html, /Annual holdings are not in this view/);
-});
-
-/* DESIGN-POLISH M2 (T2.3; Architecture F, the member composition). The page
-   reads chart → band M1 (net flow │ trading profile) → all transactions →
-   band M2 (filing history │ signals) → paper filings → the ONE Planned line →
-   the collapsed context disclosures, in DOM order (= visual order). Band M2
-   collapses EXACTLY when its Signals cell is only an empty-state line (R10):
-   collapsed on purpose, it says so with `data-collapsed="empty-state"`, and the
-   empty line sits under the history; with signal rows it is a real pair. */
-function memberBandOrder(html: string): string[] {
+/* launch M4b (R23, R26; LD24) — replaces the DESIGN-POLISH M2 composition
+   pins (R16 band order, T2.3 band M2), whose bands the approved launch layout
+   retires. The property kept: the member page reads in ONE stated order, in
+   DOM order (= visual order), with nothing honest lost and no empty frame.
+   The mechanism: an ACTIVE member (4+ trades) reads chart → trades in the main
+   column, then the side column (Top tickers, Profile at 10+, Sectors at 2+,
+   Signals), then Filing history (2+ filings), paper filings and the collapsed
+   committee context; the Planned strip and "Additional disclosure analysis"
+   are gone (member-18, member-21). */
+function memberOrder(html: string): string[] {
   const root = domOf(html);
-  const mark = (el: MiniElement): string | null =>
-    el.classList.contains('design-member-chart') ? 'chart'
-      : el.classList.contains('design-flow-band') ? 'M1'
-        : el.getAttribute('aria-labelledby') === 'txns-h' ? 'transactions'
-          : el.classList.contains('design-member-history-band') ? 'M2'
-            : el.classList.contains('paper-block') ? 'paper'
-              : el.classList.contains('planned-line') ? 'planned'
-                : el.tagName === 'details' && /Recent disclosures and committee context/.test(el.textContent) ? 'context'
-                  : el.tagName === 'details' && /Additional disclosure analysis/.test(el.textContent) ? 'analysis'
-                    : null;
-  return root.children.map(mark).filter((m): m is string => m !== null);
+  const out: string[] = [];
+  const walk = (el: MiniElement): void => {
+    const mark =
+      el.classList.contains('design-member-chart') ? 'chart'
+        : el.getAttribute('aria-labelledby') === 'txns-h' ? 'trades'
+          : el.classList.contains('member-top-tickers') ? 'top'
+            : el.getAttribute('aria-label') === 'Profile' ? 'profile'
+              : el.classList.contains('member-sectors') || el.classList.contains('design-unavailable-line') ? 'sectors'
+                : el.getAttribute('aria-label') === 'Signals' ? 'signals'
+                  : el.getAttribute('aria-label') === 'Filing history' ? 'history'
+                    : el.classList.contains('paper-block') ? 'paper'
+                      : el.classList.contains('planned-line') ? 'planned'
+                        : el.tagName === 'details' && /Recent disclosures and committee context/.test(el.textContent) ? 'context'
+                          : el.tagName === 'details' && /Additional disclosure analysis/.test(el.textContent) ? 'analysis'
+                            : el.classList.contains('member-compact') ? 'compact'
+                              : null;
+    if (mark) out.push(mark);
+    else el.children.forEach(walk);
+  };
+  root.children.forEach(walk);
+  return out;
 }
 
-test('T2.3: member bands read chart → M1 → transactions → M2 → paper → Planned line → context; band M2 collapses exactly when Signals is an empty state', async () => {
-  const { memberBody, memberSignalsPanel } = await import('../src/lib/ui/index.ts');
-  const stamps = { buildId: 'b', generatedAt: '2026-07-24 06:56 UTC', generatedAtDate: '2026-07-24' };
-  const ctx = {};
-  const row = (i: number, over: Partial<TxnRow> = {}): TxnRow => ({ kind:'txn', txnId:`t${i}`, bioguide:'T000001', name:'Fixture Member', party:'R', state:'OK', district:null, chamber:'senate', ticker:'WMB', asset:'Williams', assetType:null, side:'purchase', owner:'self', low:1001, high:15000, traded:'2026-06-24', filed:`2026-07-${String(10 + i).padStart(2, '0')}`, lag:20, late:0, flags:[], doc:`https://efdsearch.senate.gov/x/${i}`, ...over });
-  const member = { bioguide:'T000001', name:'Fixture Member', party:'R', state:'OK', district:null, chamber:'senate', servingSince:'1999', filingCount:4, txns:[row(1), row(2, { side:'sale', ticker:'NVDA' })], paper:[{ kind:'paper', filed:'2026-06-01', name:'Fixture Member', bioguide:'T000001', party:'R', state:'OK', district:null, chamber:'senate', doc:'https://efdsearch.senate.gov/p' }] } as never;
-  const deps = { resolveSector: null, sectorMeta: null, committees: null };
-  const artifact = { v:1, buildId:'b', computedAt:'2026-07-24', thresholdVersion:'1', retentionDays:90, coverageFrom:'2026-04-25', coverageTo:'2026-07-24', lifecycleNote:'n', compaction:'none', dateAnomaliesExcluded:0, lagCaveat:'c', withheld:[],
-    signals:[{ id:'s1-large:a', kind:'s1-large', rule:'r', thresholdVersion:'1', entities:{ bioguide:'T000001', memberName:'Fixture Member', ticker:'WMB' }, magnitude:{ low:250001, high:500000 }, receipts:['https://efdsearch.senate.gov/x'], occurrence:{ tradeDate:'2026-06-24', filedDate:'2026-07-11' }, sourceAvailableAt:'2026-07-11', computedAt:'2026-07-24', firstSeenBuild:'b', lastSeenBuild:'b', status:'active', cohort:'senate' }] } as never;
-  const withRows = memberSignalsPanel(artifact, 'T000001', ctx);
-  const emptyState = memberSignalsPanel(artifact, 'Z999999', ctx);
+const STAMPS = { buildId: 'b', generatedAt: '2026-07-24 06:56 UTC', generatedAtDate: '2026-07-24' };
+const row = (i: number, over: Partial<TxnRow> = {}): TxnRow => ({ kind:'txn', txnId:`t${i}`, bioguide:'T000001', name:'Fixture Member', party:'R', state:'OK', district:null, chamber:'senate', ticker:'WMB', asset:'Williams', assetType:null, side:'purchase', owner:'self', low:1001, high:15000, traded:'2026-06-24', filed:`2026-07-${String(10 + i).padStart(2, '0')}`, lag:20, late:0, flags:[], doc:`https://efdsearch.senate.gov/x/${i}`, ...over });
+const PAPER = [{ kind:'paper', filed:'2026-06-01', name:'Fixture Member', bioguide:'T000001', party:'R', state:'OK', district:null, chamber:'senate', doc:'https://efdsearch.senate.gov/p' }];
+const memberOf = (n: number): never => ({ bioguide:'T000001', name:'Fixture Member', party:'R', state:'OK', district:null, chamber:'senate', servingSince:'1999', filingCount:n + 1, txns: Array.from({ length: n }, (_, i) => row(i, { ticker: i % 2 ? 'NVDA' : 'WMB', side: i % 3 ? 'purchase' : 'sale' })), paper: PAPER }) as never;
+const SECTORS = { resolveSector: (t: string) => ({ state: 'sector' as const, sector: t === 'WMB' ? 'energy' : 'manufacturing' }), sectorMeta: { taxonomyVersion: '1', asOf: '2026-07-01' }, committees: null };
 
-  const expected = ['chart', 'M1', 'transactions', 'M2', 'paper', 'planned', 'context', 'analysis'];
-  for (const signals of [withRows, emptyState, '']) {
-    assert.deepEqual(memberBandOrder(memberBody(member, stamps, ctx, 0, deps, signals)), expected);
-  }
-  const bandOf = (signals: string): MiniElement => domOf(memberBody(member, stamps, ctx, 0, deps, signals)).querySelector('.design-member-history-band')!;
-  /** R10: collapsed ⇔ the Signals cell is an empty state; a real pair holds both cells as a `.design-pair`. */
-  const pairProblems = (band: MiniElement): string[] => {
-    const out: string[] = [];
-    const signalsCell = band.children.find((c) => c.getAttribute('aria-label') === 'Signals');
-    if (!signalsCell) return ['band M2 has no Signals cell'];
-    const collapsed = band.getAttribute('data-collapsed') === 'empty-state';
-    if (collapsed !== signalsCell.hasAttribute('data-empty-state')) out.push(`collapsed=${collapsed} but the Signals cell ${signalsCell.hasAttribute('data-empty-state') ? 'is' : 'is not'} an empty state`);
-    if (!band.classList.contains('design-pair')) out.push('band M2 is not a .design-pair');
-    if (band.children[0]!.getAttribute('aria-label') !== 'Filing history') out.push('the history leads the band');
-    return out;
-  };
-  const paired = bandOf(withRows);
-  assert.deepEqual(pairProblems(paired), []);
-  assert.equal(paired.getAttribute('data-collapsed'), null, 'signal rows: a real two-cell pair');
-  const collapsed = bandOf(emptyState);
-  assert.deepEqual(pairProblems(collapsed), []);
-  assert.equal(collapsed.getAttribute('data-collapsed'), 'empty-state', 'an empty-state Signals cell collapses the pair');
-  assert.equal(bandOf('').getAttribute('data-collapsed'), 'empty-state', 'the unjoined (/e/) Signals line is an empty state too');
-  // controls: the lost pair (no data-collapsed over an empty cell) and a pair collapsed over real rows each fail
-  const lost = domOf(memberBody(member, stamps, ctx, 0, deps, emptyState).replace(' data-collapsed="empty-state"', '')).querySelector('.design-member-history-band')!;
-  assert.ok(pairProblems(lost).length > 0, 'control: an empty-state cell left uncollapsed');
-  const forced = domOf(memberBody(member, stamps, ctx, 0, deps, withRows).replace('class="design-band design-pair design-member-history-band"', 'class="design-band design-pair design-member-history-band" data-collapsed="empty-state"')).querySelector('.design-member-history-band')!;
-  assert.ok(pairProblems(forced).length > 0, 'control: a collapse over signal rows');
-  // control: the reading order detector sees a band moved out of place
-  const html = memberBody(member, stamps, ctx, 0, deps, withRows);
-  const planned = html.indexOf('<p class="planned-line">');
-  const paper = html.indexOf('<section class="paper-block"');
-  assert.notDeepEqual(memberBandOrder(html.slice(0, paper) + html.slice(planned, html.indexOf('</p>', planned) + 4) + html.slice(paper, planned) + html.slice(html.indexOf('</p>', planned) + 4)), expected, 'control: the Planned line above the paper filings');
+test('R23: an active member reads chart → trades → Top tickers → Profile → Sectors → Signals → history → paper → context; no Planned strip, no analysis drawer', async () => {
+  const { memberBody } = await import('../src/lib/ui/index.ts');
+  const ten = memberBody(memberOf(10), STAMPS, {}, 0, SECTORS, '');
+  assert.deepEqual(memberOrder(ten), ['chart', 'trades', 'top', 'profile', 'sectors', 'signals', 'history', 'paper', 'context']);
+  assert.ok(!ten.includes('class="planned-line"'), 'member-18: no PLANNED strip');
+  assert.ok(!/Additional disclosure analysis/.test(ten), 'member-21: no analysis drawer');
+  // the thresholds: Profile only at 10+ trades; a member at 4..9 has none
+  const four = memberBody(memberOf(4), STAMPS, {}, 0, SECTORS, '');
+  assert.deepEqual(memberOrder(four), ['chart', 'trades', 'top', 'sectors', 'signals', 'history', 'paper', 'context']);
+  // control: the detector sees a section moved out of place
+  const moved = ten.replace(/<section class="paper-block"[\s\S]*?<\/section>/, '');
+  assert.notDeepEqual(memberOrder(moved), memberOrder(ten), 'control: a missing section changes the order');
+});
+
+test('R23: three or fewer trades read as the compact layout, then paper; the boundary is four', async () => {
+  const { memberBody } = await import('../src/lib/ui/index.ts');
+  for (const n of [0, 1, 3]) assert.deepEqual(memberOrder(memberBody(memberOf(n), STAMPS, {}, 0, SECTORS, '')), ['compact', 'paper'], `${n} trades: compact`);
+  assert.equal(memberOrder(memberBody(memberOf(4), STAMPS, {}, 0, SECTORS, ''))[0], 'chart', '4 trades: active');
 });
 
 test('reference feed keeps eight matching columns, unknown amount, owner and both dates', () => {

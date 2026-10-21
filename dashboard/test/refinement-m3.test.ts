@@ -38,10 +38,13 @@ test("R21: cardFoot — more than two clauses become a 'How this is computed' di
 });
 
 test("R21: the six footers are converted — no raw card-foot literal is left in their renderers", () => {
+  /* launch M4b (member-16): the member Signals panel's foot and its drawer
+     became ONE header note, so lib/ui/signals.ts no longer renders a foot at
+     all; the property — no raw card-foot literal anywhere — still covers it. */
   for (const f of ["lib/ui/congress.ts", "lib/ui/ticker.ts", "lib/ui/signals.ts"]) {
     const src = readFileSync(path.join(SRC, f), "utf-8");
     assert.ok(!src.includes('`<div class="card-foot">'), `${f} still renders a raw card-foot`);
-    assert.ok(src.includes("cardFoot({"), `${f} uses cardFoot`);
+    if (f !== "lib/ui/signals.ts") assert.ok(src.includes("cardFoot({"), `${f} uses cardFoot`);
   }
   const inst = readFileSync(path.join(SRC, "lib/ui/institutional.ts"), "utf-8");
   assert.ok(!inst.includes("caveat-inline\">${esc(INST_STAMP_CAVEAT)}"), "the INST_STAMP_CAVEAT lines go through cardFoot");

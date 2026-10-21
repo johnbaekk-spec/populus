@@ -121,41 +121,41 @@ const HOLDERS: TopHolderRow[] = [
 
 /* ---------- member body ---------- */
 
+/* launch M4b (R23–R26) — the honesty invariants, re-pinned on BOTH member
+   layouts: MEMBER (two trades) renders the compact layout; ACTIVE (four)
+   the active one. member-01 moved the member ID to the breadcrumb and
+   "serving since" became "since"; the § clause now qualifies Top tickers'
+   Net column; the owner qualifiers ride on the asset line. Nothing honest is
+   weaker: every assertion below survives, on the layout that carries it. */
 test("memberBody: honesty invariants — dual dates, no watch control, § resolves, S5 block, caption", () => {
-  const html = memberBody(MEMBER, STAMPS, CTX);
-  assert.ok(html.includes("member ID T000001"));
-  assert.ok(html.includes("serving since 1999"));
-  assert.ok(html.includes("spouse (SP), dependent children (DC), and joint accounts (JT)"));
-  /* signals-v3 M1 (R1): the header's watch star is gone — the title is the
-     member's name alone, and nothing on the page offers to save to the device */
-  assert.equal(visibleText(domOf(html).querySelector("h1.entity-title")!).trim(), "Fixture Member");
-  assert.doesNotMatch(html, /data-watch|watch-btn|star-btn|saved in this browser|★|☆/, "no watch control or its copy");
-  // § marker on the flow column resolves to a printed line in the same body
-  /* RETARGETED — RUN SURFACES-LEGIBILITY, SL-R7 (LD6). `#member-footnotes`
-     held ONE clause and it is now a note on the Flow range column and on the
-     quarterly-flow panel's "derived ·§" marker. The § marker still renders;
-     the clause is still in the same body. Both are asserted, so nothing about
-     the honesty property is weaker than before — only the wrapper moved. */
-  /* DESIGN-POLISH M1 (R2, R6): the mark HANGS in the column's slot (`.hang`)
-     and the header label is the note's trigger. The § still renders on the
-     Flow range header and its clause is still in the same body. */
-  assert.match(html, /aria-label="Flow range, explain">Flow range<\/button><span class="note-pop" popover id="n-member-top-flow-range"[^>]*>[^<]*<\/span><\/span><span class="hang">·§<\/span><\/th>/);
-  assert.ok(html.includes('id="n-member-top-flow-range"'));
-  assert.ok(html.includes("flow range = sum of statutory bucket bounds"));
-  assert.ok(html.includes("an interval, not an estimate of value"));
+  const ACTIVE: MemberEntity = { ...MEMBER, txns: [...MEMBER.txns, txn({ txnId: "t-3", ticker: "XOM", filed: "2026-06-20" }), txn({ txnId: "t-4", ticker: "XOM", side: "sale", filed: "2026-06-10" })] };
+  for (const [name, html] of [["compact", memberBody(MEMBER, STAMPS, CTX)], ["active", memberBody(ACTIVE, STAMPS, CTX)]] as const) {
+    assert.match(html, /<span>T000001<\/span><\/nav>/, `${name}: the member ID is in the breadcrumb`);
+    assert.ok(html.includes("since 1999"), name);
+    /* signals-v3 M1 (R1): the header's watch star is gone */
+    assert.equal(visibleText(domOf(html).querySelector("h1.entity-title")!).trim(), "Fixture Member");
+    assert.doesNotMatch(html, /data-watch|watch-btn|star-btn|saved in this browser|★|☆|Follow/, `${name}: no watch or follow control (D2)`);
+    assert.ok(html.includes("an interval, not an estimate of value"), `${name}: the net-flow figure keeps its interval caveat`);
+    assert.ok(html.includes("Counted in totals, but not machine-readable until OCR"), `${name}: S5 paper block present`);
+    assert.ok(html.includes("LATE·51d"), `${name}: the late lag`);
+    assert.ok(html.includes('class="design-dates"'), `${name}: both dates`);
+    assert.ok(html.includes("cell-src"), `${name}: SRC receipt present`);
+  }
+  const html = memberBody(ACTIVE, STAMPS, CTX);
+  assert.ok(html.includes("spouse (SP), dependent children (DC), and joint accounts (JT)"), "the owner codes are named on the Asset · owner header");
+  // the § mark HANGS on Top tickers' Net header and its clause is in the same body
+  const netHead = domOf(html).querySelectorAll("thead th").find((th) => th.querySelector('.note-pop[id="n-member-top-24m-tbody-h-net"]'));
+  assert.ok(netHead, "the Net header carries its note");
+  assert.equal(netHead!.querySelector(".hang")?.textContent, "·§", "…and the § mark hangs in its slot");
+  assert.ok(html.includes("net disclosed flow = sum of purchase bucket bounds"), "the § clause is in the same body");
   assert.ok(html.includes("<caption"), "real table semantics");
-  assert.ok(html.includes("retained and counted"), "S5 paper block present");
-  assert.ok(html.includes("LATE·51d"));
-  // R12a: fold-mode honesty content present in markup — both dates + combined string
-  assert.ok(html.includes('class="design-dates"'));
-  assert.ok(html.includes("visually-hidden"));
-  /* DESIGN-POLISH M3 (R17, T3.10): the owner qualifier is present, UNPREFIXED
-     — the Owner cell reads "partial · JT", never "· partial · JT", so no cell
-     opens with a separator (read by DOM parse, the cell a reader sees). */
-  const owners = domOf(html).querySelectorAll("td.c-owner").map((td) => visibleText(td).replace(/\s*\(.*\)$/, "").trim());
+  // the owner qualifier is present, UNPREFIXED, on the asset line
+  const owners = domOf(html).querySelectorAll("td.c-asset .owner-note").map((el) => visibleText(el).replace(/\s*\(.*\)$/, "").trim());
   assert.ok(owners.includes("partial · JT"), `owner qualifier present, unprefixed (${owners.join(" | ")})`);
-  assert.ok(owners.every((o) => !o.startsWith("·")), "no Owner cell begins with a separator");
-  assert.ok(html.includes("cell-src"), "SRC receipt present");
+  assert.ok(owners.every((o) => !o.startsWith("·")), "no qualifier begins with a separator");
+  // the compact card says the owner in words; a missing owner is never "self"
+  const compact = memberBody({ ...MEMBER, txns: [txn({ owner: null })] }, STAMPS, CTX);
+  assert.match(compact, /<span class="owner-note">owner not stated<\/span>/);
 });
 
 test("memberBody: page 2 renders different rows through the same function", () => {
@@ -169,7 +169,8 @@ test("memberBody: page 2 renders different rows through the same function", () =
   const p0 = memberBody(many, STAMPS, CTX, 0);
   const p1 = memberBody(many, STAMPS, CTX, 1);
   assert.notEqual(p0, p1);
-  assert.ok(p1.includes("51–60 of 60"), "count line describes the page it renders");
+  // launch M4b (R25): member trades page 25 rows
+  assert.ok(p1.includes("26–50 of 60 transactions"), "count line describes the page it renders");
 });
 
 /* ---------- unified ticker body: every institutional state ---------- */

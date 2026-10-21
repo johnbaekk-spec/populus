@@ -157,6 +157,12 @@ const VALUE_EXPORTS = [
   "memberHistoryRowHtml",
   "MEMBER_NET_ROWS",
   "MEMBER_HISTORY_ROWS",
+  /* launch M4b (R25): the member trades page size (25), its side filter and
+     its count, shared by the server table, the pager and the /e/ driver.
+     Three runtime symbols in, two types. */
+  "MEMBER_PAGE_SIZE",
+  "memberSideRows",
+  "memberTradesCountText",
 ] as const;
 
 const TYPE_EXPORTS = [
@@ -177,18 +183,21 @@ const TYPE_EXPORTS = [
   // SIGNALS-CLARITY M2: one hits-table line, and the hits filter
   "HitLine",
   "HitFilter",
+  // launch M4b: the member side filter and the compact layout's signals fact
+  "MemberSide",
+  "MemberSignalsSummary",
 ] as const;
 
-test("ui entry exports exactly the 105 reconciled runtime symbols", async () => {
+test("ui entry exports exactly the 108 reconciled runtime symbols", async () => {
   const ui = await loadUi();
   const actual = Object.keys(ui)
     .filter((k) => k !== "default" && k !== "module.exports")
     .sort();
   assert.deepEqual(actual, [...VALUE_EXPORTS].sort());
-  assert.equal(VALUE_EXPORTS.length, 105, "70 through M1, the twelve M2 exports, the two M3 exports, SIGNALS-CLARITY M2's five in, one out, SIGNALS-CLARITY M3's monthlyFlowPanel, signals-v3 M2's five, signals-v3 M3's one, signals-v4 M2's four in, two out, signals-v4 M3's four in, and launch M4a's four in");
+  assert.equal(VALUE_EXPORTS.length, 108, "70 through M1, the twelve M2 exports, the two M3 exports, SIGNALS-CLARITY M2's five in, one out, SIGNALS-CLARITY M3's monthlyFlowPanel, signals-v3 M2's five, signals-v3 M3's one, signals-v4 M2's four in, two out, signals-v4 M3's four in, launch M4a's four in, and launch M4b's three in");
 });
 
-test("ui entry exports the 15 reconciled type-only symbols (120 total)", () => {
+test("ui entry exports the 17 reconciled type-only symbols (125 total)", () => {
   const lib = path.resolve(import.meta.dirname, "..", "src", "lib");
   const entry = existsSync(path.join(lib, "ui", "index.ts"))
     ? path.join(lib, "ui", "index.ts")
@@ -200,5 +209,5 @@ test("ui entry exports the 15 reconciled type-only symbols (120 total)", () => {
     const declared = new RegExp(`export interface ${t}\\b|\\btype ${t}\\b`);
     assert.ok(declared.test(src), `type export ${t} missing from ${path.basename(entry)}`);
   }
-  assert.equal(VALUE_EXPORTS.length + TYPE_EXPORTS.length, 120, "the reconciled surface is 120 (83 through M1 + 12 M2 + 2 M3 runtime exports, then SIGNALS-CLARITY M2: +5 −1 runtime, +2 types, then SIGNALS-CLARITY M3: +1 runtime, monthlyFlowPanel, then signals-v3 M2: +5 runtime, then signals-v3 M3: +1 runtime, tickerOnSignalsHtml, then signals-v4 M2: +4 −2 runtime, then signals-v4 M3: +4 runtime, then launch M4a: +4 runtime)");
+  assert.equal(VALUE_EXPORTS.length + TYPE_EXPORTS.length, 125, "the reconciled surface is 125 (83 through M1 + 12 M2 + 2 M3 runtime exports, then SIGNALS-CLARITY M2: +5 −1 runtime, +2 types, then SIGNALS-CLARITY M3: +1 runtime, monthlyFlowPanel, then signals-v3 M2: +5 runtime, then signals-v3 M3: +1 runtime, tickerOnSignalsHtml, then signals-v4 M2: +4 −2 runtime, then signals-v4 M3: +4 runtime, then launch M4a: +4 runtime, then launch M4b: +3 runtime, +2 types)");
 });

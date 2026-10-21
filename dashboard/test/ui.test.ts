@@ -153,11 +153,13 @@ test("entityTxnTable: real table semantics — caption, th scope, honesty cells"
   const ths = [...html.matchAll(/<th\b[^>]*>/g)].map((m) => m[0]);
   assert.ok(ths.length > 0, "headers rendered");
   assert.ok(ths.every((t) => /\sscope="col"/.test(t)), "th scope present on every header");
-  assert.ok(html.includes("Traded → Filed"));
+  // launch M4b (R25): the member columns are Side · Ticker · Asset · owner · Range · Traded → filed · Src
+  assert.ok(html.includes("Traded → filed"));
   assert.ok(html.includes("LATE·55d"), "LATE chip past 45d");
   assert.ok(html.includes("visually-hidden"), "dual dates keep the a11y-tree text");
   assert.ok(html.includes("design-dates"), "complete dual dates present at every viewport");
-  assert.ok(html.includes("Amended filings show the latest version") && html.includes("/methodology/#defaults"), "the amendment rule is stated; the exclusions are one click away");
+  // member-13: the same fact in half the words; the exclusions one click away
+  assert.ok(html.includes("Amended filings: latest version shown") && html.includes("/methodology/#defaults"), "the amendment rule is stated; the exclusions are one click away");
   assert.ok(html.includes("aria-live"), "count changes announce");
 });
 
@@ -215,7 +217,8 @@ test("memberPaperBlock (S5): retained-and-counted copy + table semantics; absent
       ],
     }),
   );
-  assert.ok(withPaper.includes("retained and counted"));
+  // member-17: counted in totals, not machine-readable until OCR, each linked
+  assert.ok(withPaper.includes("Counted in totals, but not machine-readable until OCR. Each links to the original."));
   assert.ok(withPaper.includes("needs OCR"));
   assert.ok(withPaper.includes("<caption"));
   assert.equal(memberPaperBlock(member()), "", "no block when the member has no paper filings");

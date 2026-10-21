@@ -40,7 +40,6 @@ import {
   srcLinkInner,
   memberHrefFor,
   tickerHrefFor,
-  cardFoot,
   rangeOfTotal,
   thHtml,
   presentColumns,
@@ -1719,19 +1718,20 @@ export function memberSignalsPanel(artifact: SignalArtifact, bioguide: string, _
   /* `data-empty-state`: the cell is ONE stated line, so the member page's
      Filing history │ Signals pair collapses rather than pairing a table with a
      sentence (DESIGN-POLISH M2, R10). */
+  /* member-15 (launch M4b): the empty state states the computed answer
+     over the artifact's own retention window, never a literal 90. */
   if (all.length === 0) {
     return (
-      `<section class="panel" aria-label="Signals" data-empty-state>` +
-      `<div class="panel-head"><h2 class="section-h">Signals</h2>` +
-      `<span class="panel-note">window ${esc(artifact.coverageFrom)} → ${esc(artifact.coverageTo)}</span></div>` +
-      `<p class="section-note">No signals for this member in the retained window — a computed answer over the rules on <a href="/signals/">/signals</a>, not an absence of coverage.</p></section>`
+      `<section class="panel member-side-sec" aria-label="Signals" data-empty-state>` +
+      `<div class="panel-head"><h2 class="section-h">Signals</h2></div>` +
+      `<p class="section-note">No signals in the last ${fmtInt(artifact.retentionDays)} days. <a href="/signals/">All signals →</a></p></section>`
     );
   }
   if (mine.length === 0) {
     return (
-      `<section class="panel" aria-label="Signals" data-empty-state>` +
+      `<section class="panel member-side-sec" aria-label="Signals" data-empty-state>` +
       `<div class="panel-head"><h2 class="section-h">Signals</h2>` +
-      `<span class="panel-note">window ${esc(artifact.coverageFrom)} → ${esc(artifact.coverageTo)}</span></div>` +
+      `<span class="panel-note">last ${fmtInt(artifact.retentionDays)} days</span></div>` +
       `<p class="section-note">No ACTIVE signals for this member in the retained window` +
       (tombs > 0
         ? ` — ${fmtInt(tombs)} earlier ${tombs === 1 ? "signal was" : "signals were"} superseded inside it ` +
@@ -1774,15 +1774,17 @@ export function memberSignalsPanel(artifact: SignalArtifact, bioguide: string, _
         `<td class="c-src">${signalReceiptHtml(s.receipts[0], s.cohort)}</td></tr>`,
     )
     .join("\n");
+  /* member-16 (launch M4b): the card foot and its drawer become ONE header
+     note — the lag caveat ("never a current holding") and the lifecycle
+     counts, verbatim. */
   return (
-    `<section class="panel" aria-label="Signals">` +
+    `<section class="panel member-side-sec" aria-label="Signals">` +
     `<div class="panel-head"><h2 class="section-h">Signals</h2>` +
-    `<span class="panel-note"><a href="/signals/">all signals ↗</a></span></div>` +
+    `<span class="panel-note">${note(`${artifact.lagCaveat}${lifecycleNote}`, { scope: "member-signals-foot" }, "lag", { trigger: "label", textHtml: `last ${fmtInt(artifact.retentionDays)} days` })} · <a href="/signals/">all signals ↗</a></span></div>` +
     `<div class="table-scroll"><table class="etable etable-compact">` +
     `<caption class="visually-hidden">Signals for this member</caption>` +
     `<thead><tr><th scope="col" class="c-ticker">Ticker</th><th scope="col" class="c-secondary c-flex">What</th><th scope="col" class="c-kind">Kind</th><th scope="col" class="c-num">Filed</th><th scope="col" class="c-num">Size</th><th scope="col" class="c-src">Src</th></tr></thead>` +
     `<tbody>${rows}</tbody></table></div>` +
-    cardFoot({ short: "Filed dates lag the trades", full: `${artifact.lagCaveat}${lifecycleNote}`, scope: "member-signals-foot", key: "lag" }) +
     `</section>`
   );
 }

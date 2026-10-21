@@ -7,7 +7,7 @@
 // (the budget-cut rule); cut members stay reachable at /e/?k=m:… with their endpoint.
 import Base from "../../../layouts/Base.astro";
 import { getBuildData, getSignalArtifact, sectorResolver, chamberBenchmarkFor } from "../../../lib/data";
-import { memberBody, memberSignalsPanel, type BuildStamps, type MemberV2Deps } from "../../../lib/ui/index.ts";
+import { memberBody, memberSignalsPanel, signalKindShort, type BuildStamps, type MemberV2Deps } from "../../../lib/ui/index.ts";
 import type { RenderCtx } from "../../../lib/format";
 
 export function getStaticPaths() {
@@ -20,6 +20,7 @@ export function getStaticPaths() {
 const { bioguide } = Astro.params;
 const build = getBuildData();
 const member = build.membersByKey.get(bioguide!)!;
+const signalArtifact = getSignalArtifact();
 const stamps: BuildStamps = {
   buildId: build.buildId,
   generatedAt: build.generatedAt,
@@ -48,9 +49,17 @@ const v2Deps: MemberV2Deps = {
       }
     : null,
   chamber: chamberBenchmarkFor(build, member.chamber),
+  /* R23 / LD24: the compact layout's Signals fact reads the member's ACTIVE
+     signals of any kind (s1–s6) from the same artifact the panel reads */
+  signals: {
+    retentionDays: signalArtifact.retentionDays,
+    active: signalArtifact.signals
+      .filter((s) => s.entities.bioguide === member.bioguide && s.status === "active")
+      .map((s) => ({ kind: s.kind, label: `S-${s.kind.slice(1, 2)} · ${signalKindShort(s.kind)}`, ticker: s.entities.ticker ?? null })),
+  },
 };
 const bodyHtml =
-  memberBody(member, stamps, ssrCtx, 0, v2Deps, memberSignalsPanel(getSignalArtifact(), member.bioguide, ssrCtx));
+  memberBody(member, stamps, ssrCtx, 0, v2Deps, memberSignalsPanel(signalArtifact, member.bioguide, ssrCtx));
 const description =
   `Congressional financial disclosures for ${member.name}: every transaction as filed, ` +
   `statutory amount ranges, dual dates, provenance links — from primary government sources.`;

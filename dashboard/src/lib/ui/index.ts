@@ -36,6 +36,13 @@ export {
   memberHistoryRowHtml,
   MEMBER_NET_ROWS,
   MEMBER_HISTORY_ROWS,
+  // launch M4b (R25): the member trades page size, side filter and count,
+  // shared by the server table, the pager and the /e/ driver
+  type MemberSide,
+  type MemberSignalsSummary,
+  MEMBER_PAGE_SIZE,
+  memberSideRows,
+  memberTradesCountText,
 } from "./congress.ts";
 export {
   type RankingSectionOpts,
