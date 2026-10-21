@@ -343,11 +343,26 @@ test("POST-BUILD R14 → signals-v4 R17: every notable-moves shard is ≤ 1 MiB;
   assert.match(landing, /data-mgr-type="hedge_fund" aria-pressed="true"/, "Hedge funds selected by default");
 });
 
+/** A holders row: a `tr` whose first cell carries the rank class, whatever
+    attributes come first (launch M1a's roles put `role="cell"` before
+    `class`, and the rank cell is `c-rank c-num`). Launch review weight item 7:
+    the M1a amendment `<td class="c-rank"` matched zero rows. */
+export const HOLDER_ROW = /<tr\b[^>]*><td\b[^>]*class="c-rank\b/g;
+
+test("POST-BUILD R20 controls (weight item 7): the holders-row pattern counts role-bearing rank rows and nothing else", () => {
+  const rows = (html: string): number => (html.match(HOLDER_ROW) ?? []).length;
+  assert.equal(rows(`<tr role="row" data-edge="add"><td role="cell" class="c-rank c-num">1</td></tr><tr role="row"><td role="cell" class="c-rank c-num">2</td></tr>`), 2);
+  assert.equal(rows(`<tr><td class="c-rank">1</td></tr>`), 1, "the pre-roles shape still counts");
+  assert.equal(rows(`<tr role="row"><td role="cell" class="c-num">1</td><td class="c-rank">x</td></tr><tr><td class="c-ranked">y</td></tr>`), 0, "a rank class off the first cell, or a longer class name, does not");
+  // re-planted control: the amended pattern the review found matches none of the real rows
+  assert.equal((`<tr role="row"><td role="cell" class="c-rank c-num">1</td></tr>`.match(/<tr\b[^>]*><td class="c-rank"[^>]*>/g) ?? []).length, 0);
+});
+
 test("POST-BUILD R20: /institutional/tickers/NVDA/holders/ exists with ≥10 holders naming BlackRock, Vanguard and State Street; ≥80% of the top-50 Congress tickers have a holders page", () => {
   const nvda = path.join(DIST, "institutional", "tickers", "NVDA", "holders", "index.html");
   assert.ok(existsSync(nvda), "NVDA holders page built");
   const html = readFileSync(nvda, "utf-8");
-  const holders = (html.match(/<tr\b[^>]*><td class="c-rank"[^>]*>/g) /* launch M1a (R40): rows and cells carry roles */ ?? []).length;
+  const holders = (html.match(HOLDER_ROW) /* launch M1a (R40): rows and cells carry roles; launch review item 7 */ ?? []).length;
   assert.ok(holders >= 10, `${holders} holders listed`);
   for (const name of ["BLACKROCK", "VANGUARD", "STATE STREET"]) assert.ok(html.toUpperCase().includes(name), `${name} is a holder`);
   assert.match(html, /id="overlap"/, "the overlap band renders on the holders page");
