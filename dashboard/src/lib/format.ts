@@ -1656,10 +1656,14 @@ export function srcLinkDerived(footnoteHref: string | null, edgarUrl: string | n
   );
 }
 
+/** Launch M3a (copy item congress-27): the † explains itself on the row it
+    marks — the footnote block under the feed is retired. */
+export const UNJOINED_FILER_NOTE = "Name as printed on the filing — not yet matched to a member record, so no member page is linked.";
+
 function memberCellHtml(r: {
   name: string; bioguide: string | null; party: string;
   state: string | null; district: string | null; chamber: "house" | "senate";
-}, ctx: RenderCtx): string {
+}, ctx: RenderCtx, rowKey: string): string {
   const aff = affText(r);
   const affCls = partyClass(r.party);
   if (r.bioguide) {
@@ -1668,10 +1672,12 @@ function memberCellHtml(r: {
       ` <span class="aff ${affCls}">${esc(aff)}</span>`
     );
   }
-  // unjoined filer: name as printed on the filing, dotted underline + dagger
+  // unjoined filer: name as printed on the filing, dotted underline, and the
+  // dagger as the trigger of its own note (never linked to a member page)
   return (
-    `<a href="#feed-footnote" class="unjoined" title="filer not yet joined to a member record — name as printed on the filing">${esc(r.name)}</a>` +
-    `<sup>†</sup> <span class="aff ${affCls}">${esc(aff)}</span>`
+    `<span class="unjoined">${esc(r.name)}</span>` +
+    note(UNJOINED_FILER_NOTE, { scope: "feed-filer" }, rowKey, { trigger: "mark", textHtml: "†", name: "Member not identified" }) +
+    ` <span class="aff ${affCls}">${esc(aff)}</span>`
   );
 }
 
@@ -1770,7 +1776,7 @@ export function txnRowHtml(r: TxnRow, ctx: RenderCtx): string {
        lateness is the gold edge and the dates cell's LATE·Nd, never a
        replacement for the side, which is honesty content (§1). */
     `<td class="cell cell-side c-kind ${esc(side.cls)}" role="cell">${esc(side.text)}</td>` +
-    `<td class="cell cell-member c-member" role="cell"><span class="visually-hidden">Member </span>${memberCellHtml(r, ctx)}</td>` +
+    `<td class="cell cell-member c-member" role="cell"><span class="visually-hidden">Member </span>${memberCellHtml(r, ctx, r.txnId)}</td>` +
     `<td class="cell cell-ticker c-ticker" role="cell">${r.ticker ? `<a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>` : '<span class="none">—</span>'}</td>` +
     /* R17 (M3, T3.3): the default asset text, its as-filed note, and the
        qualifiers OUTSIDE the ellipsis — one separator, never "· ·" (A9). */
@@ -1788,7 +1794,7 @@ export function paperRowHtml(r: PaperRow, ctx: RenderCtx): string {
   /* The ledger's grid row (DESIGN-POLISH M1): the kind word, the member, one
      cell spanning the four columns a paper filing cannot fill, the filed
      date in the dates column, the receipt. */
-  return `<tr class="feed-row paper reference-paper" role="row"><td class="cell cell-side c-kind" role="cell">Paper</td><td class="cell cell-member c-member" role="cell">${memberCellHtml(r, ctx)}</td>` +
+  return `<tr class="feed-row paper reference-paper" role="row"><td class="cell cell-side c-kind" role="cell">Paper</td><td class="cell cell-member c-member" role="cell">${memberCellHtml(r, ctx, `paper-${r.doc}`)}</td>` +
     `<td colspan="4" class="paper-main c-secondary" role="cell">Paper filing · needs OCR · no machine-readable transactions</td>` +
     `<td class="cell cell-traded c-num" role="cell"><span class="visually-hidden">Filed </span>${esc(r.filed)}</td>${srcLinkCell(r.doc)}</tr>`;
 }

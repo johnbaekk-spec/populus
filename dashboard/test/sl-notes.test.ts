@@ -560,7 +560,6 @@ test("SL-R8d F5: the Class-C survivors are the exact 17 NAMED sites — by path 
   const expected: Record<string, { fn: string; text: string }[]> = {
     "src/lib/format.ts": [
       { fn: "srcLinkInner", text: "source URL not usable" },
-      { fn: "memberCellHtml", text: "filer not yet joined to a member record — name as printed on the filing" },
       { fn: "lagHtml", text: "filed before the stated trade date" },
       { fn: "lagHtml", text: "days to file unknown" },
     ],
@@ -636,5 +635,8 @@ test("SL-R8d F5: the Class-C survivors are the exact 17 NAMED sites — by path 
     "an undeclared title= site exists in a src/lib module outside the Class-C table — " +
       "convert it, or declare it with its path, function and text in the same commit",
   );
-  assert.equal(total, 18, "the Class-C survivor count is exactly 17 (32 measured - 5 deleted - 10 converted), plus the one signals-v3 M2 site R13 requires");
+  /* launch M3a (copy item congress-27): memberCellHtml's title= on an unjoined
+     filer was CONVERTED to the dagger's own note (keyed on the row's txnId or
+     paper doc), so its entry is deleted here and the count drops by one. */
+  assert.equal(total, 17, "the Class-C survivor count is exactly 16 (32 measured - 5 deleted - 11 converted), plus the one signals-v3 M2 site R13 requires");
 });

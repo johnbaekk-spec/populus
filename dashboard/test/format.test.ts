@@ -514,8 +514,13 @@ test("row HTML: the spouse-cap marker rides with the capped amount", () => {
 test("row HTML: an unjoined filer is daggered and not linked to a member page", () => {
   const html = txnRowHtml(txn({ bioguide: null, party: "", state: null }), CTX);
   assert.ok(html.includes("†"));
-  assert.ok(html.includes("#feed-footnote"));
+  /* launch M3a (congress-27): the dagger is the trigger of its own note on the
+     row (it used to link to the feed footnote, whose † line is retired). */
+  assert.match(html, /<button type="button" class="note-btn note-mark"[^>]*>†<\/button><span class="note-pop" popover id="n-feed-filer-[^"]+" role="note">Name as printed on the filing — not yet matched to a member record/);
   assert.ok(!html.includes("/congress/members/"), "there is no member page to link to");
+  // two unjoined rows never share a note id
+  const ids = [txn({ txnId: "u-1", bioguide: null }), txn({ txnId: "u-2", bioguide: null })].map((r) => /id="(n-feed-filer-[^"]+)"/.exec(txnRowHtml(r, CTX))![1]);
+  assert.notEqual(ids[0], ids[1]);
 });
 
 test("row HTML: provenance is present on transaction AND paper rows", () => {

@@ -126,7 +126,7 @@
 .cell {
   min-width: 0;
 }
-.cell-member a.unjoined {
+.cell-member .unjoined {
   border-bottom: 1.5px dotted var(--ink3);
 }
 .aff {

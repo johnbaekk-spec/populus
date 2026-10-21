@@ -131,12 +131,13 @@ const membersHtml = congressRankingSection(
    the full row set; `congress-sections.ts` flips `hidden` between them with no
    fetch (L4). The build date is the window end and the completeness clock. */
 const monthlyFlowHtml = monthlyFlowPanel(build.txns, build.generatedAtDate);
+/* Launch M3a (copy item congress-27, adapted): the † on an unjoined filer is
+   the trigger of its own note on the row it marks, so its footnote line is
+   retired. The ‡ line stays: the per-row ‡ note's wording is frozen by the D7
+   ruling (ledger-system.test.ts), so this line is the page's only statement
+   of the Senate spouse cap. */
 const footnoteHtml = footnoteBlock(
   [
-    {
-      mark: "†",
-      html: `Member not identified: this filer is not yet joined to a member record, so the name is shown as printed on the filing`,
-    },
     {
       mark: "‡",
       html: `Senate spouse amounts above $1M print only as "Over $1,000,000"`,
@@ -144,7 +145,6 @@ const footnoteHtml = footnoteBlock(
   ],
   { id: "feed-footnote", layout: "inline" },
 );
-
 // The count is assembled by the same function the client island uses, so the
 // pre-rendered and re-rendered counts cannot drift. I7: the default view
 // states, as whole-set figures, the transactions without a ticker and the
