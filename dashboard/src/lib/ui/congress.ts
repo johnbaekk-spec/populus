@@ -1387,7 +1387,14 @@ function memberHistoryHtml(m: MemberEntity): string {
   return (
     `<section class="panel design-member-history" aria-label="Filing history"><div class="panel-head"><h2 class="section-h">Filing history</h2></div>` +
     `<div class="table-scroll"><table class="etable" role="table" data-card="generic"><caption class="visually-hidden">Filing history</caption>` +
-    `<thead role="rowgroup"><tr role="row"><th scope="col" class="c-flex" role="columnheader">Filed</th><th scope="col" class="c-num" role="columnheader">Rows</th><th scope="col" class="c-src" role="columnheader">Receipt</th></tr></thead>` +
+    /* the heads through thHtml (launch final pass): each states its
+       data-label, which withTableRoles / rolesFor copy onto the Rows cell, so
+       a phone card labels its number instead of printing it bare */
+    `<thead role="rowgroup"><tr role="row">` +
+    thHtml({ label: "Filed", cls: "c-flex", attrs: ' role="columnheader"' }) +
+    thHtml({ label: "Rows", cls: "c-num", attrs: ' role="columnheader"' }) +
+    thHtml({ label: "Receipt", cls: "c-src", attrs: ' role="columnheader"' }) +
+    `</tr></thead>` +
     `<tbody id="member-history-tbody" role="rowgroup"${collapsed ? ' data-collapsed="true" data-held="json"' : ""}>${parts.bodyRows}</tbody></table></div>` +
     parts.island +
     compactDisclosure({ rootId: "member-history-tbody", total: filings.length, shown, noun: "filings", domBacked: true }) +

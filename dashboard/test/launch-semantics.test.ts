@@ -293,6 +293,40 @@ test("R40: a client repaint carries the roles the server page carries, labels re
   assert.equal(headLabels({}), undefined, "a target with no closest has no head to read");
 });
 
+/* ------------------------------------------- the member's filing history */
+
+test("launch final pass: the member filing history's heads come through thHtml, so every Rows cell — server row and held row alike — is labelled on a phone card (control: the raw head labels none)", async () => {
+  const { memberBody, memberHistoryRowHtml } = await import("../src/lib/ui/index.ts");
+  const stamps = { buildId: "b", generatedAt: "2026-08-12 00:00 UTC", generatedAtDate: "2026-08-12" };
+  /* fifteen filings: twelve rows in the page, three held for the island */
+  const filings = Array.from({ length: 15 }, (_, i) => ({
+    ...txns()[0]!,
+    txnId: `h-${i}`,
+    filed: `2026-07-${String(28 - i).padStart(2, "0")}`,
+    doc: `https://disclosures-clerk.house.gov/h-${i}.pdf`,
+  }));
+  const member = { bioguide: "H000001", name: "History Member", party: "D", state: "NJ", district: "5", chamber: "house", servingSince: "2017", filingCount: 15, txns: filings, paper: [] };
+  const page = withTableRoles(memberBody(member as never, stamps, {}, 0));
+  const section = /<section class="panel design-member-history"[\s\S]*?<\/section>/.exec(page)?.[0];
+  assert.ok(section, "the history renders at two or more filings");
+  const host = parse(section!);
+  const heads = [...walk(host)].filter((e) => e.tagName === "th").map((th) => th.getAttribute("data-label"));
+  assert.deepEqual(heads, ["Filed", "Rows", "Receipt"], "each head states its label");
+  const num = (root: MiniElement): MiniElement[] => [...walk(root)].filter((e) => e.tagName === "td" && e.classList.contains("c-num"));
+  const served = num(host);
+  assert.equal(served.length, 12, "the twelve rows in the page");
+  for (const td of served) assert.equal(td.getAttribute("data-label"), "Rows", "a server row's number is labelled");
+  // a held row, painted into the live table through the client sink, reads the same label off the head
+  const tbody = [...walk(host)].find((e) => e.tagName === "tbody" && e.getAttribute("id") === "member-history-tbody")!;
+  const held = rolesFor(tbody, memberHistoryRowHtml({ filed: "2026-07-01", doc: "https://disclosures-clerk.house.gov/h-held.pdf", count: 3 }));
+  assert.match(held, /<td class="c-num" role="cell" data-label="Rows">3<\/td>/, "a held row's number is labelled too");
+  // control: the pre-change raw head (no data-label) leaves the number bare
+  const raw = section!.replace(/ data-label="[^"]*"/g, "");
+  const bare = num(parse(withTableRoles(raw)));
+  assert.equal(bare.length, 12);
+  assert.ok(bare.every((td) => !td.hasAttribute("data-label")), "control: without the head's label no Rows cell gets one");
+});
+
 /* --------------------------------------------------------------- the wiring */
 
 test("R40: Base.astro renders the page body through withTableRoles, once, and no bare slot remains", () => {
