@@ -35,6 +35,7 @@ import { initCongressSections } from "../src/scripts/congress-sections.ts";
 import { initAddsControls, initInstIndex, instIndexBodyHtml } from "../src/scripts/inst-index-client.ts";
 import { DESIGN_INST_INDEX_HEADS, type InstIndexRow } from "../src/lib/inst-index.ts";
 import type { AddsPayload, AddsRow } from "../src/lib/inst-adds.ts";
+import { stripTableRoles } from "./lib/table-roles.ts";
 
 function parse(html: string): MiniElement {
   const root = new MiniElement("body");
@@ -378,7 +379,8 @@ test("T2.7 / signals-v4 T1.6: the island's repaint equals the server body (40 he
     (fresh.doc.querySelector('#families button[data-family="COMPLIANCE"]') as unknown as MiniElement).bubbleClick();
     await tick();
     const compliance = hitsView(active, { family: "COMPLIANCE", stocksOnly: true }).lines;
-    assert.equal(fbody(), hitsBodyHtml(compliance.slice(0, 40), {}, cols, 10), "the server's renderer, the fit's base, no extension");
+    // launch M1a (R40): the repaint carries the explicit table roles; the rows compared are unchanged
+    assert.equal(stripTableRoles(fbody()), hitsBodyHtml(compliance.slice(0, 40), {}, cols, 10), "the server's renderer, the fit's base, no extension");
     assert.equal(fresh.doc.querySelector('#families button[data-family="COMPLIANCE"]')!.getAttribute("aria-pressed"), "true");
     assert.equal(fresh.doc.querySelector('#families button[data-family="BEHAVIOUR"]')!.getAttribute("aria-pressed"), "false");
     assert.equal(fresh.doc.getElementById("signal-family-pill-row")!.hidden, false, "the removable pill shows");
@@ -387,7 +389,8 @@ test("T2.7 / signals-v4 T1.6: the island's repaint equals the server body (40 he
     // the pill removes the filter
     (fresh.doc.getElementById("signal-family-pill") as unknown as MiniElement).click();
     await tick();
-    assert.equal(fbody(), carried, "back to the page's view: its forty lines, the island's rendered the client's way");
+    // launch M1a (R40): the repaint carries the explicit table roles; stripped, the rows are unchanged
+    assert.equal(stripTableRoles(fbody()), carried, "back to the page's view: its forty lines, the island's rendered the client's way");
     assert.equal(fresh.doc.getElementById("signal-family-pill-row")!.hidden, true);
     assert.equal(fetches, 1, "one lazy fetch, memoised");
   } finally {

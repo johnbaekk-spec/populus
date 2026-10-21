@@ -36,6 +36,7 @@ import {
 } from "../lib/feed-parts.ts";
 import { fetchFeedPartsIndex, loadFeedCorpus } from "./feed-corpus.ts";
 import { initSortableTable } from "./table-sort.ts";
+import { rolesFor } from "./table-roles.ts";
 
 interface State {
   /** Launch M3a (LD20): the default "With ticker" view shows transactions
@@ -398,7 +399,7 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
         loadingEl?.setAttribute("hidden", "");
         const items = pageSliceFrom(lists.flat(), parts[0]?.txn_offset ?? 0, state.page, PAGE_SIZE);
         const ctx: RenderCtx = {};
-        bodyEl!.innerHTML = items.map((it) => feedItemHtml(it, ctx)).join("\n");
+        bodyEl!.innerHTML = rolesFor(bodyEl, items.map((it) => feedItemHtml(it, ctx)).join("\n"));
         announceRerender();
         setCounts(
           feedCountText({
@@ -745,7 +746,7 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
         }
         parts.push(feedItemHtml(it, ctx));
       });
-      bodyEl!.innerHTML = parts.join("\n");
+      bodyEl!.innerHTML = rolesFor(bodyEl, parts.join("\n"));
     }
     announceRerender();
 

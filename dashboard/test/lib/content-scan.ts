@@ -63,7 +63,7 @@ export function contentHits(html: string, rel = ""): ContentHit[] {
   const cik = at(/\bCIK 0\d/);
   if (cik) hits.push({ check: "zero-padded CIK", excerpt: cik });
   if (rel === "institutional/index.html") {
-    const cell = /<td class="c-num c-muted">(0\d{3,})<\/td>/.exec(html);
+    const cell = /<td class="c-num c-muted"[^>]*>(0\d{3,})<\/td>/.exec(html);
     if (cell) hits.push({ check: "directory CIK cell with a leading zero", excerpt: cell[1]! });
   }
   // R23: the receipt prints its regime once
@@ -77,7 +77,7 @@ export function contentHits(html: string, rel = ""): ContentHit[] {
   if (pill) hits.push({ check: "a lowercase kind pill", excerpt: pill[0] });
   // R19 (W-2, M3 review): no kind cell prints the raw producer kind — the
   // overlap timeline's 13F rows did ("add", "trim") on /tickers/* and holders
-  const rawKind = /<td class="c-kind\b[^"]*">\s*(new|add|trim|exit|held|no_prior|no change|no prior)\s*</.exec(html);
+  const rawKind = /<td class="c-kind\b[^"]*"[^>]*>\s*(new|add|trim|exit|held|no_prior|no change|no prior)\s*</.exec(html);
   if (rawKind) hits.push({ check: "a kind cell reads the raw producer kind", excerpt: rawKind[0] });
   return hits;
 }

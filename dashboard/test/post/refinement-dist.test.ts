@@ -33,7 +33,7 @@ function walk(dir: string, out: string[] = []): string[] {
 
 function cells(html: string, cls: string): string[] {
   const out: string[] = [];
-  const re = new RegExp(`<td class="${cls}[^"]*">([\\s\\S]*?)</td>`, "g");
+  const re = new RegExp(`<td class="${cls}[^"]*"[^>]*>([\\s\\S]*?)</td>`, "g") /* launch M1a (R40): built cells carry roles after the class */;
   let m: RegExpExecArray | null;
   while ((m = re.exec(html)) !== null) out.push(m[1]!);
   return out;
@@ -346,7 +346,7 @@ test("POST-BUILD R20: /institutional/tickers/NVDA/holders/ exists with ≥10 hol
   const nvda = path.join(DIST, "institutional", "tickers", "NVDA", "holders", "index.html");
   assert.ok(existsSync(nvda), "NVDA holders page built");
   const html = readFileSync(nvda, "utf-8");
-  const holders = (html.match(/<tr><td class="c-rank">/g) ?? []).length;
+  const holders = (html.match(/<tr\b[^>]*><td class="c-rank"[^>]*>/g) /* launch M1a (R40): rows and cells carry roles */ ?? []).length;
   assert.ok(holders >= 10, `${holders} holders listed`);
   for (const name of ["BLACKROCK", "VANGUARD", "STATE STREET"]) assert.ok(html.toUpperCase().includes(name), `${name} is a holder`);
   assert.match(html, /id="overlap"/, "the overlap band renders on the holders page");

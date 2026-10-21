@@ -10,7 +10,11 @@
    Run by the owner after a deploy, never by CI:
      PW_OUTPUT_DIR=<evidence dir> POPULUS_THEME=dark \
        npx playwright test -c playwright.production.config.ts
-   (then again with POPULUS_THEME=light). */
+   (then again with POPULUS_THEME=light).
+
+   launch M1a (T1.2): the phone harness (`phone.spec.ts`) runs here too, in the
+   chromium project only (it builds its own touch, iPhone-agent contexts at
+   360/390/430), so the live probe and the local gate are one ruler. */
 import { defineConfig, devices } from "@playwright/test";
 
 const PREFLIGHT = /@touch-preflight/;
@@ -18,7 +22,7 @@ const TOUCH_USE = { ...devices["Desktop Chrome"], hasTouch: true, isMobile: true
 
 export default defineConfig({
   testDir: "./test/geometry",
-  testMatch: /ledger\.spec\.ts$/,
+  testMatch: [/ledger\.spec\.ts$/, /phone\.spec\.ts$/],
   ...(process.env.PW_OUTPUT_DIR ? { outputDir: process.env.PW_OUTPUT_DIR } : {}),
   fullyParallel: false,
   workers: 1,
@@ -26,10 +30,11 @@ export default defineConfig({
   use: { ...devices["Desktop Chrome"], baseURL: "https://publicfilings.org" },
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"], baseURL: "https://publicfilings.org" }, grepInvert: PREFLIGHT },
-    { name: "touch-preflight", use: { ...TOUCH_USE, baseURL: "https://publicfilings.org" }, grep: PREFLIGHT },
+    { name: "touch-preflight", use: { ...TOUCH_USE, baseURL: "https://publicfilings.org" }, testMatch: /ledger\.spec\.ts$/, grep: PREFLIGHT },
     {
       name: "touch",
       use: { ...TOUCH_USE, baseURL: "https://publicfilings.org" },
+      testMatch: /ledger\.spec\.ts$/,
       grepInvert: PREFLIGHT,
       dependencies: ["touch-preflight"],
     },

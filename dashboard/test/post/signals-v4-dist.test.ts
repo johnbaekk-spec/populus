@@ -115,7 +115,7 @@ test("signals-v4 M1 + launch M7a on the built page: every triage row once; the p
   const hits = /<section class="panel si-hits" id="hits"[^>]*data-shown="(\d+)"[^>]*data-lines="(\d+)"[^>]*data-dom-rows="(\d+)"/.exec(html);
   assert.ok(hits, "the hits section states shown, lines and DOM rows");
   const [shown, lines, domRows] = [Number(hits[1]), Number(hits[2]), Number(hits[3])];
-  const body = /<tbody id="signal-hits-body">([\s\S]*?)<\/tbody>/.exec(html)![1]!;
+  const body = /<tbody id="signal-hits-body"[^>]*>([\s\S]*?)<\/tbody>/.exec(html)![1]!;
   const trs = [...body.matchAll(/<tr class="si-hit[^"]*"[^>]*>/g)].map((m) => m[0]);
   assert.equal(trs.length, Math.min(lines, shown), "the first ten lines are in the DOM");
   assert.ok(trs.every((x) => !/ hidden>$/.test(x)), "and visible");
@@ -328,7 +328,7 @@ test("signals-v4 T3.7 (R22): Methodology carries the roster — every tenure wit
   const html = readFileSync(path.join(DIST, "methodology", "index.html"), "utf-8");
   const sec = /<section class="si-method" id="signals-playbooks"[\s\S]*?<\/section>/.exec(html)?.[0];
   assert.ok(sec, "#signals-playbooks");
-  const rows = [...sec.matchAll(/<tr><td class="c-secondary">[\s\S]*?<\/tr>/g)].map((m) => m[0]);
+  const rows = [...sec.matchAll(/<tr\b[^>]*><td class="c-secondary"[^>]*>[\s\S]*?<\/tr>/g) /* launch M1a (R40): the roster rows carry roles; the parse is otherwise unchanged */].map((m) => m[0]);
   assert.equal(rows.length, ROSTER.length);
   ROSTER.forEach((r, i) => {
     assert.ok(rows[i]!.includes(r.bioguide) && rows[i]!.includes(`href="${r.source}"`) && rows[i]!.includes(`checked ${r.checked}`), `${r.name}`);

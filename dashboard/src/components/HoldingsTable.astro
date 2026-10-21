@@ -265,6 +265,7 @@ const payloadJson = payload == null ? "" : serializeInlineJson(payload);
 
 <script>
   import { priorPeriodOf, surfaceHtml, type SurfacePayload, type SurfaceState } from "../lib/holdings.ts";
+  import { rolesFor } from "../scripts/table-roles.ts";
 
   /* The pager and the view switch re-render through the SAME surfaceHtml the
      SSR used — parity by construction, not by convention. Without JS the page
@@ -282,7 +283,8 @@ const payloadJson = payload == null ? "" : serializeInlineJson(payload);
     if (payload) {
       const state: SurfaceState = { view: "current", page: 0, period: payload.current };
       const draw = (): void => {
-        body.innerHTML = surfaceHtml(payload!, state);
+        // launch M1a (R40): the repaint carries the explicit table roles
+        body.innerHTML = rolesFor(body, surfaceHtml(payload!, state));
         // R36: every client re-render announces itself on `document`.
         document.dispatchEvent(new CustomEvent("populus:rerender", { detail: { root: "holdings" } }));
         const range = body.querySelector<HTMLElement>(".pager-range");

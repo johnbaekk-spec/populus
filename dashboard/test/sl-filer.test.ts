@@ -213,6 +213,7 @@ import {
 import { installDom, MiniElement as MiniEl } from "./lib/mini-dom.ts";
 import { initFilerPeriods } from "../src/scripts/entity-client.ts";
 import { serializeInlineJson } from "../src/lib/inline-json.ts";
+import { stripTableRoles } from "./lib/table-roles.ts";
 
 const Q = { a: "2025-12-31", b: "2026-03-31" };
 const CONC_BY: Record<string, ConcentrationRow> = {
@@ -256,7 +257,9 @@ function periodRootProblems(got: Record<string, string>, period: string): string
   const holder = new MiniEl("body");
   holder.innerHTML = filerPageAt(period);
   const want = rootsOf(holder);
-  return ROOTS.filter((r) => got[r] !== want[r]).map((r) => `${r} does not hold the server's ${period} markup`);
+  /* launch M1a (R40): the repaint carries the explicit table roles the layout
+     adds to the server page; the markup compared is otherwise unchanged */
+  return ROOTS.filter((r) => stripTableRoles(got[r] ?? "") !== stripTableRoles(want[r] ?? "")).map((r) => `${r} does not hold the server's ${period} markup`);
 }
 
 test("Q2-6: a period switch repaints the ledger, the changes root and the book shape, each equal to the server's page for that period", () => {

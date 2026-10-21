@@ -1,4 +1,5 @@
 import { initSortableTable } from "./table-sort.ts";
+import { rolesFor } from "./table-roles.ts";
 import { initTabs } from "./tabs.ts";
 import { holderDefaultDir, holderSortNote, orderRankedHolders, type HolderSortKey } from "../lib/holders-sort.ts";
 /* Entity client: the generic-route driver (qoq-presentation.md §3), and the
@@ -845,7 +846,7 @@ export function initEntityPage(): void {
     /* R12: the column set the server decided over the WHOLE collection rides
        in `data-columns`, so a later page renders exactly the header's columns. */
     const columns = parseDataColumns(table?.getAttribute("data-columns"));
-    rowsEl!.innerHTML = entityTxnRowsHtml(items, tableKind, ctx, stated, columns);
+    rowsEl!.innerHTML = rolesFor(rowsEl, entityTxnRowsHtml(items, tableKind, ctx, stated, columns));
     // R36 (review R2-5): every client re-render announces itself, so a binder
     // or measurement that owns anything under this body re-syncs.
     if (typeof document.dispatchEvent === "function") {
@@ -960,14 +961,14 @@ export function initFilerPeriods(): void {
     if (!slice) return;
     // `total` is REQUIRED in the embed (validated above) — never the embedded
     // length, which would claim a completeness the server never claimed.
-    root.innerHTML = filerPeriodSectionHtml(
+    root.innerHTML = rolesFor(root, filerPeriodSectionHtml(
       slice.conc,
       slice.deltas,
       period,
       data.latestFiled,
       topn,
       { periods, total: slice.total!, page, benchmark: data.benchmarks?.[period] ?? null, discontinuity: slice.discontinuity === true, kinds: slice.kinds ?? null, kind },
-    );
+    ));
     if (repaintPeriodParts) {
       if (ledgerRoot) ledgerRoot.innerHTML = filerLedgerHtml(slice.conc, period, slice.total!, slice.kinds ?? null);
       if (bookRoot) bookRoot.innerHTML = filerBookShapeHtml(slice.conc, topn, period, slice.total!, data.benchmarks?.[period] ?? null);
@@ -1119,7 +1120,7 @@ export function initHoldersPeriods(): void {
     const rows = data.periods[next];
     if (!rows) return;
     period = next;
-    root.innerHTML = holdersTableHtml(rows, next, data.latestFiled, data.topn);
+    root.innerHTML = rolesFor(root, holdersTableHtml(rows, next, data.latestFiled, data.topn));
     chips.querySelectorAll<HTMLButtonElement>("[data-period]").forEach((c) => {
       const active = c === btn;
       c.classList.toggle("chip-active", active);
@@ -1221,7 +1222,7 @@ export function runGenericRoute(): void {
       }
     },
     render: (html) => {
-      root.innerHTML = html;
+      root.innerHTML = rolesFor(root, html);
     },
     setTitle: (t) => {
       document.title = t;

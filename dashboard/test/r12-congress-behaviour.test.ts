@@ -27,6 +27,7 @@ import { CONGRESS_ROOTS, congressRankingSection, type BuildStamps } from "../src
 import { congressTickersRollup, leadersRollup } from "../src/lib/derive.ts";
 import type { RenderCtx, TxnRow } from "../src/lib/format.ts";
 import { initCongressSections } from "../src/scripts/congress-sections.ts";
+import { stripTableRoles } from "./lib/table-roles.ts";
 
 const GENERATED_AT = "2026-08-12";
 const CTX: RenderCtx = {};
@@ -244,7 +245,9 @@ test("F12: a header click before the dataset lands is inert, never destructive",
     const nameHeader = h.doc.querySelector('th[data-congress-sort=name]');
     assert.ok(nameHeader, "the momentum table exposes a sortable Ticker header");
     nameHeader!.click();
-    assert.equal(root.innerHTML, before, "sorting with no rows must not blank the server view");
+    /* launch M1a (R40): the client repaint carries the explicit table roles the
+       layout adds to the server page; the property compared is unchanged */
+    assert.equal(stripTableRoles(root.innerHTML), stripTableRoles(before), "sorting with no rows must not blank the server view");
   } finally {
     h.restore();
   }
@@ -273,7 +276,9 @@ test("R12: with a requestRows hook, a header press asks for the rows and the sor
     const before = root.innerHTML;
     doc.querySelector('th[data-congress-sort=name]')!.click();
     assert.equal(asked > 0, true, "the press requested the dataset");
-    assert.equal(root.innerHTML, before, "…and did not blank the server view meanwhile");
+    /* launch M1a (R40): the client repaint carries the explicit table roles the
+       layout adds to the server page; the property compared is unchanged */
+    assert.equal(stripTableRoles(root.innerHTML), stripTableRoles(before), "…and did not blank the server view meanwhile");
     sections.receiveRows(corpus());
     assert.notEqual(root.innerHTML, before, "the pending sort painted once the rows arrived");
   } finally {

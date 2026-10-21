@@ -2757,7 +2757,155 @@ export function thHtml(o: ThOpts): string {
     : o.order
       ? ` aria-sort="${o.order}"`
       : "";
-  return `<th scope="col"${cls ? ` class="${cls}"` : ""}${o.col ? ` data-col="${esc(o.col)}"` : ""}${sortAttrs}${o.attrs ?? ""}>${inner}</th>`;
+  /* `data-label` (launch M1b, LD6): the column's mark-free label, which a
+     body cell prints before its value once the ≤720px fold turns the row into
+     a card and the head folds away. `withTableRoles` copies it onto the
+     column's cells. */
+  return `<th scope="col"${cls ? ` class="${cls}"` : ""}${o.col ? ` data-col="${esc(o.col)}"` : ""} data-label="${esc(text)}"${sortAttrs}${o.attrs ?? ""}>${inner}</th>`;
+}
+
+/* ---------- explicit table semantics (launch M1a: R40, LD37) ----------
+
+   At ≤720px every ledger table folds into row cards (D4, LD6): the row and its
+   cells stop being `display: table-*`. WebKit — every browser on iOS — can then
+   drop the table's native semantics, and a screen reader hears a heap of text
+   instead of a table. So every table carries its roles EXPLICITLY, at every
+   width (a redundant role on a native table element is valid):
+
+     table → role="table" (plus `data-card`, the card layout the fold selects)
+     thead, tbody, tfoot → role="rowgroup"
+     tr → role="row"
+     th → role="columnheader" (scope="col", or any th in the head) or
+          role="rowheader" (scope="row", or a th in a body row)
+     td → role="cell" (plus `data-label`, copied from its column head's
+          `data-label`, which a card prints before the cell's value)
+
+   ONE pure function, applied wherever table markup enters a page: the layout's
+   render of the page body (`Base.astro`, so every server page and the no-JS
+   reader carry the roles from the first paint), and every client sink that
+   paints table markup (`scripts/table-roles.ts`, called by each sink), so a
+   repaint through the same row function carries them too. A role an element
+   already states is kept; nothing else in the markup changes. Roles added by a
+   client script after load were rejected (the first paint and no-JS readers
+   would lose them); see docs/frontend/design-principles.md §5. */
+
+/** The ≤720px card layouts a table can select through `data-card` (LD6). */
+export const CARD_KINDS = ["feed", "ranking", "member-trades", "holders", "moves", "generic"] as const;
+export type CardKind = (typeof CARD_KINDS)[number];
+
+export interface TableRoleOpts {
+  /** The column labels (attribute-encoded, one per column; null = none) of
+      the table a FRAGMENT of rows is painted into. A client sink reads them off
+      the live head; markup holding a whole table takes them from its own head. */
+  labels?: readonly (string | null)[];
+}
+
+/* Comments and raw-text elements are passed through untouched; the attribute
+   group honours quoted values, so a `>` inside one cannot end the tag. */
+const TABLE_MARKUP_TOKEN =
+  /<!--[\s\S]*?-->|<(script|style|textarea)\b[^>]*>[\s\S]*?<\/\1\s*>|<(\/?)(table|thead|tbody|tfoot|tr|th|td)\b((?:[^>"']|"[^"]*"|'[^']*')*)>/gi;
+
+function attrValue(attrs: string, name: string): string | null {
+  const m = new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>\`]+))`, "i").exec(attrs);
+  return m ? (m[1] ?? m[2] ?? m[3] ?? "") : null;
+}
+function hasAttr(attrs: string, name: string): boolean {
+  return new RegExp(`(?:^|\\s)${name}(?:\\s*=|\\s|$)`, "i").test(attrs);
+}
+
+/** The card layout a table selects when it does not state one: the feed, a
+    member's (or any entity's) transactions, a holders table; else generic. */
+export function cardKindOf(attrs: string): CardKind {
+  const stated = attrValue(attrs, "data-card");
+  if (stated && (CARD_KINDS as readonly string[]).includes(stated)) return stated as CardKind;
+  const cls = ` ${attrValue(attrs, "class") ?? ""} `;
+  if (/\s(reference-feed|feed-table)\s/.test(cls)) return "feed";
+  if (hasAttr(attrs, "data-entity-table")) return "member-trades";
+  if (hasAttr(attrs, "data-holders-table")) return "holders";
+  return "generic";
+}
+
+/** Does a body cell print its column's label on a card? A number does (a bare
+    "12" means nothing once the head folds away), and so does a cell with no
+    ledger role class at all (a plain prose table); a name, ticker, kind word,
+    asset, owner, range band, flag or receipt says what it is, so it carries no
+    label — which also keeps the attribute off most cells (bytes per page). */
+function wantsCardLabel(attrs: string): boolean {
+  const roles = (attrValue(attrs, "class") ?? "").match(/(?:^|\s)c-[a-z-]+/g);
+  return roles === null || roles.some((r) => r.trim() === "c-num");
+}
+
+interface TableScope {
+  section: "head" | "body" | "foot" | null;
+  labels: readonly (string | null)[];
+  headRow: (string | null)[] | null;
+  col: number;
+}
+
+export function withTableRoles(html: string, opts: TableRoleOpts = {}): string {
+  if (!/<(?:table|thead|tbody|tfoot|tr|th|td)\b/i.test(html)) return html;
+  /* The implicit scope of a fragment: rows painted into a table body. */
+  const fragment: TableScope = { section: "body", labels: opts.labels ?? [], headRow: null, col: 0 };
+  const stack: TableScope[] = [];
+  const add = (tag: string, attrs: string, extra: string): string => {
+    const selfClose = /\/\s*$/.test(attrs);
+    const body = selfClose ? attrs.replace(/\/\s*$/, "") : attrs;
+    return `<${tag}${body}${extra}${selfClose ? " /" : ""}>`;
+  };
+  return html.replace(TABLE_MARKUP_TOKEN, (whole, _raw: string | undefined, close: string | undefined, name: string | undefined, attrs: string | undefined) => {
+    if (name === undefined) return whole; // a comment or a raw-text element
+    const tag = name.toLowerCase();
+    const a = attrs ?? "";
+    const scope = stack[stack.length - 1] ?? fragment;
+    if (close) {
+      if (tag === "table") stack.pop();
+      else if (tag === "thead") {
+        if (scope.headRow) scope.labels = scope.headRow;
+        scope.section = null;
+      } else if (tag === "tbody" || tag === "tfoot") scope.section = null;
+      return whole;
+    }
+    const role = hasAttr(a, "role") ? "" : null;
+    switch (tag) {
+      case "table": {
+        stack.push({ section: null, labels: [], headRow: null, col: 0 });
+        const card = hasAttr(a, "data-card") ? "" : ` data-card="${cardKindOf(a)}"`;
+        return add(name, a, `${role ?? ' role="table"'}${card}`);
+      }
+      case "thead":
+      case "tbody":
+      case "tfoot":
+        scope.section = tag === "thead" ? "head" : tag === "tbody" ? "body" : "foot";
+        return add(name, a, role ?? ' role="rowgroup"');
+      case "tr":
+        scope.col = 0;
+        if (scope.section === "head") scope.headRow = [];
+        return add(name, a, role ?? ' role="row"');
+      default: {
+        // th, td
+        const span = Math.max(1, Number.parseInt(attrValue(a, "colspan") ?? "1", 10) || 1);
+        let extra: string;
+        if (tag === "th") {
+          const sc = (attrValue(a, "scope") ?? "").toLowerCase();
+          const head = sc === "col" || sc === "colgroup" || (sc !== "row" && sc !== "rowgroup" && scope.section === "head");
+          extra = role ?? (head ? ' role="columnheader"' : ' role="rowheader"');
+        } else {
+          extra = role ?? ' role="cell"';
+        }
+        if (scope.section === "head") {
+          if (scope.headRow) {
+            scope.headRow[scope.col] = tag === "th" ? attrValue(a, "data-label") : null;
+            for (let i = 1; i < span; i++) scope.headRow[scope.col + i] = null;
+          }
+        } else if (span === 1 && !hasAttr(a, "data-label") && wantsCardLabel(a)) {
+          const label = scope.labels[scope.col];
+          if (label) extra += ` data-label="${label}"`;
+        }
+        scope.col += span;
+        return add(name, a, extra);
+      }
+    }
+  });
 }
 
 /* ---------- column presence (DESIGN-POLISH M2, R12, Architecture D) ----------

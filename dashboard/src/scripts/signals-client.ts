@@ -35,6 +35,7 @@ import { NAMED_MOVES_MIN, NAMED_MOVES_STEP, namedMovesSliceKey } from "../lib/no
 import { congressBankBlockFrom, moveDetailHtml, moveRowFrom, namedMovesBoundText, namedMovesRangeText, overlapLinkFor, parseNamedMovesTotals, type HeldBank, type HeldMoves, type MoveDetail, type MoveRowData } from "../lib/ui/signals-institutional.ts";
 import { overlapBoundText, overlapItemHtml, overlapRangeText, type HeldOverlap, type HeldOverlapItem } from "../lib/ui/signals-overlap.ts";
 import { bindFit, type FitBinding, type FitElement, type FitTarget } from "./column-fit.ts";
+import { rolesFor } from "./table-roles.ts";
 import { initTabs, selectTabFor, type TabsEnv } from "./tabs.ts";
 import { expandDomDisclosureFor } from "./inst-index-client.ts";
 
@@ -239,10 +240,12 @@ export function initHitPager(): HitPager | null {
     const v = hitsRepaint(hits, filter(), base + extra, ctx, parseDataColumns(body!.closest("table")?.getAttribute("data-columns")), domRows);
     /* a repaint renders from the artifact: the island's lines are retired */
     if (island) setHeldRendered("signal-hits-body", island.lines.length);
-    body!.innerHTML =
+    body!.innerHTML = rolesFor(
+      body,
       v.held === 0
         ? `<tr><td colspan="${columnCount(body, 6)}" class="si-empty">No hits match this view — a computed answer over every rule, not missing coverage.</td></tr>`
-        : v.body;
+        : v.body,
+    );
     lines = v.lines;
     hitsN = v.hits;
     heldKey = key();

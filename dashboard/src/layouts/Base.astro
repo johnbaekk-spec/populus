@@ -25,6 +25,7 @@ import "../styles/content.css";
 import "../styles/media.css";
 import "../styles/late-additions.css";
 import { getBuildData } from "../lib/data";
+import { withTableRoles } from "../lib/format";
 import Mark from "../components/Mark.astro";
 
 interface Props {
@@ -45,6 +46,13 @@ interface Props {
 
 const { title, description, active, searchEmphasis = false, footer = "standard", head = "" } = Astro.props;
 const build = getBuildData();
+
+/* launch M1a (R40, LD37): the page body is rendered once, here, and every
+   table in it leaves with its explicit roles (table, rowgroup, row,
+   columnheader/rowheader, cell) and its `data-card` layout — at every width,
+   for the first paint and for a reader without JavaScript. The client sinks
+   run the same function on what they repaint (scripts/table-roles.ts). */
+const pageBody = withTableRoles(await Astro.slots.render("default"));
 
 /* The footer's one notice sentence (docs/design/SIGNALS-CLARITY-DECISIONS.md,
    L1). It keeps, on every page, what the former notice paragraph carried: the
@@ -128,7 +136,7 @@ const FOOTER_NOTICE = {
       </div>
     </header>
 
-    <slot />
+    <Fragment set:html={pageBody} />
 
     {/* One row — brand, three links, the theme toggle — and one notice
         sentence. Nothing here is hidden at any width; at ≤720px the row wraps.

@@ -2298,3 +2298,365 @@ export function formatResult(r: LedgerResult, max = 25): string {
   if (r.failures.length > max) lines.push(`  … ${r.failureCount - max} more`);
   return lines.join("\n");
 }
+
+/* ================================================================ phone predicates
+   launch M1a (T1.2; R4, R5, R6, R7, R10, R13, R35, R40). The mock's one-off
+   phone audit (`audit_mobile.mjs`, docs/design/launch-redesign-mock/tools/) is
+   re-homed here as repository test code, so the local gate and the live probe
+   use ONE ruler (`phone.spec.ts`, also run by playwright.production.config.ts).
+   Every predicate runs in the page from `phoneAuditInPage` — a self-contained
+   function (page.evaluate serialises it; it closes over nothing) — and each one
+   counts what it measured, so a pass over nothing is visible as such.
+
+   The audit's definitions are kept: a tap target's EFFECTIVE hit area is its
+   own box joined with an absolutely positioned ::before/::after that extends
+   it (and a wrapping label for an input); a link set inline inside running
+   prose (p, li, dd, a tip) is exempt; visually hidden text (the clip pattern)
+   is skipped; a sideways scroller is any visible element whose overflow-x
+   scrolls with content past its box. Added for the launch plan: covered
+   targets (`elementFromPoint` at the centre of each target's own box must hit
+   the target or a descendant — R7), the R10 scroller allowlist with names and
+   snap, G3 in full over every table container (R4), honesty visibility (R5),
+   explicit table roles (R40), the shell's side gutters (R13), the DOM count
+   (R35) and a font map (R6: no text node smaller than at T0). */
+
+export interface PhoneAuditArg {
+  /** HONESTY_SELECTORS (test/lib/honesty-selectors.ts) */
+  honesty: readonly string[];
+  /** the only elements allowed to scroll sideways at ≤720px (R10) */
+  scrollerAllow: readonly string[];
+  /** the swipe strips among them, which must snap (LD11) */
+  swipe: readonly string[];
+  /** the effective tap floor, px (44) */
+  minTap: number;
+  /** the visible text floor, px (11 at ≤720px) */
+  minFont: number;
+}
+
+export interface PhoneAudit {
+  vw: number;
+  pageW: number;
+  height: number;
+  dom: number;
+  tables: number;
+  sidewaysTables: string[];
+  scrollers: { el: string; allowed: boolean; named: boolean; table: boolean; swipe: boolean; snaps: boolean }[];
+  scrollerProblems: string[];
+  taps: number;
+  smallTaps: string[];
+  coverChecked: number;
+  coveredTaps: string[];
+  textChars: number;
+  under11Pct: number;
+  smallText: string[];
+  fontMap: Record<string, number>;
+  escapes: string[];
+  honestyChecked: number;
+  honestyProblems: string[];
+  cardTables: number;
+  roleProblems: string[];
+  gutterL: number | null;
+  gutterR: number | null;
+}
+
+export function phoneAuditInPage(arg: PhoneAuditArg): PhoneAudit {
+  const vw = innerWidth;
+  const csOf = new Map<Element, CSSStyleDeclaration>();
+  const cs = (el: Element): CSSStyleDeclaration => {
+    let s = csOf.get(el);
+    if (!s) {
+      s = getComputedStyle(el);
+      csOf.set(el, s);
+    }
+    return s;
+  };
+  const label = (el: Element): string => {
+    const cls = typeof (el as HTMLElement).className === "string" && (el as HTMLElement).className ? "." + (el as HTMLElement).className.trim().split(/\s+/).slice(0, 2).join(".") : "";
+    const text = ((el as HTMLElement).innerText || (el as HTMLInputElement).value || el.getAttribute("aria-label") || "").trim().replace(/\s+/g, " ").slice(0, 30);
+    return `${el.tagName.toLowerCase()}${cls} "${text}"`;
+  };
+  const srMemo = new Map<Element, boolean>();
+  /** visually hidden through the clip pattern (still announced) */
+  const srOnly = (el: Element | null): boolean => {
+    if (!el || el === document.body || el === document.documentElement) return false;
+    const hit = srMemo.get(el);
+    if (hit !== undefined) return hit;
+    const s = cs(el);
+    const r = el.getBoundingClientRect();
+    const own = (s.position === "absolute" || s.position === "fixed") && (r.width <= 1 || r.height <= 1) && (s.overflow !== "visible" || s.clip !== "auto" || s.clipPath !== "none");
+    const v = own || srOnly(el.parentElement);
+    srMemo.set(el, v);
+    return v;
+  };
+  const vis = (el: Element): boolean => {
+    const r = el.getBoundingClientRect();
+    const s = cs(el);
+    return r.width > 1 && r.height > 1 && s.visibility !== "hidden" && s.display !== "none" && s.opacity !== "0";
+  };
+  const scrolls = (el: Element): boolean => {
+    const ox = cs(el).overflowX;
+    return (ox === "auto" || ox === "scroll") && el.scrollWidth > el.clientWidth + 1;
+  };
+  const inScroller = (el: Element): boolean => {
+    for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) if (scrolls(p)) return true;
+    return false;
+  };
+  const all = Array.from(document.querySelectorAll("body *"));
+  const out: PhoneAudit = {
+    vw,
+    pageW: document.documentElement.scrollWidth,
+    height: document.documentElement.scrollHeight,
+    dom: document.getElementsByTagName("*").length,
+    tables: 0,
+    sidewaysTables: [],
+    scrollers: [],
+    scrollerProblems: [],
+    taps: 0,
+    smallTaps: [],
+    coverChecked: 0,
+    coveredTaps: [],
+    textChars: 0,
+    under11Pct: 0,
+    smallText: [],
+    fontMap: {},
+    escapes: [],
+    honestyChecked: 0,
+    honestyProblems: [],
+    cardTables: 0,
+    roleProblems: [],
+    gutterL: null,
+    gutterR: null,
+  };
+
+  /* R4 — G3 in full: no table container scrolls or clips sideways, no table
+     box leaves the viewport, and the document never scrolls sideways. */
+  if (document.documentElement.scrollWidth > vw + 1) out.sidewaysTables.push(`document scrolls sideways (${document.documentElement.scrollWidth}px at ${vw}px)`);
+  for (const t of Array.from(document.querySelectorAll("table"))) {
+    if (!vis(t) || srOnly(t)) continue;
+    out.tables += 1;
+    const r = t.getBoundingClientRect();
+    if (r.right > vw + 1 || r.left < -1) out.sidewaysTables.push(`${label(t)} spans ${Math.round(r.left)}..${Math.round(r.right)}`);
+    for (let p = t.parentElement; p && p !== document.body; p = p.parentElement) {
+      if (cs(p).overflowX !== "visible" && p.scrollWidth > p.clientWidth + 1) {
+        out.sidewaysTables.push(`${label(p)} holds a table and is ${p.scrollWidth - p.clientWidth}px too narrow`);
+        break;
+      }
+    }
+  }
+
+  /* R10 — the only sideways scrollers are the allowlist; each is named, holds
+     no table, and a swipe strip snaps. */
+  for (const el of all) {
+    if (!scrolls(el) || !vis(el)) continue;
+    const allowed = arg.scrollerAllow.some((s) => el.matches(s));
+    const swipe = arg.swipe.some((s) => el.matches(s));
+    const named = el.hasAttribute("data-scroll-region") || el.hasAttribute("aria-label") || el.hasAttribute("aria-labelledby");
+    const table = el.querySelector("table") !== null;
+    const snap = cs(el).scrollSnapType;
+    const snaps = /x|inline|both/.test(snap) && /mandatory/.test(snap);
+    out.scrollers.push({ el: label(el), allowed, named, table, swipe, snaps });
+    if (!allowed) out.scrollerProblems.push(`${label(el)} scrolls sideways and is not an allowed scroller`);
+    if (table) out.scrollerProblems.push(`${label(el)} scrolls sideways with a table inside`);
+    if (!named) out.scrollerProblems.push(`${label(el)} is an unnamed scroll region`);
+    if (swipe && !snaps) out.scrollerProblems.push(`${label(el)} is a swipe strip without x mandatory snap`);
+  }
+
+  /* R7 — effective tap areas, and no target covered by another. */
+  const hit = (el: Element): { w: number; h: number } => {
+    const r = el.getBoundingClientRect();
+    let L = r.left;
+    let T = r.top;
+    let R = r.right;
+    let B = r.bottom;
+    let cb: Element | null = el;
+    while (cb && cb !== document.body && cs(cb).position === "static") cb = cb.parentElement;
+    if (cb && cb !== document.body) {
+      const c = cb.getBoundingClientRect();
+      const ccs = cs(cb);
+      const box = {
+        left: c.left + parseFloat(ccs.borderLeftWidth),
+        top: c.top + parseFloat(ccs.borderTopWidth),
+        right: c.right - parseFloat(ccs.borderRightWidth),
+        bottom: c.bottom - parseFloat(ccs.borderBottomWidth),
+      };
+      for (const pse of ["::before", "::after"]) {
+        const p = getComputedStyle(el, pse);
+        if (p.content === "none" || p.content === "normal" || p.display === "none" || p.position !== "absolute") continue;
+        const px = (v: string): number | null => (/px$/.test(v) ? parseFloat(v) : null);
+        const t = px(p.top);
+        const l = px(p.left);
+        const rr = px(p.right);
+        const b = px(p.bottom);
+        if (t === null || l === null || rr === null || b === null) continue;
+        L = Math.min(L, box.left + l);
+        T = Math.min(T, box.top + t);
+        R = Math.max(R, box.right - rr);
+        B = Math.max(B, box.bottom - b);
+      }
+    }
+    const lab = el.tagName === "INPUT" ? el.closest("label") : null;
+    if (lab) {
+      const q = lab.getBoundingClientRect();
+      L = Math.min(L, q.left);
+      T = Math.min(T, q.top);
+      R = Math.max(R, q.right);
+      B = Math.max(B, q.bottom);
+    }
+    return { w: R - L, h: B - T };
+  };
+  const taps = Array.from(
+    document.querySelectorAll('a[href], button, input:not([type=hidden]), select, textarea, summary, label[for], [role="button"], [role="tab"]'),
+  ).filter((el) => vis(el) && !el.closest("[popover]") && !srOnly(el));
+  out.taps = taps.length;
+  for (const el of taps) {
+    const prose = cs(el).display === "inline" && el.closest("p, li, dd, .note-pop") !== null;
+    if (prose) continue;
+    const h = hit(el);
+    if (h.w < arg.minTap - 0.5 || h.h < arg.minTap - 0.5) out.smallTaps.push(`${label(el)} ${Math.round(h.w)}x${Math.round(h.h)}`);
+  }
+  const scrollY0 = window.scrollY;
+  for (const el of taps) {
+    const r0 = el.getBoundingClientRect();
+    const cxDoc = r0.left + r0.width / 2;
+    const cyDoc = r0.top + window.scrollY + r0.height / 2;
+    if (cxDoc < 0 || cxDoc > vw) continue; // inside a sideways scroller, off its visible part
+    window.scrollTo(0, Math.max(0, cyDoc - innerHeight / 2));
+    const r = el.getBoundingClientRect();
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    if (cy < 0 || cy > innerHeight) continue;
+    out.coverChecked += 1;
+    const top = document.elementFromPoint(cx, cy);
+    if (!top || top === el || el.contains(top)) continue;
+    if (top.tagName === "LABEL" && top.contains(el)) continue;
+    out.coveredTaps.push(`${label(el)} is under ${label(top)}`);
+  }
+  window.scrollTo(0, scrollY0);
+
+  /* R6 — visible text at or above the floor; the font map for the T0 diff. */
+  const sizes: Record<string, number> = {};
+  const small: Record<string, number> = {};
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const t = (n.textContent ?? "").trim();
+    if (!t) continue;
+    const el = n.parentElement;
+    if (!el || !vis(el) || el.closest("[popover], script, style, noscript, template, .visually-hidden") || srOnly(el)) continue;
+    const fs = Math.round(parseFloat(cs(el).fontSize) * 2) / 2;
+    sizes[fs] = (sizes[fs] ?? 0) + t.length;
+    if (fs < arg.minFont - 0.01) {
+      const k = `${label(el).split(' "')[0]} ${fs}px`;
+      small[k] = (small[k] ?? 0) + t.length;
+    }
+  }
+  const total = Object.values(sizes).reduce((a, b) => a + b, 0);
+  out.textChars = total;
+  out.fontMap = sizes;
+  out.under11Pct = total === 0 ? 0 : Math.round((Object.entries(sizes).filter(([s]) => Number(s) < 11).reduce((a, [, c]) => a + c, 0) / total) * 1000) / 10;
+  out.smallText = Object.entries(small).sort((a, b) => b[1] - a[1]).map(([k, c]) => `${k} (${c} chars)`);
+
+  /* nothing escapes the viewport outside a scroller */
+  const esc = new Set<string>();
+  for (const el of all) {
+    if (cs(el).position === "fixed" || !vis(el) || srOnly(el) || el.closest("[popover]")) continue;
+    const r = el.getBoundingClientRect();
+    if ((r.right > vw + 1 || r.left < -1) && !inScroller(el)) esc.add(`${label(el)} ${Math.round(r.left)}..${Math.round(r.right)}`);
+  }
+  out.escapes = [...esc];
+
+  /* R2 / R5 — every honesty element a reader is meant to see is rendered,
+     unclamped, not cut by an ellipsis or a clipping ancestor, and inside the
+     viewport (or inside an allowed scroller). Structural hides are not media
+     hides: a closed details body, a closed tip, a hidden panel. The clip
+     pattern is a deliberate visual hide that stays announced. */
+  for (const sel of arg.honesty) {
+    for (const el of Array.from(document.querySelectorAll(sel))) {
+      if (el.closest("[hidden], [popover], template, noscript, [inert], [aria-hidden=true]")) continue;
+      const closed = el.closest("details:not([open])");
+      if (closed && !el.closest("summary")) continue;
+      out.honestyChecked += 1;
+      if (srOnly(el)) continue;
+      if (typeof (el as HTMLElement).checkVisibility === "function" && !(el as HTMLElement).checkVisibility({ visibilityProperty: true } as CheckVisibilityOptions)) {
+        out.honestyProblems.push(`${sel}: ${label(el)} is not rendered`);
+        continue;
+      }
+      const r = el.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) {
+        if ((el.textContent ?? "").trim()) out.honestyProblems.push(`${sel}: ${label(el)} has no box`);
+        continue;
+      }
+      const s = cs(el);
+      const clamp = s.getPropertyValue("-webkit-line-clamp");
+      if (clamp && clamp !== "none") out.honestyProblems.push(`${sel}: ${label(el)} is line-clamped (${clamp})`);
+      if (s.textOverflow === "ellipsis" && s.overflowX !== "visible" && el.scrollWidth > el.clientWidth + 1) out.honestyProblems.push(`${sel}: ${label(el)} is cut by an ellipsis`);
+      for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+        const ps = cs(p);
+        if (ps.overflowX === "visible" && ps.overflowY === "visible") continue;
+        if (scrolls(p)) break;
+        const pr = p.getBoundingClientRect();
+        if (r.left < pr.left - 1 || r.right > pr.right + 1 || r.top < pr.top - 1 || r.bottom > pr.bottom + 1) {
+          out.honestyProblems.push(`${sel}: ${label(el)} is clipped by ${label(p)}`);
+          break;
+        }
+      }
+      if ((r.left < -1 || r.right > vw + 1) && !inScroller(el)) out.honestyProblems.push(`${sel}: ${label(el)} is outside the viewport`);
+    }
+  }
+
+  /* R40 — every table selects a card layout, and every card table carries
+     its roles explicitly. */
+  const want: Record<string, string[]> = { THEAD: ["rowgroup"], TBODY: ["rowgroup"], TFOOT: ["rowgroup"], TR: ["row"], TH: ["columnheader", "rowheader"], TD: ["cell"] };
+  for (const t of Array.from(document.querySelectorAll("table"))) {
+    if (!t.hasAttribute("data-card")) {
+      out.roleProblems.push(`${label(t)} has no data-card`);
+      continue;
+    }
+    out.cardTables += 1;
+    if (t.getAttribute("role") !== "table") out.roleProblems.push(`${label(t)} lacks role=table`);
+    const own = (el: Element): void => {
+      for (const c of Array.from(el.children)) {
+        if (c.tagName === "TABLE") continue;
+        const w = want[c.tagName];
+        if (w && !w.includes(c.getAttribute("role") ?? "")) out.roleProblems.push(`${label(c)} in ${label(t)} lacks role ${w.join("|")}`);
+        own(c);
+      }
+    };
+    own(t);
+  }
+
+  /* R13 — the shell's side gutters */
+  const shell = document.querySelector(".shell");
+  if (shell) {
+    out.gutterL = parseFloat(cs(shell).paddingLeft);
+    out.gutterR = parseFloat(cs(shell).paddingRight);
+  }
+  return out;
+}
+
+/** Visible words in the SERVED HTML (the SC5 ruler): run in a page loaded with
+    JavaScript off and any meta refresh removed. Words are tokens with a letter
+    or digit; tips, popovers, hidden and visually hidden text, table bodies
+    (data, not copy) and the bodies of closed disclosures (their summary
+    counts) are not words. Self-contained for page.evaluate. */
+export function servedWordsInPage(rootSel: string): number {
+  const root = document.querySelector(rootSel) ?? document.body;
+  let words = 0;
+  const walk = (n: Node): void => {
+    if (n.nodeType === 1) {
+      const el = n as Element;
+      const s = getComputedStyle(el);
+      if (s.display === "none" || s.visibility === "hidden") return;
+      if (el.matches(".note-pop, [popover], .visually-hidden, script, style, template, noscript, tbody")) return;
+      if (el.tagName === "DETAILS" && !(el as HTMLDetailsElement).open) {
+        const sum = el.querySelector(":scope > summary");
+        if (sum) walk(sum);
+        return;
+      }
+      for (const c of Array.from(el.childNodes)) walk(c);
+    } else if (n.nodeType === 3) {
+      words += ((n.textContent ?? "").match(/\S+/g) ?? []).filter((w) => /[A-Za-z0-9]/.test(w)).length;
+    }
+  };
+  walk(root);
+  return words;
+}

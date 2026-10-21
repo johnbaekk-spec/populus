@@ -68,7 +68,8 @@ test("R22: abbreviated headers read in full words; the abbreviation is narrow-on
   assert.ok(Object.keys(HEADER_ABBREVIATIONS).every((k) => !/[§†‡¶≈]/.test(k) && !/[§†‡¶≈]/.test(HEADER_ABBREVIATIONS[k]!)), "no mark in the map");
   assert.equal(
     thHtml({ label: "Gross bought ·§", cls: "c-num" }),
-    '<th scope="col" class="c-num has-marks"><span class="th-full">Gross bought</span><span class="th-abbr" aria-hidden="true">Gross purch</span><span class="hang">·§</span></th>',
+    /* launch M1b (LD6): `data-label` carries the mark-free label to the column's card cells */
+    '<th scope="col" class="c-num has-marks" data-label="Gross bought"><span class="th-full">Gross bought</span><span class="th-abbr" aria-hidden="true">Gross purch</span><span class="hang">·§</span></th>',
     "the mark hangs after both halves of the swap",
   );
   const html = thLabelHtml("Source");
