@@ -153,6 +153,16 @@ test("R23 / LD24: the Signals fact lists active signals of any kind (s3–s6 inc
   assert.match(factOf(memberBody(member(1), STAMPS, CTX, 0, deps({ signals: { retentionDays: 120, active: [] } })), "Signals"), /in the last 120 days/, "the window is the artifact's, never a literal");
 });
 
+test("H4: the compact Signals fact states withheld rules and this member's unevaluated carry-forwards beside 'None' and beside a list", () => {
+  const none = factOf(memberBody(member(1), STAMPS, CTX, 0, deps({ signals: { retentionDays: 90, active: [], unevaluated: 2, withheld: ["S-5 · JURISDICTION"] } })), "Signals");
+  assert.match(none, /^None in the last 90 days · 2 carried forward unevaluated because their rules were withheld this build · not checked this build \(rule withheld\): S-5 · JURISDICTION\.$/);
+  const listed = factOf(memberBody(member(1), STAMPS, CTX, 0, deps({ signals: { retentionDays: 90, active: [{ kind: "s1-large", label: "S-1 · LARGE", ticker: "T0" }], unevaluated: 1 } })), "Signals");
+  assert.match(listed, /S-1 · LARGE · T0/);
+  assert.match(listed, /1 carried forward unevaluated because its rule was withheld this build\./);
+  // re-planted control: nothing withheld, nothing unevaluated — the plain computed answer
+  assert.match(factOf(memberBody(member(1), STAMPS, CTX, 0, deps({ signals: { retentionDays: 90, active: [], unevaluated: 0, withheld: [] } })), "Signals"), /^None in the last 90 days\.$/);
+});
+
 test("R23 / R2: a compact card states both dates, the lag, LATE, the owner (never 'self' when missing) and its receipt", () => {
   const m = member(1, { txns: [txn(0, { owner: null, late: 1, lag: 61, side: "sale_partial" })] });
   const card = domOf(memberBody(m, STAMPS, CTX, 0, deps())).querySelector("li.one-r")!;

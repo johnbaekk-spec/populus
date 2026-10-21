@@ -56,6 +56,9 @@ const v2Deps: MemberV2Deps = {
     active: signalArtifact.signals
       .filter((s) => s.entities.bioguide === member.bioguide && s.status === "active")
       .map((s) => ({ kind: s.kind, label: `S-${s.kind.slice(1, 2)} · ${signalKindShort(s.kind)}`, ticker: s.entities.ticker ?? null })),
+    /* launch review H4: "None" is stated with what was not evaluated */
+    unevaluated: signalArtifact.signals.filter((s) => s.entities.bioguide === member.bioguide && s.status === "unevaluated").length,
+    withheld: signalArtifact.withheld.map((w) => `S-${w.kind.slice(1, 2)} · ${signalKindShort(w.kind)}`),
   },
 };
 const bodyHtml =

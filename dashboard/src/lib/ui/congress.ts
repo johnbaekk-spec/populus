@@ -1094,6 +1094,12 @@ export function isChairRole(role: string | null): boolean {
 export interface MemberSignalsSummary {
   retentionDays: number;
   active: readonly { kind: string; label: string; ticker: string | null }[];
+  /** launch review H4: this member's signals carried forward unevaluated
+      (their rule was withheld this build) */
+  unevaluated?: number;
+  /** launch review H4: the rules withheld this build (labels), which no
+      member was checked against */
+  withheld?: readonly string[];
 }
 
 /** One distinct filing behind the member's transactions. */
@@ -1376,9 +1382,18 @@ function compactOverlapFact(m: MemberEntity, deps: MemberV2Deps): string {
     in the last N days" only when that was computed. */
 function compactSignalsFact(sig: MemberSignalsSummary | null): string {
   if (sig === null) return "Signals are joined on the server; this view carries none.";
-  if (sig.active.length === 0) return `None <span class="fact-dim">in the last ${fmtInt(sig.retentionDays)} days.</span>`;
+  /* H4: "None" is the computed answer only for the rules evaluated; the
+     withheld rules and this member's unevaluated carry-forwards are stated */
+  const unevaluated = sig.unevaluated ?? 0;
+  const withheld = sig.withheld ?? [];
+  const caveats = [
+    unevaluated > 0 ? `${fmtInt(unevaluated)} carried forward unevaluated because ${unevaluated === 1 ? "its rule was" : "their rules were"} withheld this build` : "",
+    withheld.length > 0 ? `not checked this build (rule withheld): ${withheld.map(esc).join(", ")}` : "",
+  ].filter(Boolean);
+  if (sig.active.length === 0) return `None <span class="fact-dim">in the last ${fmtInt(sig.retentionDays)} days${caveats.length ? ` · ${caveats.join(" · ")}` : ""}.</span>`;
   return (
     sig.active.map((s) => `${esc(s.label)}${s.ticker ? ` · <span class="mono-ticker">${esc(s.ticker)}</span>` : ""}`).join("<br>") +
+    (caveats.length ? `<br><span class="fact-dim">${caveats.join(" · ")}.</span>` : "") +
     ` <a href="/signals/">All signals →</a>`
   );
 }
