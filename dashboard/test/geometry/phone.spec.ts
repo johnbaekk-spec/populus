@@ -46,7 +46,12 @@ export const SCROLLER_ALLOW: readonly string[] = [".sig-tabs-scroll", ".tk-tabs"
     (home and Signals), the playbook list, and any strip a renderer marks. */
 export const SWIPE_STRIPS: readonly string[] = [".pb-list", ".si-cards", "[data-swipe]"];
 
-const ARG: PhoneAuditArg = { honesty: HONESTY_SELECTORS, scrollerAllow: SCROLLER_ALLOW, swipe: SWIPE_STRIPS, minTap: 44, minFont: 11 };
+/** Containers switched by a control, not by the width (R5's structural hides):
+    the Signals lead card's two ranking variants (signals.ts, `.si-variant`;
+    `#si-rank-absolute` shows one and hides the other at every width). */
+export const STRUCTURAL_HIDES: readonly string[] = [".si-variant"];
+
+const ARG: PhoneAuditArg = { honesty: HONESTY_SELECTORS, scrollerAllow: SCROLLER_ALLOW, swipe: SWIPE_STRIPS, minTap: 44, minFont: 11, structural: STRUCTURAL_HIDES };
 
 /** T1.14 (M1c): the phone predicates GATE (M1a measured them only). */
 const GATED = {
@@ -238,7 +243,16 @@ for (const view of VIEWS) {
         expect(await page.evaluate(() => matchMedia("(any-pointer: coarse)").matches), "a phone context is a coarse pointer").toBe(true);
         await settle(page);
         const audit = await page.evaluate(phoneAuditInPage, ARG);
-        const axRows = await page.locator("table[data-card]").first().getByRole("row").count().catch(() => 0);
+        /* R40's accessibility read runs on the first card table a reader can
+           SEE (launch gate: on /signals/ and the ticker's 13F tab the first
+           table in source order sits in a hidden panel, whose rows are rightly
+           absent from the tree, so the count read 0 on a correct page). -1
+           when no card table is rendered; the roles themselves are audited on
+           every table, hidden or not (roleProblems). */
+        const firstShown = await page.evaluate(() =>
+          Array.from(document.querySelectorAll("table[data-card]")).findIndex((t) => (t as HTMLElement).checkVisibility() && t.getBoundingClientRect().height > 1),
+        );
+        const axRows = firstShown < 0 ? -1 : await page.locator("table[data-card]").nth(firstShown).getByRole("row").count().catch(() => 0);
 
         /* SC5's ruler: the served HTML, JavaScript off, no redirect followed */
         const off = await phoneContext(browser, baseURL, width, false);
@@ -257,7 +271,7 @@ for (const view of VIEWS) {
 
         expect(audit.textChars, "the page rendered text to measure").toBeGreaterThan(0);
         expect(audit.taps, "the page rendered tap targets to measure").toBeGreaterThan(0);
-        if (audit.cardTables > 0) expect(axRows, "a card table keeps its rows in the accessibility tree (R40)").toBeGreaterThan(0);
+        if (axRows >= 0) expect(axRows, "a rendered card table keeps its rows in the accessibility tree (R40)").toBeGreaterThan(0);
 
         const problems: string[] = [];
         if (GATED.sideways && audit.sidewaysTables.length) problems.push(`R4 sideways tables:\n  ${list(audit.sidewaysTables)}`);
@@ -349,6 +363,37 @@ test.describe("phone predicate controls", () => {
   test("a planted role-less card row fails R40", async ({ browser }) => {
     const a = await controlAudit(browser, COMPLIANT.replace('<tbody role="rowgroup">', '<tbody role="rowgroup"><tr><td>no roles</td></tr>'));
     expect(a.roleProblems.length).toBeGreaterThanOrEqual(2);
+  });
+  /* launch gate (75e9920 on 20261019.2): what the predicates must NOT count,
+     each beside a planted defect of the same kind that they must still count */
+  test("a link in a CLOSED details body is no target (Chromium lays it out unpainted); the same link open is measured", async ({ browser }) => {
+    const tiny = '<a href="/x/" style="display:inline-block;min-height:0;min-width:0;height:20px;width:20px">x</a>';
+    const shut = await controlAudit(browser, `${COMPLIANT}<details><summary style="min-height:44px">More</summary>${tiny}</details>`);
+    expect(shut.smallTaps.filter((t) => /20x20/.test(t))).toEqual([]);
+    expect(shut.coveredTaps).toEqual([]);
+    const open = await controlAudit(browser, `${COMPLIANT}<details open><summary style="min-height:44px">More</summary>${tiny}</details>`);
+    expect(open.smallTaps.some((t) => /20x20/.test(t))).toBe(true);
+  });
+  test("an honesty field in a nested summary inside a CLOSED details is structural; hidden by display:none in an open one it fails R5", async ({ browser }) => {
+    const nested = (outer: string, style: string) =>
+      `${COMPLIANT}<details${outer}><summary style="min-height:44px">Tier</summary><details><summary style="min-height:44px"><span class="cell-filed"${style}>2026-10-01</span></summary>body</details></details>`;
+    const shut = await controlAudit(browser, nested("", ""));
+    expect(shut.honestyProblems).toEqual([]);
+    const hidden = await controlAudit(browser, nested(" open", ' style="display:none"'));
+    expect(hidden.honestyProblems.some((p) => /\.cell-filed/.test(p))).toBe(true);
+  });
+  test("a wrapped inline link is probed on its own first line, never 'covered' by the paragraph around it; a link under a planted overlay still is", async ({ browser }) => {
+    const prose = `<p style="width:200px;margin:0 16px">Words before the link <a href="/w/">a link whose text wraps onto a second line here</a> and words after it, then more words.</p>`;
+    const a = await controlAudit(browser, prose);
+    expect(a.coveredTaps).toEqual([]);
+    const covered = await controlAudit(browser, `<div style="position:relative;margin:0 16px"><a href="/c/" style="display:inline-block;min-height:44px;min-width:44px">c</a><div style="position:absolute;inset:0;z-index:3"></div></div>`);
+    expect(covered.coveredTaps.length).toBeGreaterThan(0);
+  });
+  test("a field in the hidden variant of a control-switched pair is structural; the shown variant is still measured", async ({ browser }) => {
+    const pair = (shownStyle: string) =>
+      `${COMPLIANT}<div class="si-variant" style="display:none"><span class="cell-filed">2026-10-01</span></div><div class="si-variant"><span class="cell-filed"${shownStyle}>2026-10-02</span></div>`;
+    expect((await controlAudit(browser, pair(""))).honestyProblems).toEqual([]);
+    expect((await controlAudit(browser, pair(' style="display:none"'))).honestyProblems.some((p) => /\.cell-filed/.test(p))).toBe(true);
   });
   test("a planted unnamed, unsnapped swipe strip fails R10", async ({ browser }) => {
     const a = await controlAudit(browser, `${COMPLIANT}<div class="pb-list" style="display:flex;overflow-x:auto;width:200px">${'<a href="/x/" style="flex:0 0 150px">item</a>'.repeat(4)}</div>`);

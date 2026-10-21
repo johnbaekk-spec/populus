@@ -2588,6 +2588,11 @@ export interface PhoneAuditArg {
   minTap: number;
   /** the visible text floor, px (11 at ≤720px) */
   minFont: number;
+  /** containers a reader shows or hides with a control on the page (not a
+      width): an honesty field inside one that is display:none is a
+      structural hide, like a closed details body (launch gate: the Signals
+      lead cards' ranking variant, `#si-rank-absolute` switches it) */
+  structural?: readonly string[];
 }
 
 export interface PhoneAudit {
@@ -2653,7 +2658,17 @@ export function phoneAuditInPage(arg: PhoneAuditArg): PhoneAudit {
   const vis = (el: Element): boolean => {
     const r = el.getBoundingClientRect();
     const s = cs(el);
-    return r.width > 1 && r.height > 1 && s.visibility !== "hidden" && s.display !== "none" && s.opacity !== "0";
+    if (!(r.width > 1 && r.height > 1 && s.visibility !== "hidden" && s.display !== "none" && s.opacity !== "0")) return false;
+    /* launch gate (75e9920 on 20261019.2): Chromium renders a CLOSED
+       <details> body through `::details-content { content-visibility: hidden }`,
+       so its descendants keep a laid-out box (getBoundingClientRect forces
+       layout) yet are neither painted nor hit-testable. Without this check
+       every link in a folded row read as a tap target "covered" by whatever
+       paints at that point (103 of 248 targets on a filer page), and its
+       size was gated although no reader can reach it. `checkVisibility()`
+       is false exactly for content that is not rendered. */
+    if (typeof (el as HTMLElement).checkVisibility === "function" && !(el as HTMLElement).checkVisibility()) return false;
+    return true;
   };
   const scrolls = (el: Element): boolean => {
     const ox = cs(el).overflowX;
@@ -2778,16 +2793,39 @@ export function phoneAuditInPage(arg: PhoneAuditArg): PhoneAudit {
   }
   const scrollY0 = window.scrollY;
   const vh = document.documentElement.clientHeight; // innerHeight grows with innerWidth (above)
+  /* The probe point is the centre of the target's FIRST line box (launch
+     gate): an inline link that wraps has a bounding box spanning both lines,
+     whose centre often sits on the neighbouring words of the paragraph (or
+     list) around it — 40 of the 52 "covered" targets on 20261019.2 were such
+     wrapped links, every one tappable on its own text. */
+  const probeBox = (el: Element): DOMRect => {
+    const rects = Array.from(el.getClientRects()).filter((q) => q.width >= 1 && q.height >= 1);
+    return rects[0] ?? el.getBoundingClientRect();
+  };
+  /** the nearest sideways-scrolling ancestor, whose box clips what it holds */
+  const scrollerOf = (el: Element): Element | null => {
+    for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) if (scrolls(p)) return p;
+    return null;
+  };
   for (const el of taps) {
-    const r0 = el.getBoundingClientRect();
+    const r0 = probeBox(el);
     const cxDoc = r0.left + r0.width / 2;
     const cyDoc = r0.top + window.scrollY + r0.height / 2;
     if (cxDoc < 0 || cxDoc > vw) continue; // past the viewport's edge (inside a sideways scroller, or the page overflows: R4 names it)
     window.scrollTo(0, Math.max(0, cyDoc - vh / 2));
-    const r = el.getBoundingClientRect();
+    const r = probeBox(el);
     const cx = r.left + r.width / 2;
     const cy = r.top + r.height / 2;
     if (cy < 0 || cy > vh) continue;
+    /* A target a sideways scroller (R10's allowlist: tab bars, chip rows,
+       swipe strips) currently holds past its own edge is reached by swiping
+       that strip, not covered: the strip's box clips it, so hit testing at
+       that point lands on whatever lies behind the strip. */
+    const sc = scrollerOf(el);
+    if (sc) {
+      const q = sc.getBoundingClientRect();
+      if (cx < q.left || cx > q.right) continue;
+    }
     out.coverChecked += 1;
     const top = document.elementFromPoint(cx, cy);
     if (!top || top === el || el.contains(top)) continue;
@@ -2835,8 +2873,23 @@ export function phoneAuditInPage(arg: PhoneAuditArg): PhoneAudit {
   for (const sel of arg.honesty) {
     for (const el of Array.from(document.querySelectorAll(sel))) {
       if (el.closest("[hidden], [popover], template, noscript, [inert], [aria-hidden=true]")) continue;
-      const closed = el.closest("details:not([open])");
-      if (closed && !el.closest("summary")) continue;
+      /* A closed <details> hides everything but its OWN summary. The test
+         walks every closed ancestor (launch gate: a triage row's summary,
+         itself inside a closed tier, read as "not rendered" 372 times on
+         /signals/ because only the nearest closed details was consulted). */
+      let structural = false;
+      for (let d = el.closest("details:not([open])"); d; d = d.parentElement?.closest("details:not([open])") ?? null) {
+        const own = el.closest("summary");
+        if (!own || own.parentElement !== d) {
+          structural = true;
+          break;
+        }
+      }
+      if (structural) continue;
+      if ((arg.structural ?? []).some((sel) => {
+        const box = el.closest(sel);
+        return box !== null && cs(box).display === "none";
+      })) continue;
       out.honestyChecked += 1;
       if (srOnly(el)) continue;
       if (typeof (el as HTMLElement).checkVisibility === "function" && !(el as HTMLElement).checkVisibility({ visibilityProperty: true } as CheckVisibilityOptions)) {
