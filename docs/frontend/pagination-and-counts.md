@@ -241,6 +241,17 @@ every view, and reset returns to the default view.
      state their counts in rule 6's grammar. A deep link or an in-page link to
      an element only a held row carries opens what holds it
      (`revealHeldTarget`) and lands on the row.
+   - **Two more views on /congress/ (launch F2, R35/LD31).** Each Congress
+     board's next step — the fifty rows its first "Show 50 more" reveals
+     before the dataset arrives — is held in the one island after its table,
+     every row with its overlaps-the-row-above flag and budget-cut flag; the
+     board's own pager (`scripts/congress-sections.ts`) draws it through the
+     same path, and a deep link to an element only one of those rows carries
+     opens that step. Monthly flow's hidden views (Dollars on listed stocks,
+     both views of All assets) are one-row islands whose row is the view's
+     whole input; the panel's toggle draws a view the first time it shows it.
+     Neither was reachable without JavaScript, so neither ships a
+     `<noscript>` copy; the board's visible count still states its bound.
 
 ## Changing this mechanism
 
