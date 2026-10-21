@@ -50,6 +50,7 @@ import {
   displayAsset,
   isListedStock,
   amountText,
+  assetLineHtml,
   sideLabel,
   partyClass,
   slug,
@@ -1239,7 +1240,23 @@ export function congressLineHtml(t: TxnRow, ctx: RenderCtx, opts: { ticker?: boo
 
 /* ---------- R11: the lead cards ---------- */
 
-function cardFactsHtml(p: CardPick, ctx: RenderCtx): string {
+/** launch M2 (LD15): how a lead card renders off the Signals tab. The tab
+    passes nothing. The home passes `rowHref: "/signals/"`, so the card's
+    stretched link opens its row on /signals/ rather than on the page it is
+    on, and `asset: true`, which adds the asset as filed (name only) under the
+    card's title. */
+export interface LeadCardOpts {
+  rowHref?: string;
+  asset?: boolean;
+}
+export type LeadCard = "committee" | "buy" | "sell";
+export type LeadRank = "record" | "absolute";
+
+/** One lead card's facts: ticker, side, range, member with party and state,
+    the owner word, both dates with the lag (late in amber), the fact sentence
+    and the receipt. ONE renderer, two callers (launch M2, LD15): the Signals
+    tab's lead cards and the home's "What stands out". */
+export function cardFactsHtml(p: CardPick, ctx: RenderCtx, opts: LeadCardOpts = {}): string {
   const t = p.line.txn;
   const side = sideLabel(t.side, t.flags);
   const href = onSignalsHref(t.ticker, ctx);
@@ -1248,8 +1265,10 @@ function cardFactsHtml(p: CardPick, ctx: RenderCtx): string {
   return (
     /* signals-v4 LD5: the card opens its row — a stretched link UNDER the
        card's own links (ticker, member, receipt), which sit above it */
-    `<a class="si-card-open" href="#${esc(triageRowId(p.row))}"><span class="visually-hidden">Show the row: ${esc(t.ticker ?? "no ticker")}, ${esc(t.name)}</span></a>` +
+    `<a class="si-card-open" href="${esc(opts.rowHref ?? "")}#${esc(triageRowId(p.row))}"><span class="visually-hidden">Show the row: ${esc(t.ticker ?? "no ticker")}, ${esc(t.name)}</span></a>` +
     `<h3 class="si-card-h">${href ? `<a href="${esc(href)}">${ticker}</a>` : ticker} <span class="si-chip si-side-${side.cls}">${esc(side.text)}</span> <span class="si-card-amt">${esc(amountText(t))}</span></h3>` +
+    /* LD15: the asset as filed, never the present-day ticker-file name */
+    (opts.asset ? `<p class="si-card-iss">${assetLineHtml(t, { nameOnly: true })}</p>` : "") +
     `<p class="si-card-who">${t.bioguide ? `<a href="${memberHrefFor(t.bioguide, ctx)}">${esc(t.name)}</a>` : esc(t.name)} <span class="aff ${partyClass(t.party)}">${esc(affTextOf(t))}</span> · ${ownerWordHtml(t.owner)}</p>` +
     `<p class="si-card-dates">traded ${t.traded ? `<time datetime="${esc(t.traded)}">${esc(t.traded)}</time>` : "date not disclosed"} · filed <time datetime="${esc(t.filed)}">${esc(t.filed)}</time>${lag != null ? ` · <span class="${lag > 45 ? "si-late" : "si-lag"}">${fmtInt(lag)}d</span>` : ""}</p>` +
     `<p class="si-card-fact">${esc(p.fact)}</p>` +
@@ -1261,6 +1280,45 @@ function emptyCardHtml(text: string): string {
   return `<p class="section-note" data-empty-state>— ${esc(text)}</p>`;
 }
 
+/** A lead card's tag. The committee card names a grade only when a graded
+    line is shown — never on an empty card; the buy and sell cards carry
+    R11's card names ("Largest buy", "Largest sell") and their ranking. */
+export function leadCardTag(triage: TriageResult | null, card: LeadCard, rank: LeadRank = "record"): string {
+  if (card === "committee") {
+    const pick = triage?.cards.committee ?? null;
+    return triage !== null && triage.cmteAvailable && pick
+      ? pick.line.cmte.grade === "broad"
+        ? "Committee · broad match"
+        : "Committee · direct match"
+      : "Committee";
+  }
+  return `Largest ${card} · ${rank === "record" ? "own record" : "absolute $"}`;
+}
+
+/** A lead card's body (launch M2, LD15): its pick's facts, or the stated
+    empty card — a null triage, committee data absent from the build, or no
+    pick. The Signals tab and the home share it, so both state the same
+    absence in the same words. The copy uses the side NOUNS (R25). */
+export function leadCardBodyHtml(triage: TriageResult | null, card: LeadCard, rank: LeadRank, ctx: RenderCtx, opts: LeadCardOpts = {}): string {
+  if (triage === null) return emptyCardHtml("not computed in this view.");
+  const c = triage.cards;
+  if (card === "committee") {
+    if (!triage.cmteAvailable) {
+      return `<p class="section-note" data-empty-state>Committee data is not in this build (${esc(triage.cmteUnavailableReason ?? "inputs-not-in-build")}), so no committee grade is stated.</p>`;
+    }
+    return c.committee ? cardFactsHtml(c.committee, ctx, opts) : emptyCardHtml("no ranked listed-stock line carries a committee overlap in the window.");
+  }
+  const pick = card === "buy" ? (rank === "record" ? c.buyRecord : c.buyAbsolute) : rank === "record" ? c.sellRecord : c.sellAbsolute;
+  const noun = card === "buy" ? "purchase" : "sale";
+  return pick
+    ? cardFactsHtml(pick, ctx, opts)
+    : emptyCardHtml(
+        rank === "record"
+          ? `no listed-stock ${noun} of at least $${fmtInt(RECORD_MIN_LOW)} from a filer with at least ${RECORD_MIN_PRIOR} prior disclosures spanning ${RECORD_MIN_SPAN_DAYS} days or more.`
+          : `no listed-stock ${noun} with a lower bound in the window.`,
+      );
+}
+
 /** R11 / LD6: three cards — the highest-confidence committee trade, the
     largest buy and the largest sell — with ONE segmented control ranking the
     buy and sell cards by the filer's own record or by absolute dollars. The
@@ -1268,41 +1326,13 @@ function emptyCardHtml(text: string): string {
     both variants show. signals-v4 (R4, LD5): each pick opens its row, and at
     ≤1080px the cards swipe sideways in their own strip. */
 export function leadCardsHtml(triage: TriageResult | null, ctx: RenderCtx): string {
-  const c = triage?.cards ?? null;
-  const committeeBody =
-    triage === null
-      ? emptyCardHtml("not computed in this view.")
-      : !triage.cmteAvailable
-        ? `<p class="section-note" data-empty-state>Committee data is not in this build (${esc(triage.cmteUnavailableReason ?? "inputs-not-in-build")}), so no committee grade is stated.</p>`
-        : c?.committee
-          ? cardFactsHtml(c.committee, ctx)
-          : emptyCardHtml("no ranked listed-stock line carries a committee overlap in the window.");
-  // The tag names a grade only when a graded line is shown — never on an empty card.
-  const committeeTag =
-    triage !== null && triage.cmteAvailable && c?.committee
-      ? c.committee.line.cmte.grade === "broad"
-        ? "Committee · broad match"
-        : "Committee · direct match"
-      : "Committee";
-  /* The card names are R11's ("Largest buy", "Largest sell"); the copy uses
-     the side NOUNS (R25). */
-  const variant = (rank: "record" | "absolute", pick: CardPick | null, card: "buy" | "sell"): string => {
-    const noun = card === "buy" ? "purchase" : "sale";
-    return (
-      `<div class="si-variant" data-rank="${rank}">` +
-      `<div class="si-card-tag">${esc(`Largest ${card} · ${rank === "record" ? "own record" : "absolute $"}`)}</div>` +
-      (triage === null
-        ? emptyCardHtml("not computed in this view.")
-        : pick
-          ? cardFactsHtml(pick, ctx)
-          : emptyCardHtml(
-              rank === "record"
-                ? `no listed-stock ${noun} of at least $${fmtInt(RECORD_MIN_LOW)} from a filer with at least ${RECORD_MIN_PRIOR} prior disclosures spanning ${RECORD_MIN_SPAN_DAYS} days or more.`
-                : `no listed-stock ${noun} with a lower bound in the window.`,
-            )) +
-      `</div>`
-    );
-  };
+  /* launch M2 (LD15): each card's tag and body come from the renderers the
+     home shares; this tab adds the ranking control and both variants. */
+  const variant = (rank: LeadRank, card: "buy" | "sell"): string =>
+    `<div class="si-variant" data-rank="${rank}">` +
+    `<div class="si-card-tag">${esc(leadCardTag(triage, card, rank))}</div>` +
+    leadCardBodyHtml(triage, card, rank, ctx) +
+    `</div>`;
   /* signals-v4 LD19: the v3 panel note is the "About lead cards" tip */
   const tip = note(
     "Listed-stock lines of the Filings to read: the committee card, then the largest purchase and the largest sale, ranked by the filer's own record or by absolute dollars. " +
@@ -1318,10 +1348,10 @@ export function leadCardsHtml(triage: TriageResult | null, ctx: RenderCtx): stri
     `<div class="panel-head si-lead-head"><h2 class="section-h" id="lead-cards-h">Lead cards</h2>${tip}` +
     `<div class="seg si-rank-seg" role="group" aria-label="Rank the largest buy and sell by"><label for="si-rank-record">Own record</label><label for="si-rank-absolute">Absolute $</label></div></div>` +
     `<div class="si-cards" data-scroll-region="Lead cards · swipe for more">` +
-    `<article class="si-card" data-card="committee" data-tone="amber"><div class="si-card-tag">${esc(committeeTag)}</div>${committeeBody}` +
+    `<article class="si-card" data-card="committee" data-tone="amber"><div class="si-card-tag">${esc(leadCardTag(triage, "committee"))}</div>${leadCardBodyHtml(triage, "committee", "record", ctx)}` +
     `<p class="si-card-context">${esc(COMMITTEE_CAVEAT)}</p></article>` +
-    `<article class="si-card" data-card="buy" data-tone="green">${variant("record", c?.buyRecord ?? null, "buy")}${variant("absolute", c?.buyAbsolute ?? null, "buy")}</article>` +
-    `<article class="si-card" data-card="sell" data-tone="red">${variant("record", c?.sellRecord ?? null, "sell")}${variant("absolute", c?.sellAbsolute ?? null, "sell")}</article>` +
+    `<article class="si-card" data-card="buy" data-tone="green">${variant("record", "buy")}${variant("absolute", "buy")}</article>` +
+    `<article class="si-card" data-card="sell" data-tone="red">${variant("record", "sell")}${variant("absolute", "sell")}</article>` +
     `</div>` +
     `</section>`
   );
