@@ -40,7 +40,7 @@ import {
 import { COMPACT_ROWS, COMPACT_STEP, compactBoundCountFor, syncCompactDisclosure } from "../lib/format.ts";
 import { initSortableTable, type SortState } from "./table-sort.ts";
 import type { CongressSortKey } from "../lib/congress-columns.ts";
-import { congressRankingColumns } from "../lib/congress-columns.ts";
+import { visualColumns } from "../lib/ui/rankings.ts";
 
 /** One sortable, expandable ranking root. */
 interface RootBinding {
@@ -209,7 +209,9 @@ export function initCongressSections(options: CongressSectionsOptions = {}): Con
       state: { ...initial },
       repaint: () => {},
     };
-    const cols = congressRankingColumns(kind);
+    // The columns this table renders — on /congress/ the boards' set, so a
+    // sort is announced by the label the reader sees ("Buys", not "Purchases").
+    const cols = visualColumns(kind, ctx.referenceRankings);
     const repaint = initSortableTable({
       root: el,
       headers,

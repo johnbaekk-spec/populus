@@ -241,7 +241,10 @@ export const BOARD_NET_NOTE =
     (the "#" head, whose reason copy item congress-18 cut from the board). */
 type BoardColumn = CongressColumn & { plain?: boolean };
 
-function visualColumns(kind: "leaders" | "tickers", reference = false): BoardColumn[] {
+/** The columns a ranking table renders — the board's set on /congress/
+    (`reference`), the full contract elsewhere. Exported so the client
+    announces a sort by the label the reader sees. */
+export function visualColumns(kind: "leaders" | "tickers", reference = false): BoardColumn[] {
   const columns = congressRankingColumns(kind);
   if (!reference) return columns;
   /* Launch M3b (LD19, copy items congress-18/19/22): the boards' short,
