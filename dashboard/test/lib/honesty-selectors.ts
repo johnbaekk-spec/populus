@@ -45,6 +45,12 @@ export const HONESTY_SELECTORS: readonly string[] = [
   ".mf-shade-labels",
   ".mf-completeness",
   ".mf-table",
+  /* launch M3b (R21, LD23), joined at integration: the Members chart's
+     "Filling in (est.)" zone label, the plot's polite readout (each month's
+     figures, "≈p% filed (est.)" included) and the chart's notes. */
+  ".mf-fill",
+  ".mf-readout",
+  ".mf-notes",
   ".c-traded",
   ".c-src",
   ".c-flags",
