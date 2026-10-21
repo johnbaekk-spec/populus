@@ -178,7 +178,7 @@ test("rule 8: a <noscript> copy is a SECOND table after the first, never inside 
   const fn = (r: { n: number }, i: number, s: { tag: string }): string => `<tr role="row"><td role="cell">${s.tag}${r.n}@${i}</td></tr>`;
   const parts = heldTableParts({
     rootId: "x-tbody", render: "x", rowFn: fn, rows, shown: 3, shared: { tag: "r" },
-    noscript: { tableOpen: `<table class="etable" role="table">`, caption: "Rows 4–7 of 7", thead: `<thead role="rowgroup"><tr role="row"><th role="columnheader">N</th></tr></thead>` },
+    noscript: { table: (body) => `<table class="etable" role="table"><caption>Rows 4–7 of 7</caption><thead role="rowgroup"><tr role="row"><th role="columnheader">N</th></tr></thead><tbody role="rowgroup">${body}</tbody></table>` },
   });
   const page = `<table class="etable" role="table"><tbody id="x-tbody" data-held="json">${parts.bodyRows}</tbody></table>${parts.island}${parts.noscript}`;
   assert.equal(parts.bodyRows.split("\n").length, 3);
@@ -192,7 +192,7 @@ test("rule 8: a <noscript> copy is a SECOND table after the first, never inside 
   const island = parseHeldIsland(/<script[^>]*>([\s\S]*?)<\/script>/.exec(parts.island)![1]);
   assert.deepEqual(island, { v: 1, offset: 3, shared: { tag: "r" }, rows: rows.slice(3) });
   // nothing held: no island, no noscript
-  const none = heldTableParts({ rootId: "y", render: "x", rowFn: fn, rows: rows.slice(0, 2), shown: 3, shared: { tag: "r" }, noscript: { tableOpen: "<table>", caption: "c", thead: "" } });
+  const none = heldTableParts({ rootId: "y", render: "x", rowFn: fn, rows: rows.slice(0, 2), shown: 3, shared: { tag: "r" }, noscript: { table: (b) => `<table><tbody>${b}</tbody></table>` } });
   assert.equal(none.island + none.noscript, "");
 });
 
@@ -409,7 +409,7 @@ test("rule 8 + R40 (launch integration): the member page's compact table draws i
 
 import { compactDisclosure } from "../src/lib/format.ts";
 import { heldHoldersHtml } from "../src/lib/ui/institutional.ts";
-import { revealHeldTarget } from "../src/scripts/inst-index-client.ts";
+import { heldCountText, revealHeldTarget } from "../src/scripts/inst-index-client.ts";
 
 /** A compact held table of seven rows, three shown, each row carrying an id. */
 function deepTable(render = "deep-rows"): string {
@@ -501,6 +501,70 @@ test("deep links (launch integration): a link to a row a holders list holds open
   } finally {
     restore();
   }
+});
+
+/* Launch review weight item 4 and H1: the holders lists' no-JS copy comes
+   through the one carrier (`heldTableParts`), and a capped list is never
+   called "all". */
+function holdersFixture(n: number, of?: number): string {
+  const rows = Array.from({ length: n }, (_, i) => ({ rank: i + 1 }));
+  const rowHtml = (r: { rank: number }): string => `<tr role="row"><td role="cell" class="c-rank c-num">${r.rank}</td></tr>`;
+  const table = (body: string, caption: string, id: string | null): string =>
+    `<table class="etable" role="table" data-card="holders"><caption>${caption}</caption><thead role="rowgroup"><tr role="row"><th scope="col">#</th></tr></thead><tbody role="rowgroup"${id ? ` id="${id}"` : ""}>${body}</tbody></table>`;
+  return heldHoldersHtml({ rootId: "hx", render: "hx-row", rows, rowHtml, ctx: null, table, caption: "Holders", ...(of !== undefined ? { of } : {}) });
+}
+
+test("weight item 4 (rule 8): a holders list's <noscript> copy is heldTableParts' second table — the held rows once, after the disclosure's tools, never inside a tbody", () => {
+  const html = holdersFixture(60);
+  const ns = /<noscript>([\s\S]*?)<\/noscript>/.exec(html)![1]!;
+  const ranks = [...ns.matchAll(/class="c-rank c-num">(\d+)</g)].map((m) => Number(m[1]));
+  assert.deepEqual(ranks, Array.from({ length: 35 }, (_, i) => i + 26), "holders 26–60, once, in order");
+  assert.match(ns, /^<table class="etable" role="table" data-card="holders"><caption>Holders, 26–60 of 60 holders<\/caption>/);
+  for (const m of html.matchAll(/<tbody[^>]*>([\s\S]*?)<\/tbody>/g)) assert.ok(!m[1]!.includes("<noscript"), "no noscript inside any tbody");
+  const island = parseHeldIsland(/<script type="application\/json" data-held-for="hx"[^>]*>([\s\S]*?)<\/script>/.exec(html)![1]);
+  assert.equal(island!.offset, 25);
+  assert.equal(island!.rows.length, 35, "the island holds the same 35 rows");
+  // control: nothing held, nothing emitted
+  assert.equal(holdersFixture(25), "");
+});
+
+test("H1: a capped holders list says 'the top N of M', the no-JS caption and the step count read against M; an uncapped list still says 'all'", () => {
+  const capped = holdersFixture(500, 5662);
+  assert.match(capped, /<summary>Show the top 500 of 5,662 holders<\/summary>/);
+  assert.doesNotMatch(capped, /Show all 500/);
+  assert.match(capped, /<caption>Holders, 26–500 of 5,662 holders<\/caption>/);
+  const island = parseHeldIsland(/<script type="application\/json" data-held-for="hx"[^>]*>([\s\S]*?)<\/script>/.exec(capped)![1]) as HeldIsland<unknown, { total: number; of?: number }>;
+  assert.deepEqual([island.shared.total, island.shared.of], [500, 5662], "the step total stays the list; the island carries the true count");
+  // re-planted control: the uncapped list (or a stated count equal to the list) keeps "all", with no 'of'
+  for (const stated of [undefined, 500, 120]) {
+    const all = holdersFixture(500, stated);
+    assert.match(all, /<summary>Show all 500 holders<\/summary>/, `of=${stated}`);
+    assert.ok(!/"of":/.test(all), `of=${stated}: no true count carried`);
+  }
+});
+
+test("H1: the holders page states the cap where the list ends; a complete list does not", async () => {
+  const { tickerHoldersBody } = await import("../src/lib/ui/institutional.ts");
+  const base = {
+    ticker: "AAPL",
+    totals: { period_of_report: "2026-03-31", prev_period: "2025-12-31", holder_count: 5662, value_usd: 1, adds: 1, exits: 1, issuer_name: "APPLE INC", title_of_class: "COM" },
+    holders: Array.from({ length: 30 }, (_, i) => ({ rank: i + 1, cik: String(1000 + i), filer_name: `F${i}`, value_usd: 100 - i, shares: 10, delta_shares: 0, change_kind: "unchanged", verified_date: "2026-04-01", period_of_report: "2026-03-31" })),
+    tierOf: () => "complete",
+    latestFiled: "2026-05-15",
+    window: null,
+    overlapHtml: "",
+  } as unknown as Parameters<typeof tickerHoldersBody>[0];
+  const html = tickerHoldersBody(base);
+  assert.match(html, /Top 30 of 5,662 holders shown; the rest are on EDGAR\./);
+  assert.match(html, /Show the top 30 of 5,662 holders/);
+  const full = tickerHoldersBody({ ...base, totals: { ...base.totals, holder_count: 30 } } as typeof base);
+  assert.doesNotMatch(full, /the rest are on EDGAR/, "control: a complete list states no cap");
+  assert.match(full, /Show all 30 holders/);
+});
+
+test("H1 client: the step count reads against the true holder count when the list is capped", () => {
+  assert.equal(heldCountText({ shown: 25, total: 500, held: 475, rendered: 25, matches: null, query: "", of: 5662 }), "26–50 of 5,662 holders");
+  assert.equal(heldCountText({ shown: 25, total: 500, held: 475, rendered: 25, matches: null, query: "", of: null }), "26–50 of 500 holders", "control: uncapped");
 });
 
 test("deep links (launch integration): every page that holds rows binds them — the member page, /e/, the ticker page and the holders page call initDomDisclosures; Signals falls back to the binder after its pagers", () => {

@@ -194,8 +194,9 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
       : "") +
     `</div>` +
     universalFlagNote(statedHolders) +
-    tableHtml(shown.map((r) => tickerHolderRowHtml(r, ctx)).join("\n"), held ? `${caption}, ${rangeOfTotal(1, shown.length, holders.length, "holders")}` : caption, held ? "ticker-holders-top" : null, true) +
-    heldHoldersHtml({ rootId: "ticker-holders-held", render: TICKER_HOLDER_HELD.render, rows, rowHtml: (r) => tickerHolderRowHtml(r, ctx), ctx, table: tableHtml, caption }) +
+    tableHtml(shown.map((r) => tickerHolderRowHtml(r, ctx)).join("\n"), held ? `${caption}, ${rangeOfTotal(1, shown.length, Math.max(holders.length, inst.mapped?.holderCount ?? 0), "holders")}` : caption, held ? "ticker-holders-top" : null, true) +
+    /* launch review H1: a capped reviewed-mapping list is never "all" */
+    heldHoldersHtml({ rootId: "ticker-holders-held", render: TICKER_HOLDER_HELD.render, rows, rowHtml: (r) => tickerHolderRowHtml(r, ctx), ctx, table: tableHtml, caption, ...(inst.mapped ? { of: inst.mapped.holderCount } : {}) }) +
     /* The anchor `#ticker-inst-footnotes` (linked from older pages and read by
        the tab binder's hash routing) now marks the table's truncation line. */
     `<div id="ticker-inst-footnotes">` +

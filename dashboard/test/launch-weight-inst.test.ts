@@ -171,7 +171,9 @@ test("R33: the holders page opens at 25; 26..N are held — island rows equal th
   assert.equal(island.rows.map((r, j) => HOLDERS_PAGE_HELD.row(r, island.offset + j, island.shared)).join("\n"), noscriptBody(html));
   assert.equal((island.rows as HoldersPageRow[])[2]!.value, null, "an undisclosed value travels as null and renders —");
   assert.match(holdersPageRowHtml((island.rows as HoldersPageRow[])[2]!), /<td role="cell" class="c-num">—<\/td>/);
-  assert.match(html, /<summary>Show all 70 holders<\/summary>/);
+  /* launch review H1: the list (70) is capped below the class's 5,662 holders, so it is "the top 70 of 5,662", never "all 70" */
+  assert.match(html, /<summary>Show the top 70 of 5,662 holders<\/summary>/);
+  assert.match(html, /Top 70 of 5,662 holders shown; the rest are on EDGAR\./);
   // holders-01: the class code reads as words; the code as filed stays in the accessible name; no duplicate link line
   assert.match(html, /common stock<span class="visually-hidden"> \(filed as CMN\)<\/span>/);
   assert.match(html, /Q1 2026/);
@@ -229,7 +231,8 @@ test("R33: the binder draws 25 more on open, 25 more per press, searches the hel
     toggleDetails(doc.querySelector("details.tk-holders-more")!);
     assert.deepEqual(rowsIn(doc, id), range(26, 50), "opening draws the first 25 held rows");
     const count = doc.querySelector(`[data-held-count="${id}"]`)!;
-    assert.equal(count.textContent, "26–50 of 80 holders");
+    /* launch review H1: the tab's mapped list (80) is capped below its 900 holders, so the count reads against 900 */
+    assert.equal(count.textContent, "26–50 of 900 holders");
     const step = doc.querySelector(`[data-held-step="${id}"]`)!;
     assert.equal(step.textContent, "Show 25 more");
     step.click();

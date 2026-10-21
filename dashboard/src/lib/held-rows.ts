@@ -9,7 +9,8 @@
    EVERY held list on the site ships its rows in the one island this module
    writes (`heldIslandHtml`): the member page's compact tables
    (`heldTableParts`), the Signals hits, Named moves, Congress-lines bank and
-   Overlap names (launch M7a), and the holders lists (launch M7b).
+   Overlap names (launch M7a), and the holders lists (launch M7b), whose
+   `<noscript>` second table comes through `heldTableParts` as well.
 
    A held table renders its first N rows into its `tbody` and NOTHING ELSE of
    rows N+1..M. Those rows travel as JSON in an inline island
@@ -43,13 +44,13 @@ export interface HeldIsland<R = unknown, S = unknown> {
   rows: R[];
 }
 
-/** The second table a `<noscript>` holds: its opening `<table …>` tag (with the
-    same class, roles and `data-card` as the first), its visible caption, and
-    its `<thead>` (the same header markup as the first table). */
+/** The second table a `<noscript>` holds. `table` wraps the held rows' HTML
+    in a WHOLE table — its own opening tag (the same class, roles and
+    `data-card` as the first), caption, `<thead>` and `<tbody>` — so the rows
+    never land inside the first table's `tbody`. The holders lists build theirs
+    through this (`heldHoldersHtml`, launch review weight item 4). */
 export interface HeldNoscript {
-  tableOpen: string;
-  caption: string;
-  thead: string;
+  table: (heldRowsHtml: string) => string;
 }
 
 export interface HeldTableOpts<R, S> {
@@ -99,14 +100,7 @@ export function heldTableParts<R, S>(o: HeldTableOpts<R, S>): HeldTableParts {
     return { bodyRows, island: "", noscript: "", total: o.rows.length, shown, held: 0 };
   }
   const island = heldIslandHtml({ rootId: o.rootId, render: o.render, offset: shown, shared: o.shared, rows: heldRows });
-  const noscript = o.noscript
-    ? `<noscript>` +
-      o.noscript.tableOpen +
-      `<caption>${o.noscript.caption}</caption>` +
-      o.noscript.thead +
-      `<tbody role="rowgroup">${heldRows.map((r, j) => o.rowFn(r, shown + j, o.shared)).join("\n")}</tbody>` +
-      `</table></noscript>`
-    : "";
+  const noscript = o.noscript ? `<noscript>${o.noscript.table(heldRows.map((r, j) => o.rowFn(r, shown + j, o.shared)).join("\n"))}</noscript>` : "";
   return { bodyRows, island, noscript, total: o.rows.length, shown, held: heldRows.length };
 }
 

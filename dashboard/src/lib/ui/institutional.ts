@@ -68,7 +68,7 @@ import {
   sortQoqDeltas,
   type FilerBudgetState,
 } from "../holdings.ts";
-import { heldIslandHtml } from "../held-rows.ts";
+import { heldTableParts } from "../held-rows.ts";
 import { positionAnchor } from "../notable-moves.ts";
 import type { ConcentrationRow, QoqDeltaRow, TopHolderRow, TickerHolderRow, TickerTotalsRow } from "../inst.ts";
 import type { ClusterBoardResult, ClusterRow } from "../activity.ts";
@@ -1424,6 +1424,8 @@ export interface HeldListShared<C = unknown> {
   step: number;
   total: number;
   noun: string;
+  /** H1: the true collection size when the list is capped below it */
+  of?: number;
 }
 
 export interface HeldHoldersOpts<R> {
@@ -1442,28 +1444,44 @@ export interface HeldHoldersOpts<R> {
   caption: string;
   /** the whole collection's size N (the summary's count) */
   total?: number;
+  /** launch review H1: the TRUE holder count when the list is capped below it
+      (the reviewed-mapping list keeps the top `TICKER_HOLDERS_RANK_CAP`); the
+      summary then reads "Show the top N of M holders", never "all" */
+  of?: number;
 }
 
 /** The held part of a holders list: the disclosure, its no-JS second table,
     the empty table the binder fills, the step control, the search, and the
     island. "" when nothing is held. */
 export function heldHoldersHtml<R>(o: HeldHoldersOpts<R>): string {
-  const held = o.rows.slice(HOLDERS_VISIBLE);
-  if (held.length === 0) return "";
+  if (o.rows.length <= HOLDERS_VISIBLE) return "";
   const total = o.total ?? o.rows.length;
+  /* H1: a capped list is never "all": the denominator is the true count */
+  const of = o.of !== undefined && o.of > total ? o.of : null;
   const first = HOLDERS_VISIBLE + 1;
+  /* weight item 4: the island and the no-JS second table come from the one
+     carrier, every row through `rowHtml` */
+  const parts = heldTableParts<R, HeldListShared>({
+    rootId: o.rootId,
+    render: o.render,
+    rowFn: (r) => o.rowHtml(r),
+    rows: o.rows,
+    shown: HOLDERS_VISIBLE,
+    shared: { ctx: o.ctx, step: HOLDERS_STEP, total, noun: "holders", ...(of !== null ? { of } : {}) },
+    noscript: { table: (body) => o.table(body, `${o.caption}, ${rangeOfTotal(first, total, of ?? total, "holders")}`, null) },
+  });
   return (
     `<details class="tk-holders-more" data-held-more="${esc(o.rootId)}">` +
-    `<summary>Show all ${fmtInt(total)} holders</summary>` +
+    `<summary>${of !== null ? `Show the top ${fmtInt(total)} of ${fmtInt(of)} holders` : `Show all ${fmtInt(total)} holders`}</summary>` +
     `<div class="held-tools" data-held-tools="${esc(o.rootId)}" hidden>` +
     `<input class="filter-select filter-text" type="search" data-held-search="${esc(o.rootId)}" placeholder="filer name" ` +
     `aria-label="filter holders ${fmtInt(first)} to ${fmtInt(total)} by filer name — on this device" /></div>` +
-    `<noscript>${o.table(held.map((r) => o.rowHtml(r)).join("\n"), `${o.caption}, ${rangeOfTotal(first, total, total, "holders")}`, null)}</noscript>` +
+    parts.noscript +
     `<div class="held-wrap" data-held-wrap="${esc(o.rootId)}" hidden>${o.table("", `${o.caption}, holders ${fmtInt(first)} to ${fmtInt(total)}`, o.rootId)}</div>` +
     `<p class="held-count" data-held-count="${esc(o.rootId)}" role="status" aria-live="polite" hidden></p>` +
     `<button class="linklike compact-toggle" type="button" data-held-step="${esc(o.rootId)}" aria-controls="${esc(o.rootId)}" hidden></button>` +
     `</details>` +
-    heldIslandHtml<R, HeldListShared>({ rootId: o.rootId, render: o.render, offset: HOLDERS_VISIBLE, shared: { ctx: o.ctx, step: HOLDERS_STEP, total, noun: "holders" }, rows: held })
+    parts.island
   );
 }
 
@@ -1594,8 +1612,13 @@ export function tickerHoldersBody(i: TickerHoldersPageInputs): string {
     `<section class="panel panel-wide" id="ticker-holders" aria-label="Holders ranked by value">` +
     `<div class="panel-head"><h2 class="section-h">Holders — quarter ended ${esc(t.period_of_report)}</h2>` +
     `<span class="panel-note">ranked by reported value · Δ shares vs ${esc(t.prev_period ?? "the prior quarter")} · kind by shares</span></div>` +
-    table(list.slice(0, HOLDERS_VISIBLE).map(holdersPageRowHtml).join("\n"), paged ? `${caption}, ${rangeOfTotal(1, HOLDERS_VISIBLE, list.length, "holders")}` : caption, "ticker-holders-rows") +
-    heldHoldersHtml({ rootId: "ticker-holders-held", render: HOLDERS_PAGE_HELD.render, rows: list, rowHtml: holdersPageRowHtml, ctx: null, table, caption }) +
+    table(list.slice(0, HOLDERS_VISIBLE).map(holdersPageRowHtml).join("\n"), paged ? `${caption}, ${rangeOfTotal(1, HOLDERS_VISIBLE, Math.max(list.length, t.holder_count), "holders")}` : caption, "ticker-holders-rows") +
+    heldHoldersHtml({ rootId: "ticker-holders-held", render: HOLDERS_PAGE_HELD.render, rows: list, rowHtml: holdersPageRowHtml, ctx: null, table, caption, of: t.holder_count }) +
+    /* launch review H1: the list keeps the top TICKER_HOLDERS_RANK_CAP; when
+       the class has more holders, the page says so where the list ends */
+    (list.length < t.holder_count
+      ? terminusRow({ author: "populus", html: `Top ${fmtInt(list.length)} of ${fmtInt(t.holder_count)} holders shown; the rest are on EDGAR. <a href="/methodology/#m2">Method ↗</a>` })
+      : "") +
     cardFoot({ short: `Quarter ended ${t.period_of_report}`, full: instFiledNote(i.latestFiled), scope: "ticker-holders-foot", key: "stamp" }) +
     `</section>` +
     i.overlapHtml +

@@ -941,9 +941,10 @@ export function expandDomDisclosureFor(el: Element): boolean {
    (`revealHeldTarget`). */
 
 /** The count line for one state of a held list. Plain text. */
-export function heldCountText(s: { shown: number; total: number; held: number; rendered: number; matches: number | null; query: string }): string {
+export function heldCountText(s: { shown: number; total: number; held: number; rendered: number; matches: number | null; query: string; of?: number | null }): string {
   if (s.matches === null) {
-    return s.rendered === 0 ? "" : rangeOfTotal(s.shown + 1, s.shown + s.rendered, s.total, "holders");
+    /* H1: a capped list counts against the true holder count, never its cap */
+    return s.rendered === 0 ? "" : rangeOfTotal(s.shown + 1, s.shown + s.rendered, Math.max(s.total, s.of ?? 0), "holders");
   }
   const scope = `holders ${fmtInt(s.shown + 1)}–${fmtInt(s.total)}`;
   if (s.matches === 0) return `No filer among ${scope} matches "${s.query}".`;
@@ -977,7 +978,7 @@ function bindHeldLists(): void {
       if (on) more.setAttribute("open", "");
       else more.removeAttribute("open");
     };
-    const shared = (data.shared ?? {}) as { step?: number; total?: number };
+    const shared = (data.shared ?? {}) as { step?: number; total?: number; of?: number };
     const sel = (attr: string): HTMLElement | null => document.querySelector<HTMLElement>(`[${attr}="${id}"]`);
     const tools = sel("data-held-tools");
     const search = sel("data-held-search") as HTMLInputElement | null;
@@ -1002,7 +1003,7 @@ function bindHeldLists(): void {
       const rendered = Math.min(limit, list.length);
       tbody!.innerHTML = heldRowsHtml(id, list.slice(0, rendered)) ?? "";
       if (wrap) wrap.hidden = rendered === 0;
-      const text = heldCountText({ shown: data.offset, total, held: data.rows.length, rendered, matches: query === "" ? null : list.length, query });
+      const text = heldCountText({ shown: data.offset, total, held: data.rows.length, rendered, matches: query === "" ? null : list.length, query, of: typeof shared.of === "number" ? shared.of : null });
       if (count) {
         count.textContent = text;
         count.hidden = text === "";
