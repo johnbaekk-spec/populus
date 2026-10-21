@@ -20,7 +20,8 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync, statSync, lstatSync } from "node:fs";
 import path from "node:path";
 
-import { getBuildData, topFilerCiks } from "../../src/lib/data.ts";
+import { getBuildData, instDirectoryRows, topFilerCiks } from "../../src/lib/data.ts";
+import { INST_DIRECTORY_SHARDS_MAX, parseDirectoryShard, parseDirectoryShardList } from "../../src/lib/inst-index.ts";
 import {
   parseFilerFragmentV2,
   reassembleFilerFragments,
@@ -470,7 +471,9 @@ test("the projection never forecasts fewer files than the tree really holds", ()
     pyInt(BUDGET, "M3_RESERVED") +
     pyInt(BUDGET, "FILER_TAIL_SHARDS_RESERVED") +
     pyInt(BUDGET, "FILER_ROUTING_INDEX_FILES") +
-    pyInt(BUDGET, "FILER_V1_TRANSITION_FILES");
+    pyInt(BUDGET, "FILER_V1_TRANSITION_FILES") +
+    // launch M7b (LD29): the /institutional/ directory shard family
+    pyInt(BUDGET, "INST_DIRECTORY_SHARDS_MAX");
   const breakdown = [...measured.byTopLevel.entries()]
     .sort((a, b) => b[1] - a[1])
     .map(([k, v]) => `${k}=${v}`)
@@ -499,4 +502,55 @@ test("the site-chrome constant still matches the classes it measures", () => {
     `inst_budget.SITE_CHROME_FILES says ${declared} but the built tree holds ` +
       `${chrome} chrome files. Re-measure and update the constant.`,
   );
+});
+
+test("launch M7b (R32, LD29) GATE: the /institutional/ directory shard family in the built tree", () => {
+  /* The one dist class the launch redesign adds. Its hard maximum is read out
+     of inst_budget.py (and the TS mirror pinned to it), every shard is under
+     the 1 MiB client-response ceiling, the names run contiguously from zero,
+     each envelope agrees with the page's inlined list, and the union of the
+     rows is exactly the directory the build rendered — so a fetched family can
+     never be a partial directory. */
+  const max = pyInt(BUDGET, "INST_DIRECTORY_SHARDS_MAX");
+  assert.equal(max, INST_DIRECTORY_SHARDS_MAX, "the TS mirror equals the Python hard maximum");
+  const ceiling = pyInt(BUDGET, "FILER_SHARD_BYTE_CEILING");
+  const dir = path.join(DIST, "institutional", "data", "directory");
+  assert.ok(existsSync(dir), "the family is emitted in every build (shard 0 states an empty total without the module)");
+  const files = readdirSync(dir).sort((a, b) => Number.parseInt(a) - Number.parseInt(b));
+  assert.ok(files.length >= 1 && files.length <= max, `${files.length} directory shards against the ${max} maximum`);
+  assert.deepEqual(files, files.map((_, i) => `${i}.v1.json`), "shard names are contiguous from zero, version 1 only");
+  const landing = readFileSync(path.join(DIST, "institutional", "index.html"), "utf-8");
+  const listRaw = /<script type="application\/json" id="inst-index-shards">([^<]*)<\/script>/.exec(landing)?.[1] ?? null;
+  const modulePresent = existsSync(path.join(DIST, "institutional", "filers")) && readdirSync(path.join(DIST, "institutional", "filers")).length > 0;
+  if (!modulePresent) return;
+  const list = parseDirectoryShardList(listRaw);
+  assert.ok(list, "the page inlines a valid shard list");
+  assert.equal(list!.shards.length, files.length, "the list names every shard");
+  let rows = 0;
+  const ciks = new Set<string>();
+  for (const [i, f] of files.entries()) {
+    const size = statSync(path.join(dir, f)).size;
+    assert.ok(size <= ceiling, `${f} is ${size} B, over the ${ceiling} B client-response ceiling`);
+    assert.equal(list!.shards[i], `/institutional/data/directory/${f}`);
+    const parsed = parseDirectoryShard(JSON.parse(readFileSync(path.join(dir, f), "utf-8")), i, files.length, list!.total);
+    rows += parsed.length;
+    for (const r of parsed) {
+      assert.ok(!ciks.has(r.cik), `filer ${r.cik} appears in two shards`);
+      ciks.add(r.cik);
+    }
+  }
+  const build = getBuildData();
+  assert.equal(rows, list!.total, "the family holds exactly the listed total");
+  assert.equal(rows, instDirectoryRows(build).length, "…which is every directory row the build rendered");
+});
+
+test("launch M7b (R32): /institutional/ ships no inline JSON island over 64 KiB and at most 256 KiB of HTML", () => {
+  const html = readFileSync(path.join(DIST, "institutional", "index.html"), "utf-8");
+  for (const m of html.matchAll(/<script type="application\/json"[^>]*>([\s\S]*?)<\/script>/g)) {
+    const bytes = Buffer.byteLength(m[1]!);
+    assert.ok(bytes <= 64 * 1024, `an inline JSON island of ${bytes} B (over 64 KiB): ${m[0]!.slice(0, 80)}`);
+  }
+  const total = Buffer.byteLength(html);
+  assert.ok(total <= 256 * 1024, `/institutional/ is ${total} B of HTML, over the 256 KiB budget`);
+  assert.doesNotMatch(html, /id="inst-index-data"|id="inst-adds-data"/, "the retired islands are gone");
 });

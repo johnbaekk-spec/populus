@@ -78,6 +78,31 @@ test("default render: value descending, one active aria-sort, both rows present"
   }
 });
 
+/* launch M7b (R33): paper lists every holder. Holders past the first 25 are
+   not in the DOM (an island the binder draws), so the print check DISPATCHES
+   `beforeprint` before `emulateMedia('print')` — emulation alone never fires
+   the event, and a check without it would pass while printing 25 of N. The
+   expected count is read from the page's own server rows plus its islands, so
+   the check holds on the two-holder seed and on a mapped page with hundreds. */
+test("launch M7b (R33): print lists every holder — beforeprint dispatched before emulateMedia('print')", async ({ page }) => {
+  await openRoute(page);
+  const ROWS = "[data-holders-body] tr:not(.unranked-sep), #ticker-holders-rows tr, #ticker-holders-held tr";
+  const before = await page.evaluate((sel) => {
+    const held = [...document.querySelectorAll('script[type="application/json"][data-held-for]')].reduce(
+      (n, s) => n + ((JSON.parse(s.textContent || "{}") as { rows?: unknown[] }).rows?.length ?? 0),
+      0,
+    );
+    return { held, inDom: document.querySelectorAll(sel).length };
+  }, ROWS);
+  expect(before.inDom, "the server rows are on the page").toBeGreaterThan(0);
+  await page.evaluate(() => window.dispatchEvent(new Event("beforeprint")));
+  await page.emulateMedia({ media: "print" });
+  const printed = await page.locator(ROWS).evaluateAll((trs) => trs.filter((tr) => tr.getClientRects().length > 0).length);
+  expect(printed, "every holder renders on paper: the server's rows plus every held row").toBe(before.inDom + before.held);
+  await page.evaluate(() => window.dispatchEvent(new Event("afterprint")));
+  await page.emulateMedia({ media: "screen" });
+});
+
 test("clicking the active value header reverses the rows — a real browser reorder", async ({ page }) => {
   await openRoute(page);
   await page.locator('th[data-sort="value"] button').click();

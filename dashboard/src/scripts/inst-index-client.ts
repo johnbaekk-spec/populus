@@ -840,7 +840,14 @@ function bindHeldRows(renderers: Record<string, HeldRenderer>): void {
     if (!Array.isArray(data.rows)) return;
     island.setAttribute("data-held-bound", "1");
     const sel = (attr: string): HTMLElement | null => document.querySelector<HTMLElement>(`[${attr}="${id}"]`);
-    const more = sel("data-held-more") as HTMLDetailsElement | null;
+    const more = sel("data-held-more");
+    // `open` through the attribute, which the property reflects in a browser
+    const isOpen = (): boolean => !!more && more.hasAttribute("open");
+    const setOpen = (on: boolean): void => {
+      if (!more) return;
+      if (on) more.setAttribute("open", "");
+      else more.removeAttribute("open");
+    };
     const tools = sel("data-held-tools");
     const search = sel("data-held-search") as HTMLInputElement | null;
     const wrap = sel("data-held-wrap");
@@ -877,7 +884,7 @@ function bindHeldRows(renderers: Record<string, HeldRenderer>): void {
     if (tools) tools.hidden = false;
     // Opening the disclosure draws the first step; closing keeps the state.
     more?.addEventListener("toggle", () => {
-      if (more.open && limit === 0) {
+      if (isOpen() && limit === 0) {
         limit = step;
         draw();
       }
@@ -894,21 +901,22 @@ function bindHeldRows(renderers: Record<string, HeldRenderer>): void {
     /* Paper gets every holder: draw all of them and open the disclosure, then
        put the reader's state back. */
     let saved: { query: string; limit: number; open: boolean } | null = null;
-    window.addEventListener?.("beforeprint", () => {
-      saved = { query, limit, open: !!more?.open };
+    const win = typeof window === "undefined" ? null : window;
+    win?.addEventListener("beforeprint", () => {
+      saved = { query, limit, open: isOpen() };
       query = "";
       limit = data.rows.length;
-      if (more) more.open = true;
+      setOpen(true);
       draw();
     });
-    window.addEventListener?.("afterprint", () => {
+    win?.addEventListener("afterprint", () => {
       if (!saved) return;
       ({ query, limit } = saved);
-      if (more) more.open = saved.open;
+      setOpen(saved.open);
       saved = null;
       draw();
     });
-    if (more?.open) {
+    if (isOpen()) {
       limit = step;
       draw();
     }

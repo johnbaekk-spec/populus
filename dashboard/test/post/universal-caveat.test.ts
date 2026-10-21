@@ -132,16 +132,19 @@ test("the detector FIRES on production-shaped markup, not just headerless fixtur
    computed over all N, so each part is a part of the collection it judged —
    `data-paged`, the one exemption, and exactly its meaning. Driven through
    the real renderer here, with the control that an unmarked part is caught. */
-test("signals-v3 M3: the split holders tables — a flag on every holder is stated once; one only the first ten carry stays on their rows, in a part marked data-paged", async () => {
+test("signals-v3 M3 → launch M7b: the split holders tables — a flag on every holder is stated once; one only the first 25 carry stays on their rows, in a part marked data-paged", async () => {
+  /* launch M7b (R33): the list opens at 25 and holds 26..N; the parts in the
+     HTML are the visible table, the empty held table the binder fills, and
+     the no-JS second table inside <noscript> — every one marked data-paged. */
   const { tickerInstSectionHtml } = await import("../../src/lib/ui/index.ts");
   const holders = (flagged: (i: number) => boolean) =>
-    Array.from({ length: 14 }, (_, i) => ({ rank: i + 1, cik: String(i + 1).padStart(10, "0"), name: `H${i + 1}`, value: 1000 - i, securities: 1, keySource: "entity", flags: flagged(i + 1) ? ["security_not_in_mapping"] : [] }));
+    Array.from({ length: 40 }, (_, i) => ({ rank: i + 1, cik: String(i + 1).padStart(10, "0"), name: `H${i + 1}`, value: 1000 - i, securities: 1, keySource: "entity", flags: flagged(i + 1) ? ["security_not_in_mapping"] : [] }));
   const render = (flagged: (i: number) => boolean) =>
     tickerInstSectionHtml({ state: "data", name: "X", cik: "0000000001", period: "2026-03-31", latestFiled: null, topn: 25, holders: holders(flagged) } as never, "XYZ");
   assert.deepEqual(offendingTables(render(() => true)), [], "every holder: stated once, above the first part");
-  const topOnly = render((i) => i <= 10);
-  assert.deepEqual(offendingTables(topOnly), [], "the first ten only: each part is a marked part of the judged collection");
-  assert.equal((topOnly.match(/data-paged="1"/g) ?? []).length, 2, "both parts are marked");
+  const topOnly = render((i) => i <= 25);
+  assert.deepEqual(offendingTables(topOnly), [], "the first 25 only: each part is a marked part of the judged collection");
+  assert.equal((topOnly.match(/data-paged="1"/g) ?? []).length, 3, "every part is marked (visible, held, no-JS copy)");
   // control: the same parts, unmarked, are caught — the gate still reads them
   assert.equal(offendingTables(topOnly.replace(/ data-paged="1"/g, "")).length, 1, "control: an unmarked uniform part fails");
 });
