@@ -63,10 +63,15 @@ const description =
   <script>
     import { initEntityPage } from "../../../scripts/entity-client";
     import { initNotes } from "../../../scripts/notes";
-    import { initDomDisclosures } from "../../../scripts/inst-index-client";
+    import { initDomDisclosures, registerHeldRows } from "../../../scripts/inst-index-client";
+    import { memberNetRowHtml, memberHistoryRowHtml, MEMBER_NET_ROWS, MEMBER_HISTORY_ROWS } from "../../../lib/ui/index.ts";
     initEntityPage();
-    /* R36: the member page's DOM-backed compact tables (net disclosed flow by
-       ticker, filing history) are revealed and re-synced by the one binder. */
+    /* R36 + rule 8 (LD26): the member page's compact tables (net disclosed
+       flow by ticker, filing history) hold their extra rows in JSON islands;
+       the one binder renders them through the SAME row functions the server
+       used, registered here by the names the islands carry. */
+    registerHeldRows(MEMBER_NET_ROWS, memberNetRowHtml);
+    registerHeldRows(MEMBER_HISTORY_ROWS, memberHistoryRowHtml);
     initDomDisclosures();
     /* One `initNotes()` per surface that passes a note scope. Binding
        is DELEGATED on `document`, so one call covers notes created later by an

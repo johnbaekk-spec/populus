@@ -30,6 +30,12 @@ export {
   congressTickerBody,
   NON_ALLEGATION_CAVEAT,
   memberV2Sections,
+  // launch M4a (LD26, rule 8): the member page's held-row functions and the
+  // names the client binder registers them under
+  memberNetRowHtml,
+  memberHistoryRowHtml,
+  MEMBER_NET_ROWS,
+  MEMBER_HISTORY_ROWS,
 } from "./congress.ts";
 export {
   type RankingSectionOpts,

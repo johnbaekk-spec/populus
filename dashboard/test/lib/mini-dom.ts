@@ -267,6 +267,17 @@ export class MiniElement {
     }
   }
 
+  /** `Element.insertAdjacentHTML`, the one position the held-rows binder uses
+      (launch M4a, rule 8): "beforeend" parses the markup and appends it after
+      the element's last child. Any other position throws — a double that
+      guessed would start lying. */
+  insertAdjacentHTML(position: string, html: string): void {
+    if (position !== "beforeend") throw new Error(`mini-dom: insertAdjacentHTML("${position}") is not modelled`);
+    const holder = new MiniElement("template");
+    parseInto(holder, html);
+    for (const n of holder.nodes) this.appendNode(n);
+  }
+
   /** internal: used by the parser */
   appendNode(n: MiniElement | string): void {
     this.nodes.push(n);

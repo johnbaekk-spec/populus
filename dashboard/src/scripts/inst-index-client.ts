@@ -24,6 +24,7 @@ import {
   type AddsSortKey,
 } from "../lib/inst-adds.ts";
 import { addsRowsHtml } from "../lib/inst-adds-render.ts";
+import { parseHeldIsland } from "../lib/held-rows.ts";
 
 /* `instIndexBodyHtml` and `instDefaultDir` MOVED to `lib/inst-index.ts`.
 
@@ -380,6 +381,105 @@ export function initDomDisclosures(): void {
   if (typeof document.addEventListener === "function") {
     document.addEventListener("populus:rerender", () => bindDomDisclosures());
   }
+  bindHeldPrint();
+}
+
+/* ---------- held rows: the island carrier (pagination-and-counts.md rule 8) ----------
+
+   LD26: one binder, two carriers. A rule-7 table holds its extra rows in the
+   DOM (`tr[data-compact-extra]`); a HELD table (`tbody[data-held="json"]`)
+   holds them only as JSON, in the island the server emitted after the table
+   (`<script type="application/json" data-held-for="<tbody id>"
+   data-held-render="<name>">`, built by `heldTableParts` in
+   `lib/held-rows.ts`). The first time a held table is expanded, this binder
+   renders the island's rows through the row function registered under that
+   name — the SAME function the server rendered the first N rows with — and
+   appends them as `tr[data-compact-extra]`, after which the rule-7 toggle
+   applies unchanged. The island carries every input the function reads, so
+   the rows are byte-identical to the server's. Nothing here reads a
+   `<noscript>`, and DOM text never becomes HTML: the island is parsed as JSON
+   and only the registered function's output is written. */
+
+/** A row function as the binder calls it: the island row, its zero-based
+    position in the WHOLE table, and the island's table-wide inputs. */
+export type HeldRowRenderer = (row: unknown, index: number, shared: unknown) => string;
+
+const heldRenderers = new Map<string, HeldRowRenderer>();
+
+/** Register the row function a page's held tables render through, under the
+    name its islands carry in `data-held-render`. Call before
+    `initDomDisclosures()`. Registering a name twice keeps the latest
+    function. */
+export function registerHeldRows<R, S>(name: string, render: (row: R, index: number, shared: S) => string): void {
+  /* the island's JSON was produced from exactly the R and S this function
+     takes (`heldTableParts` in `lib/held-rows.ts`), so the widening is the
+     binder's, in one place */
+  heldRenderers.set(name, render as unknown as HeldRowRenderer);
+}
+
+function heldIslandFor(root: HTMLElement): HTMLElement | null {
+  if (!root.id) return null;
+  for (const el of Array.from(document.querySelectorAll<HTMLElement>('script[type="application/json"][data-held-for]'))) {
+    if (el.getAttribute("data-held-for") === root.id) return el;
+  }
+  return null;
+}
+
+/** Bring a held root's island rows into the DOM, once. True when every row
+    the disclosure counts is now in the DOM (always true for a rule-7 root);
+    false when the island or its renderer is missing, so the caller reveals
+    nothing rather than claim rows it cannot show. */
+function materializeHeldRows(root: HTMLElement): boolean {
+  if (root.getAttribute("data-held") !== "json") return true;
+  if (root.getAttribute("data-held-rendered") === "1") return true;
+  const island = heldIslandFor(root);
+  const data = parseHeldIsland(island?.textContent);
+  const render = heldRenderers.get(island?.getAttribute("data-held-render") ?? "");
+  if (!data || !render) return false;
+  const html = data.rows.map((row, j) => render(row, data.offset + j, data.shared)).join("\n");
+  const before = root.children.length;
+  root.insertAdjacentHTML("beforeend", html);
+  for (let i = before; i < root.children.length; i++) root.children[i]!.setAttribute("data-compact-extra", "");
+  root.setAttribute("data-held-rendered", "1");
+  return true;
+}
+
+/** Expand the disclosure that controls the root with this id — rendering its
+    held rows first when they live in an island. For a caller that must reach
+    a held row by navigation (a deep link, a search hit). True when it
+    expanded one. */
+export function expandDisclosureByRoot(rootId: string): boolean {
+  for (const wrap of Array.from(document.querySelectorAll<HTMLElement>(".compact-disclosure[data-compact-dom]"))) {
+    if (wrap.dataset.compactFor !== rootId) continue;
+    const s = readDomDisclosure(wrap);
+    if (!s || s.expanded || s.hidden <= 0) return false;
+    setDomDisclosure(wrap, true);
+    return readDomDisclosure(wrap)?.expanded === true;
+  }
+  return false;
+}
+
+/* Print shows every held row (rule 8): `beforeprint` expands each collapsed
+   held table, `afterprint` collapses exactly the ones it opened. Bound once
+   per page. */
+let heldPrintBound = false;
+function bindHeldPrint(): void {
+  if (heldPrintBound || typeof window === "undefined" || typeof window.addEventListener !== "function") return;
+  heldPrintBound = true;
+  let opened: HTMLElement[] = [];
+  window.addEventListener("beforeprint", () => {
+    opened = [];
+    for (const wrap of Array.from(document.querySelectorAll<HTMLElement>(".compact-disclosure[data-compact-dom]"))) {
+      const s = readDomDisclosure(wrap);
+      if (!s || s.expanded || s.hidden <= 0 || s.root.getAttribute("data-held") !== "json") continue;
+      setDomDisclosure(wrap, true);
+      if (readDomDisclosure(wrap)?.expanded) opened.push(wrap);
+    }
+  });
+  window.addEventListener("afterprint", () => {
+    for (const wrap of opened) setDomDisclosure(wrap, false);
+    opened = [];
+  });
 }
 
 /** The state one sync restates, read off the element AT THAT SYNC — never
@@ -463,6 +563,9 @@ function bindDomDisclosures(): void {
 function setDomDisclosure(wrap: HTMLElement, expanded: boolean): void {
   const s = readDomDisclosure(wrap);
   if (!s || s.hidden <= 0) return;
+  /* rule 8: a held root renders its island rows before it may say it is
+     expanded; with no island or renderer it stays collapsed */
+  if (expanded && !materializeHeldRows(s.root)) return;
   s.root.setAttribute("data-collapsed", String(!expanded));
   if (expanded) wrap.setAttribute("data-compact-expanded", "1");
   else {

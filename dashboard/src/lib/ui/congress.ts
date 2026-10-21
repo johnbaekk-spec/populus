@@ -61,6 +61,7 @@ import {
   type MemberEntity,
   type TickerEntity,
   type SumRanges,
+  type NetInterval,
   type QuarterlyFlowResult,
   excludeDateAnomalies,
   sumRanges,
@@ -103,6 +104,7 @@ import {
 } from "../derive.ts";
 import { RANKING_FOOTNOTES as RANKING_FOOTNOTES_LIST } from "../congress-columns.ts";
 import { type BuildStamps, breadcrumb, asOfNote, netCellHtml, netKindWord, sectorLabel } from "./shared.ts";
+import { heldTableParts } from "../held-rows.ts";
 
 /* ---------- flow ribbon ---------- */
 
@@ -1077,13 +1079,15 @@ function memberHistoryBandHtml(m: MemberEntity, signalsHtml: string): string {
   const historyN = MEMBER_HISTORY_COMPACT_ROWS;
   const shown = Math.min(historyN, filings.length);
   const collapsed = filings.length > historyN;
-  const rows = filings
-    .map(
-      (row, i) =>
-        `<tr${i >= historyN ? " data-compact-extra" : ""}><td class="c-flex">${esc(row.filed)}</td>` +
-        `<td class="c-num">${fmtInt(row.count)}</td><td class="c-src">${srcLink(row.doc)}</td></tr>`,
-    )
-    .join("");
+  /* rule 8: the first 12 filings in the DOM, the rest in the island */
+  const historyParts = heldTableParts<MemberHistoryRowIn, null>({
+    rootId: "member-history-tbody",
+    render: MEMBER_HISTORY_ROWS,
+    rowFn: memberHistoryRowHtml,
+    rows: filings,
+    shown,
+    shared: null,
+  });
   /* The filing history has no text column: its identity date (first column)
      takes the slack and stays left-aligned; Rows is a number, Receipt a
      receipt (R1, round 3 NEW-E). */
@@ -1093,7 +1097,8 @@ function memberHistoryBandHtml(m: MemberEntity, signalsHtml: string): string {
       ? `<p class="section-note">No machine-readable filing on record for this member.</p>`
       : `<div class="table-scroll"><table class="etable"><caption class="visually-hidden">Filing history</caption>` +
         `<thead><tr><th scope="col" class="c-flex">Filed</th><th scope="col" class="c-num">Rows</th><th scope="col" class="c-src">Receipt</th></tr></thead>` +
-        `<tbody id="member-history-tbody"${collapsed ? ' data-collapsed="true"' : ""}>${rows}</tbody></table></div>` +
+        `<tbody id="member-history-tbody"${collapsed ? ' data-collapsed="true" data-held="json"' : ""}>${historyParts.bodyRows}</tbody></table></div>` +
+        historyParts.island +
         compactDisclosure({ rootId: "member-history-tbody", total: filings.length, shown, noun: "filings", domBacked: true })) +
     `</section>`;
   /* The history is the primary cell; an empty-state Signals cell collapses
@@ -1327,6 +1332,87 @@ export const MEMBER_FLOW_COMPACT_ROWS = 20;
 /** Filings the member's Filing history shows before its Show-all (E: 12, fixed). */
 export const MEMBER_HISTORY_COMPACT_ROWS = 12;
 
+/* ---------- held-row functions (pagination-and-counts.md rule 8, LD26) ----------
+
+   Each is the ONE row function of its table: the server renders the first N
+   rows through it and the client binder (`registerHeldRows` +
+   `initDomDisclosures`) renders the held rows through it from the island. It
+   reads nothing but its arguments — no closure over the build, no ctx — so
+   the island can carry every input and the two sides are byte-identical. */
+
+/** The registered name of the member net-by-ticker row function. */
+export const MEMBER_NET_ROWS = "member-net";
+/** The registered name of the member filing-history row function. */
+export const MEMBER_HISTORY_ROWS = "member-history";
+
+/** One net-by-ticker row as the island carries it: every input the row
+    function reads, the neighbour-derived `overlapsPrev` and the build-derived
+    `cut` (a budget-cut ticker links to `/e/`, `format.ts` `tickerHrefFor`)
+    included. `sep` marks the separator row that introduces the
+    wholly-undisclosed bucket (its value is the bucket's ticker count). */
+export interface MemberNetRowIn {
+  sep?: number;
+  ticker: string;
+  cut: boolean;
+  asset: string | null;
+  assetType: string | null;
+  purchases: SumRanges;
+  sales: SumRanges;
+  buys: number;
+  sells: number;
+  net: NetInterval;
+  overlapsPrev: boolean;
+  last: string;
+}
+/** The net-by-ticker table's table-wide inputs: the diverging bar's scale
+    (the largest provable minimum on either side over EVERY row) and the
+    column count the separator row spans. */
+export interface MemberNetShared {
+  scale: number;
+  cols: number;
+}
+
+const lowerOf = (sum: SumRanges): number => (sum.kind === "closed" || sum.kind === "open" ? sum.low : 0);
+
+export function memberNetRowHtml(r: MemberNetRowIn, _index: number, s: MemberNetShared): string {
+  if (r.sep !== undefined) {
+    return `<tr class="unranked-sep"><td colspan="${s.cols}">${fmtInt(r.sep)} tickers carry a wholly-undisclosed side — no endpoints, listed last, never zero</td></tr>`;
+  }
+  const nk = netKindWord(r.net);
+  /* The row's kind edge follows its net direction; a bounded range that
+     spans zero (FLAT) and a range with no statable direction ("—") take the
+     neutral flat edge beside their word. */
+  const edge = nk.word === "NET BUY" ? "netbuy" : nk.word === "NET SELL" ? "netsell" : "flat";
+  const href = tickerHrefFor(r.ticker, r.cut ? { cutTickers: new Set([r.ticker]) } : {});
+  /* R17 (M3, T3.3): the default asset text; W-9: the NAME only — the row
+     nets every trade in the ticker; CD3-4 (a): the note is keyed on the
+     ticker, unique in this table. */
+  const issuer = r.asset
+    ? assetLineHtml({ asset: r.asset, assetType: r.assetType, ticker: r.ticker, side: "purchase", owner: null, txnId: "" }, { notes: { scope: "mf" }, noteKey: tickerNoteKey(r.ticker), nameOnly: true })
+    : "—";
+  return `<tr class="design-net-row" data-edge="${edge}"><td class="c-kind ${nk.word === "NET BUY" ? "c-buy" : nk.word === "NET SELL" ? "c-sell" : "c-muted"}">${esc(nk.word)}${nk.why ? `<span class="visually-hidden"> ${esc(nk.why)}</span>` : ""}</td>` +
+    `<td class="c-ticker"><a href="${href}">${esc(r.ticker)}</a></td>` +
+    `<td class="design-issuer c-secondary c-flex">${issuer}</td>` +
+    `<td class="c-bar"><span class="design-diverging" aria-hidden="true"><span style="right:50%;width:${lowerOf(r.purchases) / s.scale * 50}%"></span><span class="sale" style="left:50%;width:${lowerOf(r.sales) / s.scale * 50}%"></span></span><span class="visually-hidden">Purchases ${flowCellHtml(r.purchases)}; sales ${flowCellHtml(r.sales)}</span></td>` +
+    `<td class="c-num c-buy">${fmtInt(r.buys)}</td><td class="c-num c-sell">${fmtInt(r.sells)}</td>` +
+    `<td class="c-num c-net has-marks">${netCellHtml(r.net, r.overlapsPrev)}</td>` +
+    `<td class="c-filed c-num">${esc(r.last || "—")}</td></tr>`;
+}
+
+/** One filing-history row as the island carries it. */
+export interface MemberHistoryRowIn {
+  filed: string;
+  doc: string;
+  count: number;
+}
+
+export function memberHistoryRowHtml(row: MemberHistoryRowIn, _index = 0, _shared: unknown = null): string {
+  return (
+    `<tr><td class="c-flex">${esc(row.filed)}</td>` +
+    `<td class="c-num">${fmtInt(row.count)}</td><td class="c-src">${srcLink(row.doc)}</td></tr>`
+  );
+}
+
 export function memberV2Sections(
   m: MemberEntityT,
   stamps: BuildStamps,
@@ -1350,8 +1436,7 @@ function memberV2Parts(
   /* --- net disclosed flow by ticker (F-10: flows, never holdings) --- */
   const { rows: netRows, noTickerRows } = memberNetByTicker(m.txns);
   const { ranked, undisclosedBucket } = rankNetRows(netRows, (r) => r.net, (r) => r.ticker);
-  const lower = (sum: SumRanges): number => sum.kind === "closed" || sum.kind === "open" ? sum.low : 0;
-  const scale = Math.max(1, ...netRows.flatMap(row => [lower(row.purchases), lower(row.sales)]));
+  const scale = Math.max(1, ...netRows.flatMap(row => [lowerOf(row.purchases), lowerOf(row.sales)]));
   /* the newest row per ticker supplies the Issuer cell: its asset as filed
      and its type, so the cell can show the default asset text (R17) */
   const identities = new Map<string, { row: TxnRow; last: string }>();
@@ -1360,28 +1445,26 @@ function memberV2Parts(
     const date = row.traded ?? "";
     if (!previous || date > previous.last) identities.set(row.ticker, { row, last: date });
   }
-  const netRowHtml = (r: (typeof netRows)[number], overlapsPrev: boolean): string => {
-    const nk = netKindWord(r.net);
-    /* The row's kind edge follows its net direction; a bounded range that
-       spans zero (FLAT) and a range with no statable direction ("—") take the
-       neutral flat edge beside their word. */
-    const edge = nk.word === "NET BUY" ? "netbuy" : nk.word === "NET SELL" ? "netsell" : "flat";
-    return `<tr class="design-net-row" data-edge="${edge}"><td class="c-kind ${nk.word === "NET BUY" ? "c-buy" : nk.word === "NET SELL" ? "c-sell" : "c-muted"}">${esc(nk.word)}${nk.why ? `<span class="visually-hidden"> ${esc(nk.why)}</span>` : ""}</td>` +
-      `<td class="c-ticker"><a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a></td>` +
-      /* R17 (M3, T3.3): the default asset text — "[ST]", the row's own
-         "(TICKER)" and a "Common Stock" suffix drop; the as-filed string is
-         the label trigger's note and prints. W-9 (M3 review): the NAME only —
-         the row nets every trade in the ticker, so the newest trade's type
-         words ("· Options") would misdescribe it; the note keeps the code.
-         CD3-4 (a): the note is keyed on the ticker (`n-mf-<ticker>`), unique
-         in this table, not on a 75-character txn id; (c): a name that differs
-         from the filing only mechanically carries no note (the Issuer
-         header states the rule). */
-      `<td class="design-issuer c-secondary c-flex">${(() => { const id = identities.get(r.ticker)?.row; return id && id.asset ? assetLineHtml(id, { notes: { scope: "mf" }, noteKey: tickerNoteKey(r.ticker), nameOnly: true }) : "—"; })()}</td>` +
-      `<td class="c-bar"><span class="design-diverging" aria-hidden="true"><span style="right:50%;width:${lower(r.purchases) / scale * 50}%"></span><span class="sale" style="left:50%;width:${lower(r.sales) / scale * 50}%"></span></span><span class="visually-hidden">Purchases ${flowCellHtml(r.purchases)}; sales ${flowCellHtml(r.sales)}</span></td>` +
-      `<td class="c-num c-buy">${fmtInt(r.buys)}</td><td class="c-num c-sell">${fmtInt(r.sells)}</td>` +
-      `<td class="c-num c-net has-marks">${netCellHtml(r.net, overlapsPrev)}</td>` +
-      `<td class="c-filed c-num">${esc(identities.get(r.ticker)?.last || "—")}</td></tr>`;
+  /* LD26 / rule 8: every input the row function reads, per row — the
+     overlaps-the-row-above flag and the budget-cut flag are decided HERE, on
+     the server, from the neighbouring row and the build context, and travel
+     with the row, so the island's held rows render byte-identically. */
+  const cutOf = (ticker: string): boolean => ctx.cutTickers?.has(ticker) === true;
+  const netIn = (r: (typeof netRows)[number], overlapsPrev: boolean): MemberNetRowIn => {
+    const id = identities.get(r.ticker);
+    return {
+      ticker: r.ticker,
+      cut: cutOf(r.ticker),
+      asset: id?.row.asset ?? null,
+      assetType: id?.row.assetType ?? null,
+      purchases: r.purchases,
+      sales: r.sales,
+      buys: r.buys,
+      sells: r.sells,
+      net: r.net,
+      overlapsPrev,
+      last: id?.last ?? "",
+    };
   };
   /* The 13F column is REMOVED (DESIGN-POLISH M2, R12): it was empty by
      construction — the institutional join is not in this build — and a
@@ -1398,28 +1481,35 @@ function memberV2Parts(
     thHtml({ label: "Last traded", cls: "c-num" }),
   ];
   /* Compaction counts TICKERS: the first MEMBER_FLOW_COMPACT_ROWS tickers show
-     and every later ticker row is held back in the DOM (`data-compact-extra`).
-     The undisclosed bucket's separator row travels with the first ticker it
-     introduces, so the count "1–20 of 608 tickers" is exact in every state. */
+     and every later ticker row is HELD — out of the DOM, in the island (rule
+     8). The undisclosed bucket's separator row travels with the first ticker
+     it introduces, so the count "1–20 of 608 tickers" is exact in every state. */
   const netTickers = ranked.length + undisclosedBucket.length;
   /* The fixed default (CD-1): band M1's primary cell shows its 20 whatever
      its side cell holds; a side cell may end earlier (G9). */
   const flowsN = MEMBER_FLOW_COMPACT_ROWS;
   const shownTickers = Math.min(flowsN, netTickers);
-  const held = (tickerIndex: number, html: string): string =>
-    tickerIndex >= flowsN ? html.replace(/^<tr\b/, "<tr data-compact-extra") : html;
-  const netRowList = [
-    ...ranked.map((r, i) => held(i, netRowHtml(r, i > 0 ? netOverlaps(r.net, ranked[i - 1]!.net) === true : false))),
+  const netRowList: MemberNetRowIn[] = [
+    ...ranked.map((r, i) => netIn(r, i > 0 ? netOverlaps(r.net, ranked[i - 1]!.net) === true : false)),
     ...(undisclosedBucket.length > 0
       ? [
-          held(
-            ranked.length,
-            `<tr class="unranked-sep"><td colspan="${netHeads.length}">${fmtInt(undisclosedBucket.length)} tickers carry a wholly-undisclosed side — no endpoints, listed last, never zero</td></tr>`,
-          ),
-          ...undisclosedBucket.map((r, j) => held(ranked.length + j, netRowHtml(r, false))),
+          { ...netIn(undisclosedBucket[0]!, false), sep: undisclosedBucket.length },
+          ...undisclosedBucket.map((r) => netIn(r, false)),
         ]
       : []),
   ];
+  /* The separator row sits in the row list but is not a ticker: the DOM
+     slice is the first `shownTickers` TICKERS plus the separator when it
+     falls inside them. */
+  const netDomRows = shownTickers + (undisclosedBucket.length > 0 && ranked.length < shownTickers ? 1 : 0);
+  const netParts = heldTableParts<MemberNetRowIn, MemberNetShared>({
+    rootId: "member-flows-tbody",
+    render: MEMBER_NET_ROWS,
+    rowFn: memberNetRowHtml,
+    rows: netRowList,
+    shown: netDomRows,
+    shared: { scale, cols: netHeads.length },
+  });
   const netCollapsed = netTickers > flowsN;
   /* The undisclosed bucket's statement is TRUE in both states, so when its
      separator row sits past the compact slice the disclosure states it beside
@@ -1437,7 +1527,8 @@ function memberV2Parts(
            clause twice (gross purchases, gross sales); it is stated once, from
            the header's own label. */
         `<thead><tr>${netHeads.join("")}</tr></thead>` +
-        `<tbody id="member-flows-tbody"${netCollapsed ? ' data-collapsed="true"' : ""}>${netRowList.join("\n")}</tbody></table></div>` +
+        `<tbody id="member-flows-tbody"${netCollapsed ? ' data-collapsed="true" data-held="json"' : ""}>${netParts.bodyRows}</tbody></table></div>` +
+        netParts.island +
         compactDisclosure({
           rootId: "member-flows-tbody",
           total: netTickers,
