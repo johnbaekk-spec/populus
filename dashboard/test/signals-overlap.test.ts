@@ -384,6 +384,8 @@ test("T3.5 (R21, LD8): a move row's 'See {TICKER} in Overlap →' links the name
   try {
     doc.getElementById("mv-bank")!.innerHTML = "";
     const pager = initNamedMoves()!;
+    /* launch M7a (D5): render every held row from the island first */
+    pager.materialize(ids.at(-1)!);
     const rows = doc.querySelectorAll("#mv-list article.mv-item");
     let linked = 0;
     rows.forEach((r, i) => {
@@ -464,9 +466,12 @@ test("codex M3 r1 F1 (R21, D8): a move with no counted member on its own side st
   // the held row's client-rendered body equals the server's, the link included
   const { doc, restore } = installDom(html);
   try {
-    const row = doc.getElementById(allIds[oppIdx]!)!;
+    /* launch M7a (D5): the held row ships in the island; it renders on demand as the server's held row */
+    assert.equal(doc.getElementById(allIds[oppIdx]!), null, "precondition: held in the island");
+    const pager = initNamedMoves()!;
+    const row = pager.materialize(allIds[oppIdx]!)! as unknown as MiniElement;
     assert.ok(row.hasAttribute("hidden") && row.hasAttribute("data-fp") && text(row.querySelector(".mv-det")) === "", "precondition: held, its body empty");
-    initNamedMoves()!.fill(row.querySelector("details")!);
+    pager.fill(row.querySelector("details")!);
     assert.equal(row.querySelector(".mv-det")!.innerHTML, oppServer.innerHTML);
     assert.equal(row.querySelector(".mv-ov-link a")?.getAttribute("href"), "#ov-oppx");
   } finally {

@@ -13,7 +13,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { signalsBody, triageRowHtml, lagBandHtml, groupHits, hitMatches, hitsView, hitsHiddenText, signalSentence, memberSignalsPanel, hitsBodyHtml, sortHits, type HitFilter } from "../src/lib/ui/index.ts";
-import { COMMITTEE_CAVEAT, DEFAULT_HIT_FILTER, leadCardsHtml, memberLastName, SIGNAL_HITS_COMPACT_ROWS, SIGNAL_HITS_DOM_ROWS, SIGNAL_HITS_PAGE_SIZE, triageRowId } from "../src/lib/ui/signals.ts";
+import { COMMITTEE_CAVEAT, DEFAULT_HIT_FILTER, ctxOfCut, leadCardsHtml, memberLastName, SIGNAL_HITS_COMPACT_ROWS, SIGNAL_HITS_DOM_ROWS, SIGNAL_HITS_PAGE_SIZE, triageRowId, type HeldHits } from "../src/lib/ui/signals.ts";
 import type { Signal, SignalArtifact } from "../src/lib/signals.ts";
 import type { TxnRow } from "../src/lib/format.ts";
 import { buildTriage, daysBetween, type TriageResult } from "../src/lib/signal-triage.ts";
@@ -323,7 +323,21 @@ test("signals-v3 M1: the page embeds no watch band and no data island; hostile n
   assert.doesNotMatch(html, /<script\b/i, "no script element, inert or not");
   assert.doesNotMatch(html, /id="signal-watch|si-watchband|aria-label="Watchlist"/, "no watch band");
   assert.deepEqual(scanBannedWording(goldenPage().html), []);
-  assert.doesNotMatch(goldenPage().html, /<script\b/i, "the ranking control is CSS: no script anywhere on the page");
+  /* Reversal record (launch M7a, D5/LD27): the page now carries inert JSON
+     islands for its held lists. Property kept: no executable script and no
+     watch-band data anywhere on the page — every script element is a
+     `type="application/json"` island naming the list it holds, and parses. */
+  const scripts = [...goldenPage().html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)];
+  for (const [, attrs, body] of scripts) {
+    assert.match(attrs!, /^ type="application\/json" data-held-for="[a-z-]+"$/, "an inert held-list island, nothing else");
+    assert.doesNotMatch(body!, /</, "no tag can open inside an island");
+    assert.doesNotThrow(() => JSON.parse(body!));
+  }
+  assert.equal([...goldenPage().html.matchAll(/<script\b/gi)].length, scripts.length, "every script element is an island");
+  // a hostile name in a held hit line stays inert inside its island
+  const many = Array.from({ length: 12 }, (_, i) => sig({ kind: "s1-large", id: `s1-large:h${i}`, entities: { bioguide: null, memberName: i === 11 ? "</script><b>x" : `M ${i}`, ticker: null }, occurrence: { tradeDate: "2026-03-01", filedDate: `2026-06-${String(i + 1).padStart(2, "0")}` } }));
+  const held = signalsBody({ ...ART, signals: many }, CTX);
+  assert.doesNotMatch(held, /<\/script><b>/);
 });
 
 /* ================================================================ R12: the triage rows */
@@ -630,11 +644,15 @@ test("R13 / signals-v4 R5: the slim hits — Kind · Ticker · Who · Traded →
     hits.querySelectorAll("thead th").map((th) => [ownText(th).trim(), th.getAttribute("class")]),
     [["Kind", "c-kind"], ["Ticker", "c-ticker"], ["Who", "c-member c-flex"], ["Traded → Filed", "c-num"], ["Size", "c-num"], ["Src", "c-src"]],
   );
+  /* Reversal record (launch M7a, D5/LD27): the page carries SIGNAL_HITS_DOM_ROWS
+     lines as before, but only the first ten are in the DOM; the rest ship in
+     the island and render through the same body renderer on reveal. */
   const all = hits.querySelectorAll("tbody tr.si-hit");
-  assert.equal(all.length, Math.min(25, SIGNAL_HITS_DOM_ROWS), "every line up to SIGNAL_HITS_DOM_ROWS is rendered");
+  assert.equal(all.length, 10, "the first ten lines are in the page");
   const rows = all.filter((r) => !r.hasAttribute("hidden"));
   assert.equal(rows.length, 10, "the first 10 visible");
-  assert.ok(all.slice(10).every((r) => r.hasAttribute("hidden")), "the rest carry hidden");
+  const island = JSON.parse(/<script type="application\/json" data-held-for="signal-hits-body">([\s\S]*?)<\/script>/.exec(html)![1]!) as { lines: unknown[] };
+  assert.equal(island.lines.length, Math.min(25, SIGNAL_HITS_DOM_ROWS) - 10, "the island holds the rest of the lines the page carries");
   assert.equal(hits.getAttribute("data-dom-rows"), String(SIGNAL_HITS_DOM_ROWS));
   assert.equal(hits.getAttribute("data-shown"), "10");
   assert.equal(SIGNAL_HITS_COMPACT_ROWS, 10);
@@ -916,13 +934,22 @@ test("R14: the lag distribution renders on Methodology through lagBandHtml — i
   assert.match(lagBandHtml({ latestBatch: [], latestBatchFiled: null }), /No rows with both dates in the latest filed batch\./);
 });
 
-test("R13: hitsBodyHtml is the ONE body renderer (server lines = the shared view's first SIGNAL_HITS_DOM_ROWS, the first 10 shown)", () => {
+test("R13 + launch M7a (D5): hitsBodyHtml is the ONE body renderer — the page's first ten lines, and the island's lines past them rendered the client's way equal the server's rendering of the same lines", () => {
   const { html, art } = goldenPage();
   const active = art.signals.filter((s) => s.status === "active");
   const cols = domOf(html).querySelector("#hits table")!.getAttribute("data-columns")!.split(",");
   const view = hitsView(sortHits(active), DEFAULT_HIT_FILTER);
   const body = /<tbody id="signal-hits-body">([\s\S]*?)<\/tbody>/.exec(html)![1]!;
-  assert.equal(body, hitsBodyHtml(view.lines.slice(0, SIGNAL_HITS_DOM_ROWS), CTX, cols, SIGNAL_HITS_COMPACT_ROWS));
-  // control: the hidden marks are the ONLY difference from an all-visible body
-  assert.equal(body.replace(/ hidden>/g, ">"), hitsBodyHtml(view.lines.slice(0, SIGNAL_HITS_DOM_ROWS), CTX, cols));
+  assert.equal(body, hitsBodyHtml(view.lines.slice(0, SIGNAL_HITS_COMPACT_ROWS), CTX, cols, SIGNAL_HITS_COMPACT_ROWS));
+  const m = /<script type="application\/json" data-held-for="signal-hits-body">([\s\S]*?)<\/script>/.exec(html);
+  if (view.lines.length > SIGNAL_HITS_COMPACT_ROWS) {
+    const island = JSON.parse(m![1]!) as HeldHits;
+    // the client's composition (signals-client materializeLines): hidden rows through the same renderer and the island's ctx
+    const client = hitsBodyHtml(island.lines, ctxOfCut(island.cut), island.columns, 0);
+    const server = hitsBodyHtml(view.lines.slice(SIGNAL_HITS_COMPACT_ROWS, SIGNAL_HITS_DOM_ROWS), CTX, cols, 0);
+    assert.equal(client, server, "byte for byte");
+    // control: a planted cut member changes the client's link, so the ctx is load-bearing
+    const t = island.lines.find((l) => l.lead.entities.bioguide);
+    if (t) assert.notEqual(hitsBodyHtml(island.lines, ctxOfCut({ members: [t.lead.entities.bioguide!], tickers: [] }), island.columns, 0), server);
+  } else assert.equal(m, null, "no island with ten lines or fewer");
 });

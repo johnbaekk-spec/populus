@@ -9,9 +9,11 @@
    the T0 run on clean `main`. It applies to the inputs it was measured on: a
    dist built from another data build states that and compares nothing.
 
-   M1 on the page: every triage row renders once; the hits body holds
-   min(lines, SIGNAL_HITS_DOM_ROWS) lines, the first ten visible and the rest
-   `hidden`; the pane switch is server-hidden with every pane visible. */
+   M1 on the page: every triage row renders once; the page carries
+   min(lines, SIGNAL_HITS_DOM_ROWS) hit lines — launch M7a (D5): the first
+   ten in the DOM, visible, the rest in the JSON island; the Named moves'
+   rows are counted across the DOM and their island; the pane switch is
+   server-hidden with every pane visible. */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -97,7 +99,13 @@ test("T1.1 (R23): signals.v1.json and every notable-moves shard are byte-identic
   assert.equal(sha(listed), base.routes.sha256, "the route set is T0's, file for file");
 });
 
-test("signals-v4 M1 on the built page: every triage row once; the hits body holds min(lines, 40) lines with the first ten visible; the pane switch is server-hidden and every pane visible", () => {
+/** launch M7a (D5, LD27): a held list's island on the built page, parsed. */
+function heldIsland<T>(html: string, listId: string): T | null {
+  const m = new RegExp(`<script type="application/json" data-held-for="${listId}">([\\s\\S]*?)</script>`).exec(html);
+  return m ? (JSON.parse(m[1]!) as T) : null;
+}
+
+test("signals-v4 M1 + launch M7a on the built page: every triage row once; the page carries min(lines, 40) hit lines — the first ten in the DOM, visible, the rest in the island; the pane switch is server-hidden and every pane visible", () => {
   const html = readFileSync(path.join(DIST, "signals", "index.html"), "utf-8");
   const ranked = /of ([\d,]+) rows ranked/.exec(html);
   assert.ok(ranked, "the Stand out figure states the rows ranked");
@@ -109,9 +117,10 @@ test("signals-v4 M1 on the built page: every triage row once; the hits body hold
   const [shown, lines, domRows] = [Number(hits[1]), Number(hits[2]), Number(hits[3])];
   const body = /<tbody id="signal-hits-body">([\s\S]*?)<\/tbody>/.exec(html)![1]!;
   const trs = [...body.matchAll(/<tr class="si-hit[^"]*"[^>]*>/g)].map((m) => m[0]);
-  assert.equal(trs.length, Math.min(lines, domRows));
-  assert.equal(trs.filter((x) => !/ hidden>$/.test(x)).length, Math.min(shown, lines), "the first ten visible");
-  assert.ok(trs.slice(shown).every((x) => / hidden>$/.test(x)), "the rest hidden");
+  assert.equal(trs.length, Math.min(lines, shown), "the first ten lines are in the DOM");
+  assert.ok(trs.every((x) => !/ hidden>$/.test(x)), "and visible");
+  const held = heldIsland<{ lines: unknown[] }>(html, "signal-hits-body");
+  assert.equal(trs.length + (held?.lines.length ?? 0), Math.min(lines, domRows), "with the island, the page carries min(lines, 40) lines");
   assert.match(html, /<div class="seg pane-switch" role="group" aria-label="Show" data-pane-switch hidden>/);
   assert.doesNotMatch(html, /<section class="panel si-triage" id="triage"[^>]*\shidden/);
   assert.doesNotMatch(html, /<div class="si-side" id="signals-side"[^>]*\shidden/);
@@ -155,6 +164,11 @@ export function independentCongressCounts(txns: readonly TxnRow[], period: strin
     The attribute is decoded with `&amp;` LAST, so an escaped "&amp;quot;" never double-decodes. */
 function renderedMoves(html: string): { id: string; kind: string; ikey: string; cg: string; tk: string | null }[] {
   const out: { id: string; kind: string; ikey: string; cg: string; tk: string | null }[] = [];
+  /* launch M7a (D5, LD27): the rows past the first fifteen ship in the island; they count too */
+  type IslandRow = { id: string; kind: string; ikey: string; ticker: string | null; cell: { absent: string } | { side: "buy" | "sell"; n: number } };
+  for (const r of heldIsland<{ rows: IslandRow[] }>(html, "mv-list")?.rows ?? []) {
+    out.push({ id: r.id, kind: r.kind, ikey: r.ikey, cg: "absent" in r.cell ? "—" : `${r.cell.side === "buy" ? "▲" : "▼"}${r.cell.n}`, tk: r.ticker });
+  }
   for (const a of html.matchAll(/<article class="mv-item" id="([^"]+)" data-kind="([^"]+)" data-type="[^"]*" data-ikey="([^"]*)"[^>]*>([\s\S]*?)<\/article>/g)) {
     const cg = /<span class="mv-cg">(?:<span class="cg-on" aria-hidden="true">([^<]*)<\/span>|<span aria-hidden="true">([^<]*)<\/span>)/.exec(a[4]!);
     const tk = /<span class="mv-tk"><span class="mono-ticker">([^<]+)<\/span>/.exec(a[4]!)?.[1] ?? null;
@@ -179,6 +193,7 @@ test("signals-v4 T2.9 (R12, R13, R14): the built Institutional tab — the Congr
   }
   const moves = notableMovesFor(build, model.period);
   const rows = renderedMoves(html);
+  assert.equal(new Set(rows.map((r) => r.id)).size, rows.length, "every carried move row once, across the DOM and the island");
   t.diagnostic(`in-build moves ${moves.length}; rendered rows ${rows.length}; notable managers ${model.notableManagers}`);
   if (moves.length === 0) {
     assert.equal(rows.length, 0);

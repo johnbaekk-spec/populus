@@ -204,3 +204,74 @@ test("R28 / R40: 'Triggers now' carries explicit table roles and the ledger role
   const planted = domOf(tables[0]!.outerHTML.replace(/<tr class="pb-row" role="row">/, '<tr class="pb-row">'));
   assert.ok(problems(planted.querySelector("table")!).includes("row"), "control: a role-less row");
 });
+
+/* ---------------------------------------------------------------- M7a: the weight (D5, D6) */
+
+import { NAMED_MOVES_MIN } from "../src/lib/notable-moves.ts";
+import { moveRowFrom, namedMoveIds, signalsInstitutionalHtml, type HeldMoves } from "../src/lib/ui/signals-institutional.ts";
+import { fixtureMoves } from "./lib/inst-signals-fixture.ts";
+import { installDom } from "./lib/mini-dom.ts";
+import { initNamedMoves } from "../src/scripts/signals-client.ts";
+
+function island<T>(html: string, listId: string): T | null {
+  const m = new RegExp(`<script type="application/json" data-held-for="${listId}">([\\s\\S]*?)</script>`).exec(html);
+  return m ? (JSON.parse(m[1]!) as T) : null;
+}
+/** Elements at first load, as a browser parses the served HTML: every start
+    tag outside a script element (an island's JSON is text, not elements). */
+function elementCount(html: string): number {
+  return (html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "<script></script>").match(/<[a-zA-Z][\w-]*[\s>/]/g) ?? []).length;
+}
+
+test("R31 (D5, LD27): the Named moves' first load carries the first fifteen rows; the rest of the page's set ships in the island as data, in order, each once; without script the first rows and a stated count remain", () => {
+  const model = fixtureInstitutional({ moves: fixtureMoves(200, { broadOnly: 10 }) });
+  const html = signalsInstitutionalHtml(model, CTX);
+  const dom = [...html.matchAll(/<article class="mv-item" id="([^"]+)"/g)].map((m) => m[1]!);
+  const held = island<HeldMoves>(html, "mv-list")!;
+  assert.equal(dom.length, NAMED_MOVES_MIN, "fifteen rows in the page");
+  assert.deepEqual([...dom, ...held.rows.map((r) => r.id)], namedMoveIds(model), "the page's set, in its order, each once");
+  assert.ok(!/<article class="mv-item"[^>]*\shidden/.test(html), "no held row in the DOM");
+  const ns = /<noscript><p class="section-note">([^<]*)<\/p><\/noscript>\s*<\/section>/.exec(html.slice(html.indexOf('id="named-moves"')))![1]!;
+  assert.equal(ns, `Filtering and paging need JavaScript: the first ${NAMED_MOVES_MIN} of ${model.moves.length} changes in this quarter are listed; filer pages list every move.`);
+  // a field carrying markup stays text when the client renders its row
+  const hostile = moveRowFrom({ ...held.rows[0]!, manager: "<b>x</b>", issuer: "</script>" }, held.sec, true, held.tv);
+  assert.doesNotMatch(hostile, /<b>x|<\/script>/);
+  assert.match(hostile, /&lt;b&gt;x&lt;\/b&gt;/);
+});
+
+test("R31 (D5, LD27): a held move row a hash names renders from the island in place, in the page's order, and a second binder never renders it twice", () => {
+  const model = fixtureInstitutional({ moves: fixtureMoves(200, { broadOnly: 10 }) });
+  const { doc, restore } = installDom(signalsInstitutionalHtml(model, CTX));
+  try {
+    const ids = namedMoveIds(model);
+    const a = initNamedMoves()!;
+    const target = ids[NAMED_MOVES_MIN + 7]!;
+    assert.equal(doc.getElementById(target), null);
+    assert.ok(a.materialize(target));
+    const order = doc.querySelectorAll("#mv-list article.mv-item").map((r) => r.getAttribute("id"));
+    assert.deepEqual(order, ids.slice(0, NAMED_MOVES_MIN + 8), "the next contiguous run, in the page's order");
+    const b = initNamedMoves()!;
+    b.materialize(ids[NAMED_MOVES_MIN + 9]!);
+    const after = doc.querySelectorAll("#mv-list article.mv-item").map((r) => r.getAttribute("id"));
+    assert.equal(new Set(after).size, after.length, "no row twice");
+    assert.deepEqual(after, ids.slice(0, NAMED_MOVES_MIN + 10));
+    assert.equal(a.materialize("mv-nowhere"), null, "an id no row has renders nothing");
+  } finally {
+    restore();
+  }
+});
+
+test("R31 / SC3 (D6 record): the first-load elements the islands save on the fixture page — measured, and the triage rows stay in the page", (t) => {
+  const f = loadTriageFixture();
+  const inst = fixtureInstitutional({ moves: fixtureMoves(200, { broadOnly: 10 }) });
+  const tr = triage();
+  const body = signalsBody(f.artifact, CTX, { rowsEvaluated: 2051, triage: tr, institutional: inst, overlap: fixtureOverlap(), playbooks: stressModel() });
+  const moves = island<HeldMoves>(body, "mv-list")!;
+  const savedMoves = moves.rows.reduce((n, r) => n + elementCount(moveRowFrom(r, moves.sec, true, moves.tv)), 0);
+  const first = elementCount(body);
+  t.diagnostic(`fixture /signals/ body: ${first} elements at first load; the Named moves island holds ${moves.rows.length} rows (${savedMoves} elements not built until revealed)`);
+  assert.ok(savedMoves > 0 && moves.rows.length === inst.domSet.length - NAMED_MOVES_MIN);
+  // D6: every triage row body stays in the page
+  assert.equal([...body.matchAll(/<article class="si-row" id="/g)].length, tr.rows.length);
+  assert.equal([...body.matchAll(/<div class="si-row-det">/g)].length, tr.rows.length, "every row's opened body is server-rendered");
+});

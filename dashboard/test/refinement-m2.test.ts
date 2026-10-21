@@ -503,7 +503,9 @@ test("R14 → signals-v4 LD11: the Named moves show 15 rows with the kind and ty
     filerHref: (cik) => `/institutional/filers/${Number(cik)}/`, filerTier: () => "top",
   });
   const html = signalsInstitutionalHtml(model, {});
-  assert.equal((html.match(/<article class="mv-item"/g) ?? []).length, 30, "the DOM set: the slice's first 30 (LD11)");
+  /* launch M7a (D5): the DOM set is still the slice's first 30 — 15 in the page, the rest in the island */
+  const island = JSON.parse(/<script type="application\/json" data-held-for="mv-list">([\s\S]*?)<\/script>/.exec(html)![1]!) as { rows: unknown[] };
+  assert.equal((html.match(/<article class="mv-item"/g) ?? []).length + island.rows.length, 30, "the DOM set: the slice's first 30 (LD11)");
   assert.equal((html.match(/<article class="mv-item"(?![^>]*\shidden)[^>]*>/g) ?? []).length, NAMED_MOVES_MIN, "15 show");
   assert.doesNotMatch(html, /data-moves-period=/, "no quarter selector on Signals (plan non-goal)");
   for (const k of ["new", "exit", "add", "trim"]) assert.match(html, new RegExp(`data-mv-kind="${k}"`));

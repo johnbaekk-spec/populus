@@ -309,12 +309,21 @@ test("T2.7 / signals-v4 T1.6: the island's repaint equals the server body (40 he
   const active = sortHits((artifact as { signals: never[] }).signals);
   const view = hitsView(active, { family: "all", stocksOnly: true });
   assert.equal(SIGNAL_HITS_DOM_ROWS, 40);
-  assert.equal((serverBody.match(/<tr class="si-hit/g) ?? []).length, 40, "the server holds 40 lines");
-  assert.equal((serverBody.match(/ hidden>/g) ?? []).length, 30, "lines 11–40 carry hidden");
-  assert.equal(serverBody, hitsBodyHtml(view.lines.slice(0, 40), {}, cols, 10));
+  /* Reversal record (launch M7a, D5/LD27): the page still carries 40 lines,
+     but lines 11–40 ship in the island and render on reveal through the same
+     body renderer. Property kept: the page's lines — the DOM's and the
+     island's rendered the client's way — are the client's repaint, byte for
+     byte, and a reveal inside them needs no fetch. */
+  assert.equal((serverBody.match(/<tr class="si-hit/g) ?? []).length, 10, "the first ten lines are in the page");
+  assert.equal((serverBody.match(/ hidden>/g) ?? []).length, 0);
+  assert.equal(serverBody, hitsBodyHtml(view.lines.slice(0, 10), {}, cols, 10));
+  const { ctxOfCut } = await import("../src/lib/ui/signals.ts");
+  const island = JSON.parse(/<script type="application\/json" data-held-for="signal-hits-body">([\s\S]*?)<\/script>/.exec(html)![1]!);
+  assert.equal(island.lines.length, 30, "lines 11–40 wait in the island");
+  const carried = serverBody + "\n" + hitsBodyHtml(island.lines, ctxOfCut(island.cut), island.columns, 0);
   // the pure composition the island paints with
   const first = hitsRepaint(active, { family: "all", stocksOnly: true }, 10, {}, cols, 40);
-  assert.equal(first.body, serverBody, "the client's repaint at shown = 10 is the server's body, byte for byte");
+  assert.equal(first.body, carried, "the client's repaint at shown = 10 is the page's 40 lines, byte for byte");
   assert.equal(first.range, /id="signal-hits-range"[^>]*>([^<]*)</.exec(html)![1], "and the server's range");
   assert.equal(hitsRepaint(active, { family: "all", stocksOnly: true }, 45, {}, cols, 40).held, 60, "past the held rows the body holds the next multiple of 40 (here all 60 lines)");
   // the island itself, mounted over the server's bytes
@@ -332,7 +341,7 @@ test("T2.7 / signals-v4 T1.6: the island's repaint equals the server body (40 he
     const pager = initHitPager()!;
     assert.equal(body(), serverBody, "mounting changes nothing");
     await pager.setBase(25);
-    assert.equal(fetches, 0, "setBase(25): no fetch — lines 11–25 are held");
+    assert.equal(fetches, 0, "setBase(25): no fetch — lines 11–25 render from the island");
     assert.deepEqual(visible(), view.lines.slice(0, 25).map((l) => l.lead.id));
     assert.equal(doc.getElementById("signal-hits-range")!.textContent, `1–25 of 60 lines · 60 hits`);
     assert.equal(doc.getElementById("hits")!.getAttribute("data-shown"), "25");
@@ -378,7 +387,7 @@ test("T2.7 / signals-v4 T1.6: the island's repaint equals the server body (40 he
     // the pill removes the filter
     (fresh.doc.getElementById("signal-family-pill") as unknown as MiniElement).click();
     await tick();
-    assert.equal(fbody(), serverBody, "back to the server's view");
+    assert.equal(fbody(), carried, "back to the page's view: its forty lines, the island's rendered the client's way");
     assert.equal(fresh.doc.getElementById("signal-family-pill-row")!.hidden, true);
     assert.equal(fetches, 1, "one lazy fetch, memoised");
   } finally {

@@ -81,7 +81,7 @@ import {
 import type { NewPositionLeaders } from "../inst-analytics.ts";
 import { convictionCountsText, convictionRuleText } from "./institutional.ts";
 import { disclosureLedger, pairBandHtml, type LedgerItem } from "./shared.ts";
-import { congressLineHtml, paneSwitchHtml } from "./signals.ts";
+import { congressLineHtml, heldIslandHtml, paneSwitchHtml } from "./signals.ts";
 import { playbookStripHtml } from "./signals-playbooks.ts";
 
 /** LD20: the owner's reference label for the new-position leaders. Outside
@@ -233,14 +233,25 @@ function congressAbsenceCellHtml(a: CongressAbsence, scope: "side" | "name"): st
 /** The Congress column's cell for one side: "▲3" with its words for
     assistive technology, or "—" with the reason (`congressAbsence`). */
 function congressCellHtml(q: CongressQuarter | null, ticker: string | null, side: QuarterSide): string {
+  return congressCellFrom(congressCellOf(q, ticker, side));
+}
+
+/** The Congress cell of one side as data (launch M7a, LD26): the counted
+    members, or the absence's words — what `congressCellFrom` renders, so a
+    held row rendered on the client from its island entry is the server's
+    markup. */
+export type MoveCongCell = { side: QuarterSide; n: number } | { absent: string };
+function congressCellOf(q: CongressQuarter | null, ticker: string | null, side: QuarterSide): MoveCongCell {
+  const a = congressAbsence(q, ticker, [side]);
+  return a ? { absent: congressAbsenceText(a, "side") } : { side, n: quarterMembers(q, ticker, side).length };
+}
+export function congressCellFrom(c: MoveCongCell): string {
   /* the words name the column for assistive technology (its head is
      aria-hidden); the quarter is the column tip's, so they do not repeat it */
-  const a = congressAbsence(q, ticker, [side]);
-  if (a) return congressAbsenceCellHtml(a, "side");
-  const n = quarterMembers(q, ticker, side).length;
+  if ("absent" in c) return `<span aria-hidden="true">—</span><span class="visually-hidden">${esc(c.absent)}</span>`;
   return (
-    `<span class="cg-on" aria-hidden="true">${SIDE_ARROW[side]}${fmtInt(n)}</span>` +
-    `<span class="visually-hidden">Congress: ${plural(n, "member", "members")} with a ${SIDE_NOUN[side]}</span>`
+    `<span class="cg-on" aria-hidden="true">${SIDE_ARROW[c.side]}${fmtInt(c.n)}</span>` +
+    `<span class="visually-hidden">Congress: ${plural(c.n, "member", "members")} with a ${SIDE_NOUN[c.side]}</span>`
   );
 }
 
@@ -257,11 +268,27 @@ function congId(ticker: string, side: QuarterSide): string {
     only broad accounts — or null when that is not the side's case. It names
     the accounts, so it is the one Congress side only the server can say. */
 function congressBroadHtml(q: CongressQuarter | null, ticker: string | null, side: QuarterSide): string | null {
+  return congressBroadFrom(broadSideOf(q, ticker, side));
+}
+
+/** The broad-only statement as data (launch M7a, LD26): the quarter's label,
+    the ticker, the side and the accounts' names — or null. */
+export interface MoveBroadSide {
+  quarter: string;
+  ticker: string;
+  side: QuarterSide;
+  accounts: string;
+}
+function broadSideOf(q: CongressQuarter | null, ticker: string | null, side: QuarterSide): MoveBroadSide | null {
   const a = congressAbsence(q, ticker, [side]);
   if (!q || !ticker || a?.kind !== "broad-only") return null;
+  return { quarter: quarterLabel(q.period) ?? q.period, ticker, side, accounts: broadAccountsText(a.broad) };
+}
+export function congressBroadFrom(b: MoveBroadSide | null): string | null {
+  if (b === null) return null;
   return (
-    `<div class="mv-cong"><p class="mv-cong-none">Only broad accounts — members who traded more than ${fmtInt(BROAD_ACCOUNT_NAMES)} names in ${esc(quarterLabel(q.period) ?? q.period)} — reported a ${SIDE_NOUN[side]} of ${esc(ticker)} traded in the quarter: ` +
-    `${esc(broadAccountsText(a.broad))}. They are not counted.</p></div>`
+    `<div class="mv-cong"><p class="mv-cong-none">Only broad accounts — members who traded more than ${fmtInt(BROAD_ACCOUNT_NAMES)} names in ${esc(b.quarter)} — reported a ${SIDE_NOUN[b.side]} of ${esc(b.ticker)} traded in the quarter: ` +
+    `${esc(b.accounts)}. They are not counted.</p></div>`
   );
 }
 
@@ -442,43 +469,118 @@ export function moveRowHtml(
   tvDefault: string | null = null,
   overlapIds: ReadonlySet<string> | null = null,
 ): string {
+  return moveRowFrom(moveRowData(m, id, model, overlapIds), moveSection(model), hidden, tvDefault);
+}
+
+/** What every move row of one section shares: the quarter end and its label. */
+export interface MoveSection {
+  period: string;
+  quarter: string | null;
+}
+export function moveSection(model: Pick<SignalsInstitutional, "period" | "quarter">): MoveSection {
+  return { period: model.period ?? "—", quarter: model.quarter ? (quarterLabel(model.quarter.period) ?? model.quarter.period) : null };
+}
+
+/** One move row as DATA (launch M7a, D5, LD26/LD27): every input
+    `moveRowFrom` reads — the move's own fields, its filer page, its Congress
+    cell, count and broad-only statement, its Overlap anchor — so a held row
+    ships in the JSON island and the client renders it through the server's
+    one row function, byte for byte. Never HTML: every field is escaped where
+    it is written. */
+export interface MoveRowData {
+  id: string;
+  ikey: string;
+  manager: string;
+  principal: string | null;
+  ticker: string | null;
+  issuer: string;
+  kind: NotableMove["kind"];
+  type: string;
+  dsh: number | null;
+  now: number | null;
+  dv: number | null;
+  filed: string | null;
+  tv: string | null;
+  doc: string | null;
+  fp: string;
+  counted: number;
+  cell: MoveCongCell;
+  broad: MoveBroadSide | null;
+  ov: string | null;
+}
+export function moveRowData(
+  m: NotableMove,
+  id: string,
+  model: Pick<SignalsInstitutional, "period" | "quarter" | "filerHref">,
+  overlapIds: ReadonlySet<string> | null = null,
+): MoveRowData {
   const side = moveSide(m.kind);
-  const dir = m.delta_value == null ? "c-muted" : m.delta_value < 0 ? "c-sell" : "c-buy";
-  const filerPage = `${model.filerHref(m.cik)}#${positionAnchor(m.key)}`;
   const q = model.quarter;
-  const counted = m.ticker && q ? quarterMembers(q, m.ticker, side).length : 0;
-  const broad = congressBroadHtml(q, m.ticker, side);
+  return {
+    id,
+    ikey: moveNameKey(m),
+    manager: m.manager,
+    principal: m.principal ?? null,
+    ticker: m.ticker,
+    issuer: m.issuer,
+    kind: m.kind,
+    type: m.type,
+    dsh: m.delta_shares,
+    now: m.curr_value,
+    dv: m.delta_value,
+    filed: m.filed,
+    tv: m.ticker_verified,
+    doc: m.doc ?? null,
+    fp: `${model.filerHref(m.cik)}#${positionAnchor(m.key)}`,
+    counted: m.ticker && q ? quarterMembers(q, m.ticker, side).length : 0,
+    cell: congressCellOf(q, m.ticker, side),
+    broad: broadSideOf(q, m.ticker, side),
+    /* R21 / D8: carried in either variant — never gated on the side's Congress count */
+    ov: overlapIds ? overlapLinkFor(m.ticker, (x) => overlapIds.has(x)) : null,
+  };
+}
+
+/** The ONE move row renderer, over `MoveRowData` (the server's rows and the
+    client's island rows alike). */
+export function moveRowFrom(r: MoveRowData, sec: MoveSection, hidden = false, tvDefault: string | null = null): string {
+  const dir = r.dv == null ? "c-muted" : r.dv < 0 ? "c-sell" : "c-buy";
   /* lean by design (LD11's byte budget): the receipt's cell is the grid's
      last track, left empty for the receipt laid over it; a name no reviewed
      ticker maps says so once, in its Congress side */
   const summary =
     `<summary class="mv-sum">` +
-    `<span class="mv-mgr">${esc(m.manager)}${m.principal ? ` <span class="mv-p">(${esc(m.principal)})</span>` : ""}</span>` +
-    `<span class="mv-tk">${m.ticker ? `<span class="mono-ticker">${esc(m.ticker)}</span> ` : ""}<span class="filed-name mv-iss">${esc(m.issuer)}</span></span>` +
-    `<span class="mv-k qoq-chip ${kindWord(m.kind).cls}">${esc(kindWord(m.kind).word)}</span>` +
-    `<span class="mv-dsh">${esc(signedShares(m.delta_shares))}<span class="visually-hidden"> shares</span></span>` +
-    `<span class="mv-now">${m.curr_value == null ? "—" : esc(fmtUsd(m.curr_value))}<span class="visually-hidden"> now</span></span>` +
-    `<span class="mv-dv ${dir}">${esc(signedUsd(m.delta_value))}</span>` +
-    `<span class="mv-cg">${congressCellHtml(q, m.ticker, side)}</span>` +
-    `<span class="mv-fil"><span class="visually-hidden">filed </span>${m.filed ? `<time datetime="${esc(m.filed)}">${esc(m.filed)}</time>` : "date not stated"}</span>` +
+    `<span class="mv-mgr">${esc(r.manager)}${r.principal ? ` <span class="mv-p">(${esc(r.principal)})</span>` : ""}</span>` +
+    `<span class="mv-tk">${r.ticker ? `<span class="mono-ticker">${esc(r.ticker)}</span> ` : ""}<span class="filed-name mv-iss">${esc(r.issuer)}</span></span>` +
+    `<span class="mv-k qoq-chip ${kindWord(r.kind).cls}">${esc(kindWord(r.kind).word)}</span>` +
+    `<span class="mv-dsh">${esc(signedShares(r.dsh))}<span class="visually-hidden"> shares</span></span>` +
+    `<span class="mv-now">${r.now == null ? "—" : esc(fmtUsd(r.now))}<span class="visually-hidden"> now</span></span>` +
+    `<span class="mv-dv ${dir}">${esc(signedUsd(r.dv))}</span>` +
+    `<span class="mv-cg">${congressCellFrom(r.cell)}</span>` +
+    `<span class="mv-fil"><span class="visually-hidden">filed </span>${r.filed ? `<time datetime="${esc(r.filed)}">${esc(r.filed)}</time>` : "date not stated"}</span>` +
     `</summary>`;
+  const broad = congressBroadFrom(r.broad);
   const lean = hidden && broad === null;
   const d: MoveDetail = {
-    type: m.type, kind: m.kind, filed: m.filed, period: model.period ?? "—", quarter: q ? (quarterLabel(q.period) ?? q.period) : null,
-    ticker: m.ticker, verified: m.ticker_verified, filerPage, congress: counted,
-    /* R21 / D8: carried in either variant — never gated on the side's Congress count */
-    overlap: overlapIds ? overlapLinkFor(m.ticker, (id) => overlapIds.has(id)) : null,
+    type: r.type, kind: r.kind, filed: r.filed, period: sec.period, quarter: sec.quarter,
+    ticker: r.ticker, verified: r.tv, filerPage: r.fp, congress: r.counted, overlap: r.ov,
   };
   const detail = `<div class="mv-det">${lean ? "" : broad === null ? moveDetailHtml(d) : moveFactsHtml(d) + broad + overlapLinkHtml(d.ticker, d.overlap)}</div>`;
   const held = lean
-    ? ` data-fp="${esc(filerPage)}"${m.ticker && m.ticker_verified !== tvDefault ? ` data-tv="${esc(m.ticker_verified ?? "")}"` : ""}${counted > 0 ? ` data-cg="${counted}"` : ""}`
+    ? ` data-fp="${esc(r.fp)}"${r.ticker && r.tv !== tvDefault ? ` data-tv="${esc(r.tv ?? "")}"` : ""}${r.counted > 0 ? ` data-cg="${r.counted}"` : ""}`
     : "";
   return (
-    `<article class="mv-item" id="${esc(id)}" data-kind="${m.kind}" data-type="${esc(m.type)}" data-ikey="${esc(moveNameKey(m))}"${held}${hidden ? " hidden" : ""}>` +
+    `<article class="mv-item" id="${esc(r.id)}" data-kind="${r.kind}" data-type="${esc(r.type)}" data-ikey="${esc(r.ikey)}"${held}${hidden ? " hidden" : ""}>` +
     `<details class="mv-row" name="mv-rows">${summary}${detail}</details>` +
-    (m.doc ? `<a class="mv-src" href="${esc(m.doc)}" rel="noopener" target="_blank">13F ↗</a>` : `<span class="mv-src c-muted">13F —</span>`) +
+    (r.doc ? `<a class="mv-src" href="${esc(r.doc)}" rel="noopener" target="_blank">13F ↗</a>` : `<span class="mv-src c-muted">13F —</span>`) +
     `</article>`
   );
+}
+
+/** The Named moves' island: the rows past the first `NAMED_MOVES_MIN`. */
+export interface HeldMoves {
+  sec: MoveSection;
+  tv: string | null;
+  rows: MoveRowData[];
 }
 
 /** The verification date most of the carried rows share — the section's
@@ -570,7 +672,12 @@ function namedMovesHtml(model: SignalsInstitutional, ctx: RenderCtx, overlapIds:
   const shown = Math.min(NAMED_MOVES_MIN, model.domSet.length);
   const total = model.moves.length;
   const tvDefault = commonVerified(model.domSet);
-  const rows = model.domSet.map((m, i) => moveRowHtml(m, ids[i]!, model, i >= shown, tvDefault, overlapIds)).join("\n");
+  /* launch M7a (D5, LD27): the first NAMED_MOVES_MIN rows are in the page;
+     every row past them ships in the island and renders on demand through
+     the same row function (`moveRowFrom`), so the first load carries 15
+     rows, not the 770 a production build holds */
+  const rows = model.domSet.slice(0, shown).map((m, i) => moveRowHtml(m, ids[i]!, model, false, tvDefault, overlapIds)).join("\n");
+  const heldRows: HeldMoves = { sec: moveSection(model), tv: tvDefault, rows: model.domSet.slice(shown).map((m, i) => moveRowData(m, ids[shown + i]!, model, overlapIds)) };
   const chip = (attr: string, value: string, label: string): string =>
     `<button type="button" ${attr}="${esc(value)}" aria-pressed="false">${esc(label)}</button>`;
   /* the name filter's Congress detail, one per name a control can apply */
@@ -621,6 +728,7 @@ function namedMovesHtml(model: SignalsInstitutional, ctx: RenderCtx, overlapIds:
     `<span class="mv-hc mv-hc-r" aria-hidden="true">Filed</span>` +
     `</div>` +
     `<div class="mv-list" id="mv-list">${rows}</div>` +
+    (heldRows.rows.length > 0 ? heldIslandHtml("mv-list", heldRows) : "") +
     `<p class="section-note" id="mv-empty" hidden>Nothing in this quarter matches this filter — a computed answer over the whole population.</p>` +
     `<div class="feed-foot"><div class="pager">` +
     `<span class="pager-range" id="mv-range" tabindex="-1">${esc(namedMovesRangeText(shown, total))}</span>` +
@@ -629,7 +737,7 @@ function namedMovesHtml(model: SignalsInstitutional, ctx: RenderCtx, overlapIds:
     `<p class="section-note mv-bound" id="mv-bound"${boundShown ? "" : " hidden"}>${esc(namedMovesBoundText(model.domSet.length))}</p>` +
     bank +
     `<p class="visually-hidden" id="mv-status" role="status" aria-live="polite"></p>` +
-    `<noscript><p class="section-note">Filtering and paging need JavaScript; ${plural(total, "change is", "changes are")} in this quarter.</p></noscript>` +
+    `<noscript><p class="section-note">Filtering and paging need JavaScript: the first ${fmtInt(shown)} of ${plural(total, "change", "changes")} in this quarter are listed; filer pages list every move.</p></noscript>` +
     `</section>`
   );
 }
