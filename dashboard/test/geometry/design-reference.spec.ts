@@ -35,14 +35,15 @@ const references = [
    summary cards live. Property: §7's cards are on every design page except
    /institutional/ (its one method line), and where L13 collapses them they are
    in a CLOSED disclosure, so the default view carries no card band:
-   - /congress/: inside the "Notes on this data" disclosure that directly
-     follows the provenance strip (D2), closed by default;
+   - /congress/: none since launch M3b (R22) — the briefing cards and their
+     "Notes on this data" drawer are retired; their facts live in the ledger,
+     the feed and the provenance line;
    - member and filer pages: inside a collapsed context disclosure;
    - /signals/: none since signals-v3 M2 — its three summary cards became the
      lead cards (record SV3-M2), asserted in the route block below;
    - /institutional/: none. */
 const CARDS: Record<(typeof references)[number][1], { count: number; where: "notes" | "context" | "visible" | "none" }> = {
-  "/congress/": { count: 3, where: "notes" },
+  "/congress/": { count: 0, where: "none" },
   "/institutional/": { count: 0, where: "none" },
   "/congress/members/M001193/": { count: 3, where: "context" },
   "/institutional/filers/1067983/": { count: 3, where: "context" },
@@ -225,7 +226,8 @@ for (const [file, route] of references) {
         expect(['auto', 'scroll']).not.toContain(scroll.overflowY);
         expect(scroll.maxHeight).toBe('none');
         expect(scroll.contents - scroll.height, 'no rows hidden inside a box').toBeLessThanOrEqual(1);
-        await expect(page.locator('.reference-feed .reference-row')).toHaveCount(50);
+        // launch M3a (LD20): twenty rows a page, in the default "With ticker" view
+        await expect(page.locator('.reference-feed .reference-row')).toHaveCount(20);
         if (width === 1440) {
           // DESIGN-POLISH M1: the ledger's 30px feed row (±1) — EVERY row on
           // the page, the rows carrying visible flag chips (and their
@@ -337,7 +339,7 @@ function expectVisualOrder(tops: number[], what: string): void {
   for (let i = 1; i < tops.length; i++) expect(tops[i]!, `${what}: part ${i + 1} sits below part ${i}`).toBeGreaterThan(tops[i - 1]!);
 }
 
-test('Congress composition at 1440 (T2.2): the D2 ledger, the closed notes line, band C1', async ({ page }) => {
+test('Congress composition at 1440 (T2.2 → launch M3b): the R18 ledger, band C1 after the provenance, the feed, Monthly flow last', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   expect((await page.goto('/congress/'))?.status()).toBe(200);
   /* D2 (L15): the four ledger labels, in order, uppercased by CSS — the
@@ -347,28 +349,23 @@ test('Congress composition at 1440 (T2.2): the D2 ledger, the closed notes line,
     const own = Array.from(trigger.childNodes).filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => n.textContent).join('').trim();
     return { rendered: (dt as HTMLElement).innerText.replace(/\s+/g, ' ').trim(), source: own, transform: getComputedStyle(trigger).textTransform };
   }));
-  expect(labels.map((l) => l.rendered)).toEqual(['TRANSACTIONS', 'HOUSE PARSE', 'SENATE PARSE', 'PAPER']);
+  // launch M3b (R18): Trades, Last 30 days, Median lag, E-filings read
+  expect(labels.map((l) => l.rendered)).toEqual(['TRADES', 'LAST 30 DAYS', 'MEDIAN LAG', 'E-FILINGS READ']);
   for (const l of labels) {
     expect(l.transform, `${l.rendered}: the caps are CSS caps`).toBe('uppercase');
     expect(l.source, `${l.rendered}: the source label is not typed in caps`).not.toBe(l.source.toUpperCase());
   }
-  /* D2: "Notes on this data" is ONE closed line directly after the provenance strip */
-  const notes = await page.evaluate(() => {
-    const p = document.querySelector('main .design-provenance');
-    const n = p?.nextElementSibling ?? null;
-    return { tag: n?.tagName ?? '', id: n?.id ?? '', open: n instanceof HTMLDetailsElement ? n.open : null, summary: n?.querySelector(':scope > summary')?.textContent?.replace(/\s+/g, ' ').trim() ?? '' };
-  });
-  expect(notes).toEqual({ tag: 'DETAILS', id: 'congress-notes', open: false, summary: 'Notes on this data' });
-  /* the line holds the three cards, hidden until it is opened */
-  await expect(page.locator('#congress-notes .design-briefing .design-story')).toHaveCount(3);
-  expect(await page.locator('#congress-notes .design-story').first().isVisible(), 'closed: the cards are not shown').toBe(false);
-  await page.locator('#congress-notes > summary').click();
-  await expect(page.locator('#congress-notes .design-story').first(), 'opened: the cards show').toBeVisible();
-  /* band C1 (D1): Leaders │ Tickers, one band, heads on one line, before the feed */
-  const c1 = await partsInOrder(page, ['#congress-leaders-band', '#feed-section']);
+  /* launch M3b (R19, R22): the boards band directly follows the provenance
+     strip — the notes drawer and its briefing cards are retired */
+  const after = await page.evaluate(() => document.querySelector('main .design-provenance')?.nextElementSibling?.id ?? '');
+  expect(after).toBe('congress-leaders-band');
+  await expect(page.locator('#congress-notes')).toHaveCount(0);
+  await expect(page.locator('main .design-briefing')).toHaveCount(0);
+  /* band C1: Members │ Tickers, one band, before the feed; Monthly flow last (R21) */
+  const c1 = await partsInOrder(page, ['#congress-leaders-band', '#feed-section', '#monthly-flow-section']);
   expect(c1.missing).toEqual([]);
-  expect(c1.domOrder, 'C1 precedes the feed (Leaders first, data first)').toBe(true);
-  expectVisualOrder(c1.tops, 'C1 then the feed');
+  expect(c1.domOrder, 'C1, then the feed, then Monthly flow').toBe(true);
+  expectVisualOrder(c1.tops, 'C1, the feed, Monthly flow');
   await expect(page.locator('#congress-leaders-band.design-rankings > #members-section + #momentum-section')).toHaveCount(1);
 });
 
@@ -726,26 +723,11 @@ const WHY = {
   paper: "a paper filing's kind word: the canvas draws no paper row (M1: the feed keeps its paper rows, D1)",
   netbar: "the member ranking's NET FLOW cell is its interval bar with the range as screen-reader text (M1 C-4): no visible text run has a role",
 } as const;
+/* Launch M3b (LD33, T3.8): the September Congress board leaves this
+   comparison — the approved launch Congress board supersedes it (recorded in
+   docs/design/reference/README.md); its structural comparison joins with the
+   launch-board opener. */
 const CANVAS_CASES: CanvasCase[] = [
-  {
-    file: "Congress.dc.html", route: "/congress/", open: "#congress-notes",
-    tables: [
-      { label: "Disclosure feed", selector: "#feed-section table.reference-feed" },
-      { label: "Leaders", selector: "#members-section > .table-scroll table.etable" },
-      { label: "Tickers", selector: "#momentum-section > .table-scroll table.etable" },
-    ],
-    map: {
-      ledger: true, cards: true,
-      tables: [
-        { canvas: "Disclosure feed", route: "Disclosure feed", columns: { "AMOUNT RANGE": "INTERVAL LOG $1K→$50M+", SOURCE: "RCPT" }, unmatched: { "kind:PAPER": WHY.paper, "AMOUNT RANGE (canvas cell unmeasured)": WHY.bar } },
-        { canvas: "Leaders · net disclosed flow", route: "Leaders", columns: { TRADES: "TXNS", "GROSS BOUGHT": "GROSS PURCH" }, unmatched: { "NET FLOW (route cell unmeasured)": WHY.netbar } },
-        { canvas: "Tickers · most disclosed", route: "Tickers", columns: { TRADES: "TXNS", "NET FLOW": "NET LOWER BOUND" }, unmatched: { "BUY SELL COUNT (canvas cell unmeasured)": WHY.bar }, roleDeviation: { "NET FLOW": "table.role.number" } },
-      ],
-      heads: [{ canvas: "Disclosure feed", route: "Disclosure feed" }, { canvas: "Leaders · net disclosed flow", route: "Leaders · net disclosed flow" }, { canvas: "Tickers · most disclosed", route: "Tickers · most disclosed" }],
-      pairs: [{ canvas: ["Leaders · net disclosed flow", "Tickers · most disclosed"], route: ["Leaders · net disclosed flow", "Tickers · most disclosed"] }],
-      segs: [{ canvas: "All|House|Senate|D|R|Late", route: "All|House|Senate" }, { canvas: "All|House|Senate|D|R|Late", route: "All|D|R|I" }],
-    },
-  },
   {
     file: "Institutional.dc.html", route: "/institutional/", release: '#mgr-chips [data-mgr-type][aria-pressed="true"]',
     tables: [
@@ -1126,8 +1108,44 @@ for (const width of [375, 1440]) {
   test(`Monthly flow panel at ${width}px (SIGNALS-CLARITY M3)`, async ({ page }, info) => {
     await page.setViewportSize({ width, height: 1000 });
     expect((await page.goto('/congress/'))?.status()).toBe(200);
-    await expect(page.locator('#monthly-flow-section + #congress-leaders-band'), 'the panel directly precedes band C1').toHaveCount(1);
+    // launch M3b (R21): the panel closes the page, after the feed
+    expect(await page.evaluate(() => {
+      const kids = Array.from(document.querySelector('main')!.children).filter((el) => el.tagName !== 'SCRIPT');
+      return kids[kids.length - 1]?.id ?? '';
+    }), 'Monthly flow is the last section of the page').toBe('monthly-flow-section');
     await expect(page.locator('#monthly-flow-section h2')).toHaveText('Monthly flow');
+    /* R11/R21: the default Members view — a labelled y-axis, x labels, the
+       zone labelled an estimate and a readout, all on screen at this width */
+    const members = await page.evaluate(() => {
+      const v = Array.from(document.querySelectorAll<HTMLElement>('#monthly-flow-section .mf-variant')).find((x) => !x.hidden)!;
+      const m = v.querySelector<HTMLElement>('.mf-measure[data-flow-measure="members"]')!;
+      const on = (el: Element | null) => !!el && el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) && el.getBoundingClientRect().width > 0;
+      const labels = (sel: string) => Array.from(m.querySelectorAll(sel)).map((t) => ({ on: on(t), r: t.getBoundingClientRect() }));
+      return {
+        shown: !m.hidden,
+        y: labels('.mf-ytick'),
+        x: labels('.mf-x'),
+        zone: on(m.querySelector('.mf-fill span')),
+        readout: (m.querySelector('.mf-readout')?.textContent ?? '').trim(),
+        readoutOn: on(m.querySelector('.mf-readout')),
+        tips: Array.from(v.querySelectorAll('.mf-notes .note-label')).map((b) => on(b)),
+      };
+    });
+    expect(members.shown, 'Members is the default measure').toBe(true);
+    expect(members.y.length).toBeGreaterThanOrEqual(2);
+    expect(members.y.every((t) => t.on), 'every y tick is labelled and on screen').toBe(true);
+    expect(members.x.length).toBeGreaterThanOrEqual(6);
+    expect(members.x.every((t) => t.on && t.r.right <= width + 1), 'every x label is on screen').toBe(true);
+    expect(members.zone, 'the Filling in zone is labelled').toBe(true);
+    expect(members.readoutOn && /with a purchase/.test(members.readout), 'the readout states the month').toBe(true);
+    expect(members.tips, 'the three method tips are on screen').toEqual([true, true, true]);
+    // the readout follows a tap on the plot (one control, LD13)
+    const plot = page.locator('#monthly-flow-section .mf-variant:not([hidden]) .mf-measure[data-flow-measure="members"] .mf-plot');
+    const box = (await plot.boundingBox())!;
+    await page.mouse.click(box.x + 4, box.y + box.height / 2);
+    await expect(page.locator('#monthly-flow-section .mf-variant:not([hidden]) .mf-measure[data-flow-measure="members"] .mf-readout')).not.toHaveText(members.readout);
+    // the Dollars view keeps the bar grammar measured below
+    await page.locator('#monthly-flow-section [data-flow-measure-toggle="dollars"]').click();
     const g = await page.evaluate(() => {
       const panel = document.querySelector('#monthly-flow-section')!;
       const shown = Array.from(panel.querySelectorAll<HTMLElement>('.mf-variant')).filter((v) => !v.hidden);
@@ -1151,11 +1169,12 @@ for (const width of [375, 1440]) {
         cols: cols.length,
         colsInside: cols.every((c) => c.left >= tr.left - 0.5 && c.right <= tr.right + 0.5 && c.width > 0),
         minColWidth: Math.min(...cols.map((c) => c.width)),
-        caption: vis('.rb-caption'),
-        exclusions: vis('.mf-exclusions'),
-        shade: vis('.mf-shade-labels'),
-        completeness: vis('.mf-completeness'),
-        breadth: vis('.mf-breadth'),
+        // R21: these lines are tips now; their labels are measured above and
+        // their bodies are opened below
+        caption: { present: !!v.querySelector('.rb-caption'), visible: true, h: 0, right: 0 },
+        exclusions: { present: !!v.querySelector('.mf-exclusions'), visible: true, h: 0, right: 0 },
+        shade: { present: !!v.querySelector('.mf-shade-labels'), visible: true, h: 0, right: 0 },
+        completeness: { present: !!v.querySelector('.mf-completeness'), visible: true, h: 0, right: 0 },
         /* the open-bound caps and all-unparsed stubs of BOTH variants' markup
            are fixed-height marks; here, the visible variant's */
         marks: Array.from(v.querySelectorAll('.mf-cap, .mf-stub')).map((m) => {
@@ -1176,16 +1195,23 @@ for (const width of [375, 1440]) {
         table: { display: getComputedStyle(table).display, wrapDisplay: cs.display, clipped: /rect\(0(px)?,? 0(px)?,? 0(px)?,? 0(px)?\)/.test(cs.clip) || cs.clipPath === 'inset(50%)', rows: table.querySelectorAll('tbody tr').length, box: table.getBoundingClientRect().width },
       };
     });
-    expect(g.shown, 'exactly one variant is visible: Listed stocks, the default').toEqual(['stocks']);
+    expect(g.shown, 'exactly one variant is visible: Stocks, the default').toEqual(['stocks']);
     expect(g.page.scroll, 'no horizontal page scroll').toBeLessThanOrEqual(g.page.viewport + 1);
     expect(g.panelRight).toBeLessThanOrEqual(g.page.viewport + 1);
     expect(g.cols, '36 trade months').toBe(36);
     expect(g.track.scroll, 'the 36 months fit their track').toBeLessThanOrEqual(g.track.client + 1);
     expect(g.colsInside, 'every month column lies inside the track').toBe(true);
     expect(g.minColWidth, 'every month column has room for a bar').toBeGreaterThanOrEqual(4);
-    for (const [name, v] of Object.entries({ caption: g.caption, exclusions: g.exclusions, 'shading labels': g.shade, completeness: g.completeness, breadth: g.breadth })) {
-      expect(v.present && v.visible, `the ${name} line is on screen at ${width}px`).toBe(true);
-      expect(v.right, `the ${name} line stays inside the viewport`).toBeLessThanOrEqual(g.page.viewport + 1);
+    for (const [name, v] of Object.entries({ caption: g.caption, exclusions: g.exclusions, 'shading labels': g.shade, completeness: g.completeness })) {
+      expect(v.present, `the ${name} line is emitted (in its tip) at ${width}px`).toBe(true);
+    }
+    // each tip opens to its honesty line, inside the viewport
+    for (const [label, sel] of [['Excluded rows', '.mf-exclusions'], ['Shaded months are still filling in (est.)', '.mf-completeness'], ['How it’s drawn', '.rb-caption']] as const) {
+      await page.locator('#monthly-flow-section .mf-variant:not([hidden]) .mf-notes .note-label', { hasText: label }).click();
+      const body = page.locator(`#monthly-flow-section .mf-variant:not([hidden]) ${sel}`);
+      await expect(body, `${label}: its line shows`).toBeVisible();
+      expect(((await body.boundingBox())?.x ?? 0) + ((await body.boundingBox())?.width ?? 0), `${label}: inside the viewport`).toBeLessThanOrEqual(width + 1);
+      await page.keyboard.press('Escape');
     }
     /* readability change: an open sum's hatch is a fixed cap (and an all-unparsed
        sum a fixed stub), never a pillar to the axis top */

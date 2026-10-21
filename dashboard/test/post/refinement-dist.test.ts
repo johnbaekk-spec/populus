@@ -258,6 +258,8 @@ test("POST-BUILD R9: no numeric or CUSIP-shaped issuer label on the institutiona
 /* ---------- Milestone 2 ---------- */
 
 import { SHARD_RESPONSE_CEILING_BYTES } from "../../src/lib/shards.ts";
+import { classifyTickerOffsets, type FeedPartsIndex } from "../../src/lib/feed-parts.ts";
+import { DESIGN_FEED_PAGE_SIZE } from "../../src/lib/format.ts";
 
 function walkAll(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -286,9 +288,17 @@ test("POST-BUILD R12/LD7: every feed part is ≤ the 1 MiB ceiling and the index
   // the landing carries the index inline, so paging never fetches it
   const landing = readFileSync(path.join(DIST, "congress", "index.html"), "utf-8");
   assert.match(landing, /id="feed-parts-index"/);
+  /* Launch M3a (LD20, rule 2b): page 1 is the "With ticker" view at 20 rows,
+     and its offsets island rides beside the index, belonging to it part for
+     part; the published index itself keeps page_size 50 (asserted above). */
+  const offsetsRaw = /<script[^>]*\bid="feed-ticker-offsets"[^>]*>([\s\S]*?)<\/script>/.exec(landing)?.[1];
+  assert.ok(offsetsRaw, "the ticker offsets island is inline");
+  const offsets = classifyTickerOffsets(JSON.parse(offsetsRaw!), index as unknown as FeedPartsIndex);
+  assert.ok(offsets, "the offsets island belongs to the published index");
   const txnRowsOnPage1 = (landing.match(/class="feed-row feed-grid-cols reference-row/g) ?? []).length;
-  const txnTotal = (index as unknown as { txn_total: number }).txn_total;
-  assert.ok(txnRowsOnPage1 >= Math.min(50, txnTotal), `page 1 renders ${txnRowsOnPage1} rows; expected at least ${Math.min(50, txnTotal)}`);
+  const expected = Math.min(DESIGN_FEED_PAGE_SIZE, offsets!.ticker_total);
+  assert.equal(txnRowsOnPage1, expected, `page 1 renders ${txnRowsOnPage1} rows; expected ${expected}`);
+  assert.doesNotMatch(landing.slice(landing.indexOf('id="feed-tbody"'), landing.indexOf("</tbody>", landing.indexOf('id="feed-tbody"'))), /reference-paper/, "no paper filing on the With ticker page");
 });
 
 test("POST-BUILD R13: no 'render bound' copy anywhere in dist", () => {

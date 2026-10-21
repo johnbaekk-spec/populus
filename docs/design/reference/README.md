@@ -30,3 +30,16 @@ For each of Congress, Institutional, Congress Member, Institutional Filer and Si
 All pending visual differences and absent panels must appear in DEV-NOTES.md
 and QA-REPORT.md. Full visual acceptance remains open until the complete
 screen-by-screen comparison is satisfied.
+
+## Superseded: the September Congress board (launch M3b, 2026-10-21)
+
+`Congress.dc.html` stays pinned in `manifest.json` byte-for-byte, but it no
+longer governs `/congress/`. The owner-approved launch redesign (Design canvas
+version 9, 2026-10-20) supersedes it: the page now leads with the R18 ledger
+and the Members and Tickers boards, the feed defaults to rows with a ticker at
+20 a page, and Monthly flow closes the page (PLAN.md R18–R22). The September
+board is therefore retired from the structural canvas comparison in
+`test/geometry/design-reference.spec.ts` (LD33, T3.8); the route's per-width
+checks there follow the launch layout. The approved launch Congress boards
+(`launch-congress.dc.html`, `launch-congress-phone.dc.html`) join this folder
+with the launch-board opener in `test/geometry/canvas-compare.ts`.
