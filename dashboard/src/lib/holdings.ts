@@ -63,6 +63,7 @@ import {
   dataColumnsAttr,
   tableFootReasonHtml,
   type PresentColumns,
+  rowLink,
 } from "./format.ts";
 export { reportingLagDays };
 import { edgarFilerUrl } from "./derive.ts";
@@ -1860,7 +1861,7 @@ export function holdersFullTableHtml(opts: HoldersTableOpts): string {
           : "";
       return (
         `<tr>` +
-        `<td class="c-filer c-flex">${filerLinkHtml(row.filer_key, row.filer_name, row.filer_tier ?? "tail")} ${affiliate}</td>` +
+        `<td class="c-filer c-flex">${rowLink(filerLinkHtml(row.filer_key, row.filer_name, row.filer_tier ?? "tail"))} ${affiliate}</td>` +
         `<td class="c-num c-strong has-marks">${valueCell(
           row.value_usd,
           row.value_undisclosed_component

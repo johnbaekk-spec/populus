@@ -424,14 +424,15 @@ export function congressTileHtml(rows: readonly TxnRow[], ctx: RenderCtx): strin
     .map((r) => {
       const side = sideLabel(r.side, r.flags);
       const quals = ownerQualifiersHtml(r);
-      const member = r.bioguide ? `<a href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a>` : esc(r.name);
+      /* the row's main link (launch review M2): the member, else the ticker */
+      const member = r.bioguide ? `<a data-row-link href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a>` : esc(r.name);
       const edge = txnEdge(r);
       return (
         `<tr role="row"${edge ? ` data-edge="${edge}"` : ""}>` +
         `<td class="c-kind ${side.cls}" role="cell">${esc(side.text)}</td>` +
         `<td class="c-member c-flex" role="cell">${member} <span class="aff ${partyClass(r.party)}">${esc(affTextOf(r))}</span>${quals ? ` · ${quals}` : ""}</td>` +
         (hasTicker
-          ? `<td class="c-ticker" role="cell">${r.ticker ? `<a class="mono-ticker" href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>` : `<span class="none">—</span>`}</td>`
+          ? `<td class="c-ticker" role="cell">${r.ticker ? `<a class="mono-ticker"${r.bioguide ? "" : " data-row-link"} href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>` : `<span class="none">—</span>`}</td>`
           : "") +
         `<td class="c-num" role="cell">${esc(amountText(r))}</td>` +
         `<td class="c-filed c-num" role="cell">${esc(r.filed)}${r.late === 1 ? `<span class="visually-hidden"> · filed late</span>` : ""}</td></tr>`
@@ -490,7 +491,7 @@ export function movesTileHtml(
     .map(
       (m) =>
         `<tr role="row" data-edge="new">` +
-        `<td class="c-filer c-flex" role="cell"><a href="${esc(filerHref(m.cik))}">${esc(m.manager)}</a></td>` +
+        `<td class="c-filer c-flex" role="cell"><a data-row-link href="${esc(filerHref(m.cik))}">${esc(m.manager)}</a></td>` +
         `<td class="c-ticker" role="cell">${m.ticker ? `<span class="mono-ticker">${esc(m.ticker)}</span>` : `<span class="filed-name">${esc(m.issuer)}</span>`}</td>` +
         `<td class="c-chip c-kind" role="cell">${kindWordHtml(m.kind)}</td>` +
         `<td class="c-num ${m.delta_value == null ? "c-muted" : m.delta_value < 0 ? "c-sell" : "c-buy"}" role="cell">${esc(signedUsd(m.delta_value))}</td>` +

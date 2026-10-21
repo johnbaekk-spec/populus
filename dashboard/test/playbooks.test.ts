@@ -28,7 +28,7 @@ import { TRIGGER_COLUMNS, playbookFilterHtml, playbookTextHtml, triggerTableHtml
 import { signalsInstitutionalHtml } from "../src/lib/ui/signals-institutional.ts";
 import { congressLineFields, congressLineHtml, triageRowId } from "../src/lib/ui/signals.ts";
 import { buildTriage, type TriageResult, type TriageRow } from "../src/lib/signal-triage.ts";
-import type { TxnRow } from "../src/lib/format.ts";
+import { rowLink, type TxnRow } from "../src/lib/format.ts";
 import { ROSTER_CHECKED, ROSTER_VERSION } from "../src/lib/leadership-roster.ts";
 import { loadTriageFixture } from "./lib/triage-fixture.ts";
 import { fixtureInstitutional } from "./lib/inst-signals-fixture.ts";
@@ -464,7 +464,9 @@ test("T3.4 (R19, LD16) + launch M5 (R28): 'Triggers now' is a table of up to fiv
   // the cells are the one Congress line's fields — the same source as congressLineHtml
   const f = congressLineFields(triggered[0]!.lead.txn, CTX);
   const cells = rows[0]!.querySelectorAll("td");
-  assert.equal(cells[1]!.querySelector(".cl-who")!.innerHTML, f.who);
+  /* launch review M2: the member's field, its link marked as the row's main link */
+  assert.equal(cells[1]!.querySelector(".cl-who")!.innerHTML, rowLink(f.who));
+  assert.equal(rows[0]!.querySelectorAll("a[data-row-link]").length, f.who.includes("<a ") ? 1 : 0, "one main link, the member's");
   assert.equal(cells[2]!.innerHTML, f.side);
   assert.equal(cells[3]!.innerHTML, f.amt);
   assert.ok(cells[4]!.innerHTML.startsWith(f.dates), "its own dates column");

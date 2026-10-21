@@ -1659,7 +1659,8 @@ function memberCellHtml(r: {
   const affCls = partyClass(r.party);
   if (r.bioguide) {
     return (
-      `<a href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a>` +
+      /* the feed row's main link (launch review M2) */
+      `<a data-row-link href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a>` +
       ` <span class="aff ${affCls}">${esc(aff)}</span>`
     );
   }
@@ -2779,6 +2780,19 @@ export function thHtml(o: ThOpts): string {
    already states is kept; nothing else in the markup changes. Roles added by a
    client script after load were rejected (the first paint and no-JS readers
    would lose them); see docs/frontend/design-principles.md §5. */
+
+/** A card row's MAIN link (launch review M2, R7): the one link the ≤720px fold
+    stretches over the whole card (entities.css), so a tap anywhere else on the
+    card opens the row. It is the first link of the row's main cell — the
+    member, else the filer, position or issuer, else the ticker — and never a
+    receipt. Its renderer marks it, and only it, with `data-row-link`; the fold
+    no longer guesses it by position (`a:first-of-type` also matched the
+    receipt inside a position cell). `rowLink` marks the first link of one
+    link's markup — for a link a shared helper builds (`filerLinkHtml`). */
+export const ROW_LINK_ATTR = "data-row-link";
+export function rowLink(linkHtml: string): string {
+  return linkHtml.replace(/<a(?=[\s>])(?![^>]*\sdata-row-link\b)/, `<a ${ROW_LINK_ATTR}`);
+}
 
 /** The ≤720px card layouts a table can select through `data-card` (LD6). */
 export const CARD_KINDS = ["feed", "ranking", "member-trades", "holders", "moves", "generic"] as const;

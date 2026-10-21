@@ -529,11 +529,12 @@ export function hitRowHtml(s: Signal, ctx: RenderCtx, columns: readonly string[]
   const magnitude = grouped ? groupMagnitude(members) : s.magnitude;
   const family = familyOf(s.kind);
   const full = s.entities.memberName;
+  /* the row's main link (launch review M2): the member, else the ticker */
   const who = s.entities.bioguide
-    ? `<a href="${memberHrefFor(s.entities.bioguide, ctx)}" title="${esc(full)}" aria-label="${esc(full)}">${esc(memberLastName(full))}</a>`
+    ? `<a data-row-link href="${memberHrefFor(s.entities.bioguide, ctx)}" title="${esc(full)}" aria-label="${esc(full)}">${esc(memberLastName(full))}</a>`
     : esc(full);
   const ticker = s.entities.ticker
-    ? `<a class="si-ticker mono-ticker" href="${tickerHrefFor(s.entities.ticker, ctx)}">${esc(s.entities.ticker)}</a>`
+    ? `<a class="si-ticker mono-ticker"${s.entities.bioguide ? "" : " data-row-link"} href="${tickerHrefFor(s.entities.ticker, ctx)}">${esc(s.entities.ticker)}</a>`
     : `<span class="none">—</span>`;
   const receipt = s.receipts[0] ?? "";
   const lag = lagDays(s);

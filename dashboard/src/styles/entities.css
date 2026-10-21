@@ -1357,31 +1357,33 @@ span.mgr-chip,
     border-right: 0;
     background: none;
   }
-  /* Whole-row taps (launch M1c, LD7, R7): the row's MAIN link — the member,
-     else the filer, position or issuer, else the ticker — stretches over the
-     card through its ::after, BENEATH the row's other links, buttons and
+  /* Whole-row taps (launch M1c, LD7, R7): the row's MAIN link stretches over
+     the card through its ::after, BENEATH the row's other links, buttons and
      summaries, which sit above it; so a tap anywhere else on the card opens
-     the row, and a receipt, a tip or a chip is still its own target. */
-  table[data-card] > tbody > tr > :is(.c-member, .c-filer, .c-pos, .c-issuer) a:first-of-type,
-  table[data-card] > tbody > tr:not(:has(> :is(.c-member, .c-filer, .c-pos, .c-issuer) a)) > .c-ticker a:first-of-type,
-  .reference-feed .reference-row > .cell-member a:first-of-type {
+     the row, and a receipt, a tip or a chip is still its own target. The main
+     link — the member, else the filer, position or issuer, else the ticker —
+     is the one its RENDERER marks `data-row-link` (format.ts, ROW_LINK_ATTR);
+     it is never guessed by position (launch review M2: `a:first-of-type` also
+     matched the receipt inside a position cell, `div.cell-src > a`, whose
+     stretch then took every tap on the card and opened the SEC filing). A
+     receipt is never stretched, marked or not: the :not() is the backstop. */
+  table[data-card] > tbody > tr a[data-row-link]:not(:is(.cell-src, .c-src) a),
+  .reference-feed .reference-row a[data-row-link]:not(:is(.cell-src, .c-src) a) {
     position: static;
   }
-  table[data-card] > tbody > tr > :is(.c-member, .c-filer, .c-pos, .c-issuer) a:first-of-type::before,
-  table[data-card] > tbody > tr:not(:has(> :is(.c-member, .c-filer, .c-pos, .c-issuer) a)) > .c-ticker a:first-of-type::before,
-  .reference-feed .reference-row > .cell-member a:first-of-type::before {
+  table[data-card] > tbody > tr a[data-row-link]:not(:is(.cell-src, .c-src) a)::before,
+  .reference-feed .reference-row a[data-row-link]:not(:is(.cell-src, .c-src) a)::before {
     content: none;
   }
-  table[data-card] > tbody > tr > :is(.c-member, .c-filer, .c-pos, .c-issuer) a:first-of-type::after,
-  table[data-card] > tbody > tr:not(:has(> :is(.c-member, .c-filer, .c-pos, .c-issuer) a)) > .c-ticker a:first-of-type::after,
-  .reference-feed .reference-row > .cell-member a:first-of-type::after {
+  table[data-card] > tbody > tr a[data-row-link]:not(:is(.cell-src, .c-src) a)::after,
+  .reference-feed .reference-row a[data-row-link]:not(:is(.cell-src, .c-src) a)::after {
     content: "";
     position: absolute;
     inset: 0;
     z-index: 1;
   }
-  table[data-card] > tbody > tr :is(a, button, summary, [tabindex]):not(:is(.c-member, .c-filer, .c-pos, .c-issuer) a:first-of-type),
-  .reference-feed .reference-row :is(a, button, summary, [tabindex]):not(.cell-member a:first-of-type) {
+  table[data-card] > tbody > tr :is(a, button, summary, [tabindex]):not(a[data-row-link]:not(:is(.cell-src, .c-src) a)),
+  .reference-feed .reference-row :is(a, button, summary, [tabindex]):not(a[data-row-link]:not(:is(.cell-src, .c-src) a)) {
     position: relative;
     z-index: 2;
   }

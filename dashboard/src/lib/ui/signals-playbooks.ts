@@ -24,7 +24,7 @@
    (`LEADERS_LABEL_TOKEN`), written here through `CONVICTION_LABEL_HTML`
    (LD20). Pure. */
 
-import { type RenderCtx, esc, fmtInt, note, noteFromHtml } from "../format.ts";
+import { type RenderCtx, esc, fmtInt, note, noteFromHtml, rowLink } from "../format.ts";
 import {
   CMP_YEARS,
   CONGRESS_PLAYBOOKS,
@@ -261,10 +261,12 @@ export function triggerTableHtml(p: Playbook, rows: readonly TriageRow[], ctx: R
   const body = rows
     .map((r) => {
       const f = congressLineFields(r.lead.txn, ctx);
+      /* the row's main link (launch review M2): the member, else the ticker */
+      const memberLinked = /<a[\s>]/.test(f.who);
       const tk = to.triageRows
-        ? `<a class="pb-row-open mono-ticker cl-tk" href="#${esc(triageRowId(r))}">${f.ticker}<span class="visually-hidden">, show the row in Filings to read</span></a>`
+        ? `<a class="pb-row-open mono-ticker cl-tk"${memberLinked ? "" : " data-row-link"} href="#${esc(triageRowId(r))}">${f.ticker}<span class="visually-hidden">, show the row in Filings to read</span></a>`
         : `<span class="mono-ticker cl-tk">${f.ticker}</span>`;
-      const cells = [tk, `<span class="cl-who">${f.who}</span>`, f.side, f.amt, f.dates + (f.late ? `<span class="visually-hidden">, late</span>` : ""), f.src];
+      const cells = [tk, `<span class="cl-who">${rowLink(f.who)}</span>`, f.side, f.amt, f.dates + (f.late ? `<span class="visually-hidden">, late</span>` : ""), f.src];
       return `<tr class="pb-row" role="row">${cells.map((c, i) => `<td class="${TRIGGER_CELL_CLASSES[i]}" role="cell">${c}</td>`).join("")}</tr>`;
     })
     .join("");

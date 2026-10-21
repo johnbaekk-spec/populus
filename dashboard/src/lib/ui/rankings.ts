@@ -142,9 +142,9 @@ function rankingRowHtml(
     ` class="${[rankingColumnClass(cols[i]!, kind, cols), extra].filter(Boolean).join(" ")}" role="cell"`;
   const who =
     kind === "tickers"
-      ? `<a href="${tickerHrefFor(r.id, ctx)}">${esc(r.id)}</a>`
+      ? `<a data-row-link href="${tickerHrefFor(r.id, ctx)}">${esc(r.id)}</a>`
       : r.bioguide
-        ? `<a href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a> <span class="aff ${partyClass(r.party)}">${esc(
+        ? `<a data-row-link href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a> <span class="aff ${partyClass(r.party)}">${esc(
             affTextOf(r),
           )}</span>`
         : `<span class="unjoined-name">${esc(r.name)}</span> <span class="aff ${partyClass(r.party)}">${esc(affTextOf(r))}</span>`;

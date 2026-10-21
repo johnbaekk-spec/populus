@@ -205,6 +205,64 @@ test("R40: every parity surface, through the layout's function, cards every tabl
   assert.ok(tables >= 30, `the surfaces carry tables to check (${tables})`);
 });
 
+/** The marking property of a card row's main link (M2): the first link of the
+    row's main cell — the member, else the filer, position or issuer, else the
+    ticker; never a receipt, never a tip's link — is the ONE link its renderer
+    marks `data-row-link`; a row with no main link marks none. (The browser
+    suite, launch-phone-surfaces.test.ts, taps the cards; this is its
+    browserless half, which CI runs.) */
+function rowLinkProblems(html: string): string[] {
+  const out: string[] = [];
+  const TIERS = [["c-member"], ["c-filer", "c-pos", "c-issuer"], ["c-ticker"]];
+  const has = (el: MiniElement, cls: string): boolean => ` ${el.getAttribute("class") ?? ""} `.includes(` ${cls} `);
+  const inside = (el: MiniElement, stop: MiniElement, test: (e: MiniElement) => boolean): boolean => {
+    for (let p = el.parent; p && p !== stop; p = p.parent) if (test(p)) return true;
+    return false;
+  };
+  const links = (el: MiniElement): MiniElement[] => [...walk(el)].filter((e) => e.tagName === "a" && e.hasAttribute("href"));
+  let n = 0;
+  for (const table of walk(parse(html))) {
+    if (table.tagName !== "table" || !table.hasAttribute("data-card") || table.getAttribute("data-card") === "feed") continue;
+    n += 1;
+    for (const body of table.children.filter((c) => c.tagName === "tbody")) {
+      body.children.filter((c) => c.tagName === "tr").forEach((tr, i) => {
+        const at = `table #${n} row ${i + 1}`;
+        const own = (a: MiniElement): boolean => !inside(a, tr, (p) => p.tagName === "tr" || p.tagName === "table");
+        const receipt = (a: MiniElement): boolean => inside(a, tr, (p) => has(p, "cell-src") || has(p, "c-src"));
+        const tip = (a: MiniElement): boolean => inside(a, tr, (p) => p.hasAttribute("popover"));
+        let main: MiniElement | null = null;
+        for (const tier of TIERS) {
+          for (const cell of tr.children) {
+            if (!tier.some((c) => has(cell, c))) continue;
+            main = links(cell).find((a) => own(a) && !receipt(a) && !tip(a)) ?? null;
+            if (main) break;
+          }
+          if (main) break;
+        }
+        const marked = links(tr).filter((a) => own(a) && a.hasAttribute("data-row-link"));
+        for (const m of marked) if (receipt(m)) out.push(`${at}: a receipt is marked`);
+        if (main && (marked.length !== 1 || marked[0] !== main)) out.push(`${at}: the main link "${main.textContent.trim().slice(0, 24)}" is not the one marked link (${marked.length} marked)`);
+        if (!main && marked.length > 0) out.push(`${at}: ${marked.length} link(s) marked, but no main link`);
+      });
+    }
+  }
+  return out;
+}
+
+test("M2 (launch review): on every parity surface each card row's main link is the one link its renderer marks data-row-link, never a receipt; an unmarked main link, a second mark and a marked receipt fail", async () => {
+  const all = await surfaces();
+  let marked = 0;
+  for (const [name, html] of Object.entries(all)) {
+    marked += (html.match(/\sdata-row-link\b/g) ?? []).length;
+    assert.deepEqual(rowLinkProblems(withTableRoles(html)), [], name);
+  }
+  assert.ok(marked > 30, `the surfaces carry marked row links (${marked})`);
+  const member = all["memberBody.active"]!;
+  assert.ok(rowLinkProblems(withTableRoles(member.replace(/ data-row-link/g, ""))).some((p) => /not the one marked link \(0 marked\)/.test(p)), "control: an unmarked main link");
+  assert.ok(rowLinkProblems(withTableRoles(member.replace(/<a href="/g, '<a data-row-link href="'))).some((p) => /\(2 marked\)|a receipt is marked/.test(p)), "control: a second mark, or a marked receipt");
+  assert.ok(rowLinkProblems(withTableRoles(member.replace(/<div class="cell cell-src"><a /g, '<div class="cell cell-src"><a data-row-link '))).some((p) => /a receipt is marked/.test(p)), "control: a marked receipt");
+});
+
 test("R40 control: a planted role-less row, head or cell in a card table is caught", async () => {
   const all = await surfaces();
   const name = Object.keys(all).find((k) => withTableRoles(all[k]!).includes('<tbody role="rowgroup">'))!;

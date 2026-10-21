@@ -69,6 +69,7 @@ import {
   fmtCik,
   identityPlainHtml,
   thHtml,
+  rowLink,
 } from "./format.ts";
 export { reportingLagDays };
 
@@ -899,7 +900,7 @@ export function activityRowHtml(
     // issuer is the anchor and the manager is the qualifier. Ordering and the
     // change-kind filters are untouched — only the reading order changed.
     `<td class="c-issuer c-flex">${issuerCell(r)}</td>` +
-    `<td class="c-filer c-secondary">${filerLinkHtml(r.cik, filerName, tier)}</td>` +
+    `<td class="c-filer c-secondary">${rowLink(filerLinkHtml(r.cik, filerName, tier))}</td>` +
     `<td class="c-kind"><span class="qoq-chip ${esc(label.cls)}">${esc(label.chip)}</span>` +
     `<span class="visually-hidden"> ${esc(label.spoken)}</span>` +
     `${fnMark("§")}</td>` +
@@ -1463,7 +1464,7 @@ function activityReferenceRow(r: ActivityFeedRecord, tier: FilerBudgetState, sta
      on the row — on the <tr> it coloured every cell; the row edge rides on
      `data-edge` */
   return `<tr class="design-activity-row"${changeEdgeAttr(r.change_kind)}><td class="c-kind"><span class="qoq-chip ${esc(label.cls)}">${esc(label.chip)}</span></td>` +
-    `<td class="c-issuer c-flex">${issuerCell(r)}</td><td class="c-filer c-secondary">${filerLinkHtml(r.cik, r.filer_name || `CIK ${fmtCik(r.cik)}`, tier)}</td>` +
+    `<td class="c-issuer c-flex">${issuerCell(r)}</td><td class="c-filer c-secondary">${rowLink(filerLinkHtml(r.cik, r.filer_name || `CIK ${fmtCik(r.cik)}`, tier))}</td>` +
     // R7: the money column is the SIGNED Δ value — never `curr_value_usd`,
     // which is 0 for every exit and made the feed read "exit · $0".
     `<td class="c-num">${deltaCell(r)}</td>` +

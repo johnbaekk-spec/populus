@@ -292,7 +292,7 @@ export function overlapBandHtml(b: OverlapBand, ctx: RenderCtx, filerHref: (cik:
       const edge = edgeOf(r);
       return (
         `<tr${edge ? ` data-edge="${esc(edge)}"` : ""}><td class="c-filed c-num">${esc(r.date)}</td>` +
-        `<td class="c-member c-flex">${r.href ? `<a href="${esc(r.href)}">${esc(r.actor)}</a>` : esc(r.actor)} <span class="mono-note">${r.side === "congress" ? "Congress" : "13F"}</span></td>` +
+        `<td class="c-member c-flex">${r.href ? `<a data-row-link href="${esc(r.href)}">${esc(r.actor)}</a>` : esc(r.actor)} <span class="mono-note">${r.side === "congress" ? "Congress" : "13F"}</span></td>` +
         `<td class="c-kind ${esc(r.cls)}">${esc(r.move)}</td><td class="c-num">${esc(r.amount)}</td></tr>`
       );
     })

@@ -316,10 +316,20 @@ test("R7 (LD7): links take the hit square under the hit query; a card's main lin
   const rules = parseRules(CSS);
   const linkRules = rules.filter((r) => r.media.some((m) => /any-pointer: coarse/.test(m)) && /a\[href\]/.test(r.selectors) && /::before/.test(r.selectors));
   assert.ok(linkRules.some((r) => /var\(--hit-min\)/.test(r.decls) && /--hit-x-l/.test(r.decls)), "the link square, clipped at the midpoint");
-  const main = rules.find((r) => /c-member, \.c-filer, \.c-pos, \.c-issuer\) a:first-of-type::after/.test(r.selectors));
+  /* launch review M2 (mechanism replaced, property kept): the main link is the
+     one its renderer marks `data-row-link` — never guessed by position, since
+     `a:first-of-type` also matched the receipt inside a position cell — and a
+     receipt is never stretched (the :not() backstop). The browser suite
+     (launch-phone-surfaces.test.ts) taps the cards. */
+  const main = rules.find((r) => /tr a\[data-row-link\]:not\(:is\(\.cell-src, \.c-src\) a\)::after/.test(r.selectors));
   assert.ok(main && /inset:\s*0/.test(main.decls) && /z-index:\s*1/.test(main.decls), "the main link's stretched ::after");
-  const others = rules.find((r) => /tr :is\(a, button, summary, \[tabindex\]\)/.test(r.selectors));
+  const others = rules.find((r) => /tr :is\(a, button, summary, \[tabindex\]\):not\(a\[data-row-link\]/.test(r.selectors));
   assert.ok(others && /z-index:\s*2/.test(others.decls), "the row's other targets sit above it");
+  assert.deepEqual(
+    rules.filter((r) => /::after/.test(r.selectors) && /inset:\s*0/.test(r.decls) && /tr\b[^{]*a:first-of-type/.test(r.selectors)).map((r) => r.selectors),
+    [],
+    "no row stretches a link chosen by position",
+  );
   const hit = readFileSync(path.resolve(import.meta.dirname, "..", "src", "scripts", "hit-areas.ts"), "utf-8");
   assert.match(hit, /const LINKS = "a\[href\]:not\(:is\(p, li, dd, \.note-pop, \.footer-notice\) a\)";/);
 });

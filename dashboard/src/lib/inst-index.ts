@@ -191,11 +191,12 @@ export function applyDirectoryChips(
     reader can match what they see here against the filing itself. */
 function nameCellHtml(r: InstIndexRow, href: string): string {
   const typing = r.typing ?? null;
+  /* the row's main link (launch review M2): the name cell is the row's */
   if (typing === null) {
-    return `<a href="${esc(href)}">${esc(r.name)}</a>`;
+    return `<a data-row-link href="${esc(href)}">${esc(r.name)}</a>`;
   }
   return (
-    `<a href="${esc(href)}">${esc(typing.display_name)}</a>` +
+    `<a data-row-link href="${esc(href)}">${esc(typing.display_name)}</a>` +
     (typing.person ? ` <span class="mgr-person">${esc(typing.person)}</span>` : "") +
     `<span class="mono-note filed-name"> filed as ${esc(r.name)}</span>`
   );

@@ -244,7 +244,7 @@ export function tickerHolderRowHtml(h: TickerHolderRow, ctx: TickerHolderCtx): s
   return (
     `<tr role="row"><td role="cell" class="c-num c-muted">${fmtInt(h.rank)}</td>` +
     // ONE href primitive (filerHref): the payload carries the top/tail target.
-    `<td role="cell" class="c-filer c-flex"><a href="${esc(filerHref(h.cik, h.tier ?? "tail"))}">${esc(h.name)}</a></td>` +
+    `<td role="cell" class="c-filer c-flex"><a data-row-link href="${esc(filerHref(h.cik, h.tier ?? "tail"))}">${esc(h.name)}</a></td>` +
     `<td role="cell" class="c-num c-strong has-marks">${h.value == null ? `—<span class="visually-hidden"> value not disclosed</span>` : esc(fmtUsd(h.value))}</td>` +
     `<td role="cell" class="c-num">${fmtInt(h.securities)}</td>` +
     `<td role="cell" class="c-flags">${flagTags(h.flags, undefined, { stated: ctx.stated })}</td>` +
@@ -602,7 +602,7 @@ function membersActiveHtml(t: TickerEntity, stamps: BuildStamps, ctx: RenderCtx,
     .map((m) => {
       const dir = netDirection(m.net);
       return (
-        `<tr><td class="c-member c-flex">${m.first.bioguide ? `<a href="${memberHrefFor(m.first.bioguide, ctx)}">${esc(m.first.name)}</a>` : esc(m.first.name)} <span class="aff ${partyClass(m.first.party)}">${esc(affTextOf(m.first))}</span></td>` +
+        `<tr><td class="c-member c-flex">${m.first.bioguide ? `<a data-row-link href="${memberHrefFor(m.first.bioguide, ctx)}">${esc(m.first.name)}</a>` : esc(m.first.name)} <span class="aff ${partyClass(m.first.party)}">${esc(affTextOf(m.first))}</span></td>` +
         `<td class="c-num">${fmtInt(m.rows)}</td>` +
         `<td class="c-num ${dir === "accumulation" ? "c-buy" : dir === "disposal" ? "c-sell" : "c-muted"}">${esc(netIntervalText(m.net))}</td>` +
         (hasCommittees ? `<td class="c-num ${m.committee && m.committee !== "—" && m.committee !== "unanswerable" ? "c-amber" : "c-muted"}">${m.committee === null ? "—" : esc(m.committee)}</td>` : "") +

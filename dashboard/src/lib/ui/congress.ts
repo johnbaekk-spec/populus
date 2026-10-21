@@ -915,7 +915,7 @@ function txnCellsMember(r: TxnRow, ctx: RenderCtx, stated: readonly string[] = [
   const has = (k: string): boolean => cols === null || cols.includes(k);
   return (
     `<td class="c-side c-kind ${side.cls}" role="cell">${esc(side.text)}</td>` +
-    (has("ticker") ? `<td class="c-ticker" role="cell">${r.ticker ? `<a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>` : "—"}</td>` : "") +
+    (has("ticker") ? `<td class="c-ticker" role="cell">${r.ticker ? `<a data-row-link href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>` : "—"}</td>` : "") +
     /* R17 (M3, T3.3): the default asset text, its as-filed note printing;
        the partial and owner qualifiers follow it, outside the ellipsis */
     `<td class="c-asset c-secondary c-flex" role="cell">${assetLineHtml(r, { notes: { scope: "member-asset" }, qualifiers: true })}</td>` +
@@ -930,7 +930,7 @@ function txnCellsTicker(r: TxnRow, ctx: RenderCtx, stated: readonly string[] = [
   const owner = ownerQualifiersHtml(r);
   const amountUnknown = r.low == null && r.high == null;
   const memberCell = r.bioguide
-    ? `<a href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a> <span class="aff ${partyClass(r.party)}">${esc(
+    ? `<a data-row-link href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a> <span class="aff ${partyClass(r.party)}">${esc(
         affTextOf(r),
       )}</span>`
     : `<span class="unjoined-name">${esc(r.name)}</span> <span class="aff ${partyClass(r.party)}">${esc(affTextOf(r))}</span>`;
@@ -1520,7 +1520,7 @@ export function congressTickerBody(t: TickerEntity, stamps: BuildStamps, ctx: Re
       (m) =>
         `<tr><td class="c-member c-flex">${
           m.bioguide
-            ? `<a href="${memberHrefFor(m.bioguide, ctx)}">${esc(m.name)}</a>`
+            ? `<a data-row-link href="${memberHrefFor(m.bioguide, ctx)}">${esc(m.name)}</a>`
             : esc(m.name)
         } <span class="aff ${partyClass(m.party)}">${esc(affTextOf(m))}</span></td>` +
         `<td class="c-num c-buy">${fmtInt(m.buys)}</td>` +
@@ -1771,7 +1771,7 @@ export function memberNetRowHtml(r: MemberNetRowIn, _index: number, s: MemberNet
   const edge = nk.word === "NET BUY" ? "netbuy" : nk.word === "NET SELL" ? "netsell" : "flat";
   const href = tickerHrefFor(r.ticker, r.cut ? { cutTickers: new Set([r.ticker]) } : {});
   return `<tr class="design-net-row" data-edge="${edge}" role="row">` +
-    `<td class="c-ticker c-flex" role="cell"><a href="${href}">${esc(r.ticker)}</a><span class="visually-hidden"> ${esc(nk.word)}${nk.why ? ` ${esc(nk.why)}` : ""}</span></td>` +
+    `<td class="c-ticker c-flex" role="cell"><a data-row-link href="${href}">${esc(r.ticker)}</a><span class="visually-hidden"> ${esc(nk.word)}${nk.why ? ` ${esc(nk.why)}` : ""}</span></td>` +
     `<td class="c-bar" role="cell"><span class="design-diverging" aria-hidden="true"><span style="right:50%;width:${(lowerOf(r.purchases) / s.scale * 50).toFixed(1)}%"></span><span class="sale" style="left:50%;width:${(lowerOf(r.sales) / s.scale * 50).toFixed(1)}%"></span></span><span class="visually-hidden">Purchases ${flowCellHtml(r.purchases)}; sales ${flowCellHtml(r.sales)}</span></td>` +
     `<td class="c-num c-bs" role="cell"><span class="c-buy">${fmtInt(r.buys)}</span>·<span class="c-sell">${fmtInt(r.sells)}</span></td>` +
     `<td class="c-num c-net has-marks ${nk.word === "NET BUY" ? "c-buy" : nk.word === "NET SELL" ? "c-sell" : "c-muted"}" role="cell">${netCellHtml(r.net, r.overlapsPrev)}</td></tr>`;
@@ -1933,7 +1933,7 @@ function memberV2Parts(
     .map(
       (r) =>
         `<tr${txnEdge(r) ? ` data-edge="${txnEdge(r)}"` : ""} role="row"><td class="c-filed c-num has-marks" role="cell">${esc(r.filed)}</td>` +
-        `<td class="c-ticker c-flex" role="cell">${r.ticker ? `<a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>` : assetNameCell(r, { scope: "member-recent-asset" })}</td>` +
+        `<td class="c-ticker c-flex" role="cell">${r.ticker ? `<a data-row-link href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>` : assetNameCell(r, { scope: "member-recent-asset" })}</td>` +
         `<td class="c-side c-kind ${sideLabel(r.side, r.flags).cls}" role="cell">${esc(sideLabel(r.side, r.flags).text)}</td>` +
         `<td class="c-num" role="cell">${esc(amountText(r))}</td>` +
         `<td class="c-src" role="cell">${srcLink(r.doc)}</td></tr>`,

@@ -50,6 +50,7 @@ import {
   tickerHrefFor,
   partyClass,
   cardFoot,
+  rowLink,
 } from "../format.ts";
 import {
   type FilingWindow,
@@ -224,7 +225,7 @@ export function holdersTableHtml(
         `<tr><td class="c-num c-muted has-marks">${fmtInt(h.rank)}</td>` +
         // ONE href primitive (filerHref): tier rides on the row through the SSR call
         // AND the embedded period payload, so both renders link identically.
-        `<td class="c-filer c-flex"><a href="${esc(filerHref(h.cik, h.tier ?? "tail"))}">${esc(h.filer_name)}</a></td>` +
+        `<td class="c-filer c-flex"><a data-row-link href="${esc(filerHref(h.cik, h.tier ?? "tail"))}">${esc(h.filer_name)}</a></td>` +
         `<td class="c-num c-strong has-marks">${esc(fmtUsd(h.value_usd))}${h.flags.includes("value_undisclosed_component") ? ' <span class="mono-note">partial</span>' : ""}</td>` +
         `<td class="c-num has-marks">${fmtInt(h.security_count)}</td>` +
         `<td class="c-keysrc c-secondary"><span class="mono-note">${esc(h.issuer_key_source)}</span></td>` +
@@ -1504,7 +1505,7 @@ export function holdersPageRowHtml(h: HoldersPageRow): string {
   const deltaCls = h.delta == null ? "c-muted" : h.delta < 0 ? "c-sell" : h.delta > 0 ? "c-buy" : "";
   return (
     `<tr role="row"${changeEdgeAttr(h.kind)}><td role="cell" class="c-rank c-num">${fmtInt(h.rank)}</td>` +
-    `<td role="cell" class="c-filer c-flex">${filerLinkHtml(h.cik, h.name, h.tier)}</td>` +
+    `<td role="cell" class="c-filer c-flex">${rowLink(filerLinkHtml(h.cik, h.name, h.tier))}</td>` +
     `<td role="cell" class="c-num">${h.value == null ? "—" : esc(fmtUsd(h.value))}</td>` +
     `<td role="cell" class="c-num">${h.shares == null ? "—" : fmtInt(h.shares)}</td>` +
     `<td role="cell" class="c-num ${deltaCls}">${h.delta == null ? "—" : `${h.delta < 0 ? "−" : h.delta > 0 ? "+" : ""}${fmtInt(Math.abs(h.delta))}`}</td>` +
