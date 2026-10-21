@@ -151,12 +151,13 @@ const description =
   <script>
     import { initHoldersPeriods } from "../../../../scripts/entity-client";
     import { initNotes } from "../../../../scripts/notes";
-    import { initHeldRows } from "../../../../scripts/inst-index-client";
+    import { initDomDisclosures, registerHeldRows } from "../../../../scripts/inst-index-client";
     import { HOLDERS_PAGE_HELD } from "../../../../lib/ui/institutional.ts";
     initHoldersPeriods();
     initNotes();
     /* launch M7b (R33): holders 26..N, drawn 25 at a time from the island by
-       the server's own row function */
-    initHeldRows({ "holders-page": HOLDERS_PAGE_HELD });
+       the server's own row function, through the one held-rows binder */
+    registerHeldRows(HOLDERS_PAGE_HELD.render, HOLDERS_PAGE_HELD.row, { text: HOLDERS_PAGE_HELD.text });
+    initDomDisclosures();
   </script>
 </Base>

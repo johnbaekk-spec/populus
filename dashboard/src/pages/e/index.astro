@@ -26,7 +26,7 @@ const description =
   </main>
   <script>
     import { runGenericRoute } from "../../scripts/entity-client";
-    import { initDomDisclosures, initHeldRows, registerHeldRows } from "../../scripts/inst-index-client";
+    import { initDomDisclosures, registerHeldRows } from "../../scripts/inst-index-client";
     import { memberNetRowHtml, memberHistoryRowHtml, MEMBER_NET_ROWS, MEMBER_HISTORY_ROWS } from "../../lib/ui/index.ts";
     import { TICKER_HOLDER_HELD } from "../../lib/ui/ticker.ts";
     import { initNotes } from "../../scripts/notes";
@@ -36,10 +36,10 @@ const description =
        filing-history rows in islands, rendered by the same row functions. */
     registerHeldRows(MEMBER_NET_ROWS, memberNetRowHtml);
     registerHeldRows(MEMBER_HISTORY_ROWS, memberHistoryRowHtml);
+    /* launch M7b (R33): a tail ticker's holders 26..N, in the same binder —
+       its list is bound when the driver's render announces itself */
+    registerHeldRows(TICKER_HOLDER_HELD.render, TICKER_HOLDER_HELD.row, { text: TICKER_HOLDER_HELD.text });
     initDomDisclosures();
-    /* launch M7b (R33): a tail ticker's holders 26..N, bound after the driver's
-       render announces itself */
-    initHeldRows({ "ticker-holder": TICKER_HOLDER_HELD });
     runGenericRoute();
     // launch M1c (R12): tips open as bottom sheets at ≤720px here too
     initNotes();

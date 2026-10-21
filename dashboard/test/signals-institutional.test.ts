@@ -169,7 +169,8 @@ test("T2.4 (R12, LD11) + launch M7a (D5, LD27): the first 15 rows are in the pag
     assert.ok(r.querySelector(".mv-det")!.innerHTML.length > 0, "a server-visible row's body is rendered (a reader without script can open it)");
     assert.equal(r.getAttribute("data-fp"), null);
   });
-  const raw = /<script type="application\/json" data-held-for="mv-list">([\s\S]*?)<\/script>/.exec(html)![1]!;
+  // launch integration: the site's one held-rows island (lib/held-rows.ts)
+  const raw = /<script type="application\/json" data-held-for="mv-list" data-held-render="named-moves">([\s\S]*?)<\/script>/.exec(html)![1]!;
   assert.doesNotMatch(raw, /</, "the island is inert: no tag can open in it");
   const island = JSON.parse(raw) as HeldMoves;
   assert.doesNotMatch(JSON.stringify(island), /<\/?[a-z]/i, "data, never markup");
@@ -177,8 +178,8 @@ test("T2.4 (R12, LD11) + launch M7a (D5, LD27): the first 15 rows are in the pag
   let held = 0;
   island.rows.forEach((r, k) => {
     const i = NAMED_MOVES_MIN + k;
-    const client = moveRowFrom(r, island.sec, true, island.tv);
-    assert.equal(client, moveRowHtml(model.domSet[i]!, ids[i]!, model, true, island.tv), `${ids[i]}: the client's held row is the server's`);
+    const client = moveRowFrom(r, island.shared.sec, true, island.shared.tv);
+    assert.equal(client, moveRowHtml(model.domSet[i]!, ids[i]!, model, true, island.shared.tv), `${ids[i]}: the client's held row is the server's`);
     const el = domOf(client).querySelector("article.mv-item")!;
     if (el.querySelector(".mv-det")!.innerHTML === "") {
       held++;
@@ -188,7 +189,7 @@ test("T2.4 (R12, LD11) + launch M7a (D5, LD27): the first 15 rows are in the pag
   assert.ok(held > 0, "the fixture holds lean rows");
   // control: the row function reads the data — a changed count changes the row
   const r0 = island.rows[0]!;
-  assert.notEqual(moveRowFrom({ ...r0, counted: r0.counted + 1 }, island.sec, true, island.tv), moveRowFrom(r0, island.sec, true, island.tv));
+  assert.notEqual(moveRowFrom({ ...r0, counted: r0.counted + 1 }, island.shared.sec, true, island.shared.tv), moveRowFrom(r0, island.shared.sec, true, island.shared.tv));
   const { rows: opened, restore } = openedRows(model, { bank: false });
   try {
     opened.forEach((r, i) => {

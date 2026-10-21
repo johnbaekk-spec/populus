@@ -24,7 +24,8 @@ import {
   type AddsSortKey,
 } from "../lib/inst-adds.ts";
 import { addsBoundHtml, addsRowsHtml } from "../lib/inst-adds-render.ts";
-import { parseHeldIsland } from "../lib/held-rows.ts";
+import { parseHeldIsland, type HeldIsland } from "../lib/held-rows.ts";
+import { rolesFor } from "./table-roles.ts";
 
 /* `instIndexBodyHtml` and `instDefaultDir` MOVED to `lib/inst-index.ts`.
 
@@ -532,76 +533,171 @@ export function initAddsControls(): void {
     re-render rule asks for. */
 export function initDomDisclosures(): void {
   bindDomDisclosures();
+  bindHeldLists();
   /* R15/R36: every client re-render announces itself with `populus:rerender`
      (the /e/ driver, both period switches, the holdings surface). A re-render
      can bring NEW wrappers — bound here — and can leave a wrapper in place
      with different counts — re-read and re-synced here, so a re-rendered table
      restates its own count. Idempotent: the click listener is attached once
-     per wrapper, and a sync only restates what the element says. */
+     per wrapper, and a sync only restates what the element says. A re-render
+     can also bring a new held list's island (the /e/ driver): bound once each. */
   if (typeof document.addEventListener === "function") {
-    document.addEventListener("populus:rerender", () => bindDomDisclosures());
+    document.addEventListener("populus:rerender", () => {
+      bindDomDisclosures();
+      bindHeldLists();
+    });
   }
   bindHeldPrint();
+  bindHeldTargets();
 }
 
-/* ---------- held rows: the island carrier (pagination-and-counts.md rule 8) ----------
+/* ---------- held rows: the ONE binder for every island (pagination-and-counts.md rule 8) ----------
 
    LD26: one binder, two carriers. A rule-7 table holds its extra rows in the
-   DOM (`tr[data-compact-extra]`); a HELD table (`tbody[data-held="json"]`)
-   holds them only as JSON, in the island the server emitted after the table
-   (`<script type="application/json" data-held-for="<tbody id>"
-   data-held-render="<name>">`, built by `heldTableParts` in
-   `lib/held-rows.ts`). The first time a held table is expanded, this binder
-   renders the island's rows through the row function registered under that
-   name — the SAME function the server rendered the first N rows with — and
-   appends them as `tr[data-compact-extra]`, after which the rule-7 toggle
-   applies unchanged. The island carries every input the function reads, so
-   the rows are byte-identical to the server's. Nothing here reads a
-   `<noscript>`, and DOM text never becomes HTML: the island is parsed as JSON
-   and only the registered function's output is written. */
+   DOM (`tr[data-compact-extra]`); a HELD list holds them only as JSON, in the
+   one island the server writes after it (`heldIslandHtml` in
+   `lib/held-rows.ts`: `<script type="application/json" data-held-for="<root
+   id>" data-held-render="<name>">`, body `{ v, offset, shared, rows }`).
+   Every held list on the site uses it — the member page's compact tables, the
+   Signals hits, Named moves, Congress-lines bank and Overlap names, and the
+   holders lists — and every island row reaches the DOM through ONE function
+   here, `heldRowsHtml`: the row function registered under the island's name
+   (the SAME function the server rendered the list's first rows with) over the
+   island's own inputs, then the explicit table roles of the table the row
+   lands in (`rolesFor`, launch M1a R40), so a drawn row is byte-identical to
+   the server page's row. What differs between lists is only WHEN rows are
+   drawn: a compact table's "Show all" (`materializeHeldRows`), a holders
+   list's "Show all N holders" steps (`bindHeldLists`), the Signals pagers
+   (`signals-client.ts`, through `drawHeldRun` / `drawHeldRows`), and a deep
+   link to a held row (`revealHeldTarget`). Nothing here reads a `<noscript>`,
+   and DOM text never becomes HTML: the island is parsed as JSON and only the
+   registered function's output is written. */
 
 /** A row function as the binder calls it: the island row, its zero-based
-    position in the WHOLE table, and the island's table-wide inputs. */
+    position in the WHOLE list, and the island's list-wide inputs. */
 export type HeldRowRenderer = (row: unknown, index: number, shared: unknown) => string;
 
-const heldRenderers = new Map<string, HeldRowRenderer>();
+interface HeldRenderEntry {
+  render: HeldRowRenderer;
+  /** the text a held list's local search matches (a holder's filer name) */
+  text: ((row: unknown) => string) | null;
+}
+const heldRenderers = new Map<string, HeldRenderEntry>();
 
-/** Register the row function a page's held tables render through, under the
-    name its islands carry in `data-held-render`. Call before
-    `initDomDisclosures()`. Registering a name twice keeps the latest
-    function. */
-export function registerHeldRows<R, S>(name: string, render: (row: R, index: number, shared: S) => string): void {
+/** Register the row function a page's held lists render through, under the
+    name its islands carry in `data-held-render` — and, for a list a reader
+    can search, the text a search matches. Call before `initDomDisclosures()`
+    (or before a pager that draws from the island). Registering a name twice
+    keeps the latest function. */
+export function registerHeldRows<R, S>(
+  name: string,
+  render: (row: R, index: number, shared: S) => string,
+  opts: { text?: (row: R) => string } = {},
+): void {
   /* the island's JSON was produced from exactly the R and S this function
-     takes (`heldTableParts` in `lib/held-rows.ts`), so the widening is the
+     takes (`heldIslandHtml` in `lib/held-rows.ts`), so the widening is the
      binder's, in one place */
-  heldRenderers.set(name, render as unknown as HeldRowRenderer);
+  heldRenderers.set(name, {
+    render: render as unknown as HeldRowRenderer,
+    text: opts.text ? (opts.text as unknown as (row: unknown) => string) : null,
+  });
 }
 
-function heldIslandFor(root: HTMLElement): HTMLElement | null {
-  if (!root.id) return null;
-  for (const el of Array.from(document.querySelectorAll<HTMLElement>('script[type="application/json"][data-held-for]'))) {
-    if (el.getAttribute("data-held-for") === root.id) return el;
-  }
-  return null;
+/** Every island on the page, in document order. */
+function heldIslands(): HTMLElement[] {
+  return Array.from(document.querySelectorAll<HTMLElement>('script[type="application/json"][data-held-for]'));
+}
+function heldIslandEl(rootId: string): HTMLElement | null {
+  if (!rootId) return null;
+  return heldIslands().find((el) => el.getAttribute("data-held-for") === rootId) ?? null;
+}
+/* An island is parsed once per element: the pagers read its rows on every
+   view change. */
+const parsedIslands = new WeakMap<object, HeldIsland | null>();
+function islandData(el: HTMLElement): HeldIsland | null {
+  if (!parsedIslands.has(el)) parsedIslands.set(el, parseHeldIsland(el.textContent));
+  return parsedIslands.get(el) ?? null;
 }
 
-/** Bring a held root's island rows into the DOM, once. True when every row
-    the disclosure counts is now in the DOM (always true for a rule-7 root);
-    false when the island or its renderer is missing, so the caller reveals
-    nothing rather than claim rows it cannot show. */
+/** A root's island, parsed, with its registered renderer — or null when the
+    island, its body or its renderer is missing (the list then holds what the
+    page rendered, and nothing claims rows it cannot show). */
+function heldSource(rootId: string): { el: HTMLElement; data: HeldIsland; entry: HeldRenderEntry } | null {
+  const el = heldIslandEl(rootId);
+  const data = el ? islandData(el) : null;
+  const entry = heldRenderers.get(el?.getAttribute("data-held-render") ?? "");
+  return el && data && entry ? { el, data, entry } : null;
+}
+
+/** The island rows a root's list holds (for a pager's counts and filters),
+    or null when it has no usable island. */
+export function heldRows<R = unknown>(rootId: string): readonly R[] | null {
+  return (heldSource(rootId)?.data.rows as R[] | undefined) ?? null;
+}
+
+/** THE render path: the island rows at `positions` (indexes into the
+    island's `rows`), each through the registered row function at its place in
+    the whole list, joined as the server joins rows, with the explicit table
+    roles of the table the root sits in. Null when the island cannot render. */
+export function heldRowsHtml(rootId: string, positions: readonly number[]): string | null {
+  const src = heldSource(rootId);
+  if (!src) return null;
+  const { data, entry } = src;
+  const html = positions
+    .filter((p) => p >= 0 && p < data.rows.length)
+    .map((p) => entry.render(data.rows[p], data.offset + p, data.shared))
+    .join("\n");
+  return rolesFor(document.getElementById(rootId), html);
+}
+
+/** How many of an island's rows are already drawn as the root's next
+    contiguous run — kept on the island element, so every view over the list
+    (a pager, a fit, a deep link) shares one count and never draws a row twice. */
+export function heldDrawn(rootId: string): number {
+  return Number(heldIslandEl(rootId)?.getAttribute("data-held-drawn") ?? 0) || 0;
+}
+/** Record the drawn run — e.g. a repaint from the full data retires the
+    island (every row counts as drawn). */
+export function markHeldDrawn(rootId: string, n: number): void {
+  heldIslandEl(rootId)?.setAttribute("data-held-drawn", String(n));
+}
+
+/** Append the island rows at `positions` to the root, after a separator
+    (`lead`), in the order given. Returns how many rows it drew. */
+export function drawHeldRows(rootId: string, positions: readonly number[], lead = "\n"): number {
+  const root = document.getElementById(rootId);
+  const html = root ? heldRowsHtml(rootId, positions) : null;
+  if (!root || html === null || positions.length === 0) return 0;
+  root.insertAdjacentHTML("beforeend", lead + html);
+  return positions.length;
+}
+
+/** Draw the island's next `n` rows as the root's contiguous run. Returns how
+    many it drew. */
+export function drawHeldRun(rootId: string, n: number): number {
+  const rows = heldRows(rootId);
+  if (rows === null) return 0;
+  const from = heldDrawn(rootId);
+  const take = Math.max(0, Math.min(n, rows.length - from));
+  if (take === 0) return 0;
+  const drawn = drawHeldRows(rootId, Array.from({ length: take }, (_, i) => from + i));
+  markHeldDrawn(rootId, from + drawn);
+  return drawn;
+}
+
+/** Bring a compact held table's island rows into the DOM, once, marked as
+    the rule-7 toggle's held rows. True when every row the disclosure counts is
+    now in the DOM (always true for a rule-7 root); false when the island or
+    its renderer is missing, so the caller reveals nothing rather than claim
+    rows it cannot show. */
 function materializeHeldRows(root: HTMLElement): boolean {
   if (root.getAttribute("data-held") !== "json") return true;
-  if (root.getAttribute("data-held-rendered") === "1") return true;
-  const island = heldIslandFor(root);
-  const data = parseHeldIsland(island?.textContent);
-  const render = heldRenderers.get(island?.getAttribute("data-held-render") ?? "");
-  if (!data || !render) return false;
-  const html = data.rows.map((row, j) => render(row, data.offset + j, data.shared)).join("\n");
+  const rows = heldRows(root.id);
+  if (rows === null) return false;
   const before = root.children.length;
-  root.insertAdjacentHTML("beforeend", html);
+  drawHeldRun(root.id, rows.length);
   for (let i = before; i < root.children.length; i++) root.children[i]!.setAttribute("data-compact-extra", "");
-  root.setAttribute("data-held-rendered", "1");
-  return true;
+  return heldDrawn(root.id) >= rows.length;
 }
 
 /** Expand the disclosure that controls the root with this id — rendering its
@@ -617,6 +713,75 @@ export function expandDisclosureByRoot(rootId: string): boolean {
     return readDomDisclosure(wrap)?.expanded === true;
   }
   return false;
+}
+
+/** A deep link or an in-page link to an element only a HELD row carries: find
+    the island row that renders an element with that id, then open what holds
+    it back — a compact table's "Show all" (`expandDisclosureByRoot`) or a
+    holders list's steps — and return the element, now in the DOM. Null when
+    the element is already present (the browser's own navigation stands), when
+    no held row carries it, or when what holds it cannot open. The Signals
+    pagers resolve their own rows first (`signals-client.ts` `revealHash`) and
+    call this for the rest. */
+export function revealHeldTarget(targetId: string): Element | null {
+  if (!targetId || document.getElementById(targetId)) return null;
+  const needle = `id="${targetId.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")}"`;
+  for (const island of heldIslands()) {
+    const rootId = island.getAttribute("data-held-for") ?? "";
+    const list = heldListReveal.get(rootId);
+    const compact = document.querySelector(`.compact-disclosure[data-compact-dom][data-compact-for="${rootId}"]`);
+    if (!list && !compact) continue; // a pager's island: the pager owns its rows
+    const src = heldSource(rootId);
+    if (!src) continue;
+    const at = src.data.rows.findIndex((row, j) => src.entry.render(row, src.data.offset + j, src.data.shared).includes(needle));
+    if (at < 0) continue;
+    if (compact) expandDisclosureByRoot(rootId);
+    else list!(at);
+    return document.getElementById(targetId);
+  }
+  return null;
+}
+
+/* The deep-link half of `revealHeldTarget`, bound once per page by
+   `initDomDisclosures`: a hash on load, a later `hashchange`, and a click on
+   an in-page link whose target is a held row each open what holds it and
+   bring it into view. A link whose target is in the DOM is left to the
+   browser; a click another handler already took (the Signals reveal
+   sequence) is left alone. */
+const heldTargetWindows = new WeakSet<object>();
+const heldTargetRoots = new WeakSet<object>();
+function heldHashId(hash: string): string {
+  const raw = hash.replace(/^#/, "");
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+function landHeldTarget(el: Element | null): void {
+  (el as (Element & { scrollIntoView?: (o?: ScrollIntoViewOptions) => void }) | null)?.scrollIntoView?.({ block: "center" });
+}
+function bindHeldTargets(): void {
+  const root = document.documentElement as unknown as { addEventListener?: (t: string, fn: (ev: unknown) => void) => void } | null;
+  if (root && typeof root.addEventListener === "function" && !heldTargetRoots.has(root)) {
+    heldTargetRoots.add(root);
+    root.addEventListener("click", (ev) => {
+      const e = ev as { target?: { closest?: (s: string) => Element | null }; defaultPrevented?: boolean; preventDefault?: () => void } | undefined;
+      if (e?.defaultPrevented) return;
+      const a = e?.target?.closest?.('a[href^="#"]');
+      const href = a?.getAttribute("href") ?? "";
+      if (href.length < 2) return;
+      const el = revealHeldTarget(heldHashId(href));
+      if (!el) return;
+      e?.preventDefault?.();
+      if (typeof location !== "undefined" && location.hash !== href && typeof history !== "undefined") history.pushState(null, "", href);
+      landHeldTarget(el);
+    });
+  }
+  if (typeof window === "undefined" || typeof window.addEventListener !== "function" || heldTargetWindows.has(window)) return;
+  heldTargetWindows.add(window);
+  window.addEventListener("hashchange", () => landHeldTarget(revealHeldTarget(heldHashId(location.hash))));
+  if (typeof location !== "undefined" && location.hash) landHeldTarget(revealHeldTarget(heldHashId(location.hash)));
 }
 
 /* Print shows every held row (rule 8): `beforeprint` expands each collapsed
@@ -758,47 +923,22 @@ export function expandDomDisclosureFor(el: Element): boolean {
   return changed;
 }
 
-/* ---------- held rows: the island carrier of LD26 (launch M7b, R33) ----------
+/* ---------- held lists: "Show all N holders" (launch M7b, R33) ----------
 
-   A held list shows its first N rows; rows N+1.. are NOT in the DOM. They
-   travel once, as an inert JSON island
-   (`<script type="application/json" data-held-for="<tbody id>"
-   data-held-render="<name>">`), and this binder draws them through the SAME
-   row function the server used — registered by name by the page's own script,
-   so no page bundles a renderer it never shows. The island carries every input
-   that function reads (the rows and, in `ctx`, the shared inputs such as the
-   flags hoisted over all N), so a drawn row is byte-identical to the server's
-   no-JS copy of it. The binder never turns DOM text back into HTML: it reads
-   JSON and writes rows the row function escaped.
-
-   Controls, all keyed by the held tbody's id and all server-rendered hidden
-   until this binder proves it can work: the `<details data-held-more>` that
-   states "Show all N holders", the search (`data-held-search`), the count
+   A holders list opens at its first rows; the rest are held in the one island
+   (`heldIslandHtml`, offset = the rows shown, `shared` = the row function's
+   `ctx` and the view's step, total and noun) and drawn by `heldRowsHtml` —
+   the one render path above — into the empty table inside the "Show all N
+   holders" disclosure. Controls, all keyed by the held tbody's id and all
+   server-rendered hidden until this binder proves it can work: the
+   `<details data-held-more>`, the search (`data-held-search`), the count
    (`data-held-count`), the table wrapper (`data-held-wrap`) and the step
-   button (`data-held-step`). Opening the disclosure draws the first step; each
-   press draws the next; a search filters the held rows by name and shows the
-   first step of the result. `beforeprint` draws EVERY held row and opens the
-   disclosure; `afterprint` restores the reader's state.
-
-   NOTE FOR THE INTEGRATOR: LD26 assigns the one held-rows binder to M4a
-   (`initDomDisclosures`, extended). This is that interface, built in parallel
-   at the same path for the holders surfaces; fold the two into one binder. */
-
-export interface HeldRenderer {
-  /** the server's row function: `(row, ctx) => row html` */
-  row: (row: unknown, ctx: unknown) => string;
-  /** the text a local search matches (the filer name) */
-  text: (row: unknown) => string;
-}
-
-interface HeldIslandData {
-  shown: number;
-  step: number;
-  total: number;
-  noun: string;
-  ctx: unknown;
-  rows: unknown[];
-}
+   button (`data-held-step`). Opening the disclosure draws the first step;
+   each press draws the next; a search filters the held rows by the
+   registered search text and shows the first step of the result.
+   `beforeprint` draws EVERY held row and opens the disclosure; `afterprint`
+   restores the reader's state. A deep link to a held row draws through it
+   (`revealHeldTarget`). */
 
 /** The count line for one state of a held list. Plain text. */
 export function heldCountText(s: { shown: number; total: number; held: number; rendered: number; matches: number | null; query: string }): string {
@@ -816,59 +956,53 @@ export function heldStepLabel(remaining: number, step: number): string {
   return remaining > step ? `Show ${fmtInt(step)} more` : `Show the last ${fmtInt(remaining)}`;
 }
 
-export function initHeldRows(renderers: Record<string, HeldRenderer>): void {
-  bindHeldRows(renderers);
-  if (typeof document.addEventListener === "function") {
-    // A client re-render (/e/) can bring new islands; bound once each.
-    document.addEventListener("populus:rerender", () => bindHeldRows(renderers));
-  }
-}
+/** Each bound held list's deep-link hook: draw through island position `at`. */
+const heldListReveal = new Map<string, (at: number) => void>();
 
-function bindHeldRows(renderers: Record<string, HeldRenderer>): void {
-  document.querySelectorAll<HTMLElement>('script[type="application/json"][data-held-for]').forEach((island) => {
-    if (island.getAttribute("data-held-bound") === "1") return;
+function bindHeldLists(): void {
+  for (const island of heldIslands()) {
+    if (island.getAttribute("data-held-bound") === "1") continue;
     const id = island.getAttribute("data-held-for") ?? "";
-    const renderer = renderers[island.getAttribute("data-held-render") ?? ""];
+    const more = document.querySelector<HTMLElement>(`details[data-held-more="${id}"]`);
     const tbody = document.getElementById(id);
-    if (!renderer || !tbody) return;
-    let data: HeldIslandData;
-    try {
-      data = JSON.parse(island.textContent ?? "") as HeldIslandData;
-    } catch {
-      return; // the no-JS copy is inert; the disclosure keeps its count
-    }
-    if (!Array.isArray(data.rows)) return;
+    const src = heldSource(id);
+    /* not a held list (a compact table, a pager), or one that cannot render:
+       its controls stay hidden and the no-JS copy stands */
+    if (!more || !tbody || !src) continue;
     island.setAttribute("data-held-bound", "1");
-    const sel = (attr: string): HTMLElement | null => document.querySelector<HTMLElement>(`[${attr}="${id}"]`);
-    const more = sel("data-held-more");
+    const { data, entry } = src;
     // `open` through the attribute, which the property reflects in a browser
-    const isOpen = (): boolean => !!more && more.hasAttribute("open");
+    const isOpen = (): boolean => more.hasAttribute("open");
     const setOpen = (on: boolean): void => {
-      if (!more) return;
       if (on) more.setAttribute("open", "");
       else more.removeAttribute("open");
     };
+    const shared = (data.shared ?? {}) as { step?: number; total?: number };
+    const sel = (attr: string): HTMLElement | null => document.querySelector<HTMLElement>(`[${attr}="${id}"]`);
     const tools = sel("data-held-tools");
     const search = sel("data-held-search") as HTMLInputElement | null;
     const wrap = sel("data-held-wrap");
     const count = sel("data-held-count");
     const stepBtn = sel("data-held-step");
-    const step = data.step > 0 ? data.step : 25;
+    const step = typeof shared.step === "number" && shared.step > 0 ? shared.step : 25;
+    const total = typeof shared.total === "number" ? shared.total : data.offset + data.rows.length;
     let query = "";
     let limit = 0;
 
-    function current(): unknown[] {
-      if (query === "") return data.rows;
+    /** the island positions the current search keeps, in order */
+    function current(): number[] {
+      const all = data.rows.map((_, i) => i);
+      if (query === "" || !entry.text) return all;
       const q = query.toLowerCase();
-      return data.rows.filter((r) => renderer!.text(r).toLowerCase().includes(q));
+      return all.filter((i) => entry.text!(data.rows[i]).toLowerCase().includes(q));
     }
 
     function draw(): void {
       const list = current();
       const rendered = Math.min(limit, list.length);
-      tbody!.innerHTML = list.slice(0, rendered).map((r) => renderer!.row(r, data.ctx)).join("\n");
+      tbody!.innerHTML = heldRowsHtml(id, list.slice(0, rendered)) ?? "";
       if (wrap) wrap.hidden = rendered === 0;
-      const text = heldCountText({ shown: data.shown, total: data.total, held: data.rows.length, rendered, matches: query === "" ? null : list.length, query });
+      const text = heldCountText({ shown: data.offset, total, held: data.rows.length, rendered, matches: query === "" ? null : list.length, query });
       if (count) {
         count.textContent = text;
         count.hidden = text === "";
@@ -883,7 +1017,7 @@ function bindHeldRows(renderers: Record<string, HeldRenderer>): void {
 
     if (tools) tools.hidden = false;
     // Opening the disclosure draws the first step; closing keeps the state.
-    more?.addEventListener("toggle", () => {
+    more.addEventListener("toggle", () => {
       if (isOpen() && limit === 0) {
         limit = step;
         draw();
@@ -896,6 +1030,14 @@ function bindHeldRows(renderers: Record<string, HeldRenderer>): void {
     search?.addEventListener("input", () => {
       query = search.value.trim();
       limit = step;
+      draw();
+    });
+    /* a deep link to a held row: clear the search, open, draw through it */
+    heldListReveal.set(id, (at: number) => {
+      query = "";
+      if (search) search.value = "";
+      limit = Math.max(limit, Math.ceil((at + 1) / step) * step);
+      setOpen(true);
       draw();
     });
     /* Paper gets every holder: draw all of them and open the disclosure, then
@@ -920,5 +1062,5 @@ function bindHeldRows(renderers: Record<string, HeldRenderer>): void {
       limit = step;
       draw();
     }
-  });
+  }
 }

@@ -94,3 +94,22 @@ export function stripTableRoles(html: string): string {
     return `<${tag}${kept}>`;
   });
 }
+
+/** Every start tag in `html` that states one of `names` more than once —
+    "<tag>: role ×2" — reading the attribute list the way `withTableRoles`
+    does (quoted values honoured, raw-text elements skipped). Empty = no
+    element carries a duplicate. A renderer that already emits `role` (the
+    member tables, the boards, the Triggers table, the holders rows) and the
+    layout's `withTableRoles` must never both write one (launch integration). */
+export function duplicateAttributeTags(html: string, names: readonly string[] = ["role", "data-label", "data-card"]): string[] {
+  const out: string[] = [];
+  const text = html.replace(/<(script|style|textarea)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, "");
+  for (const m of text.matchAll(/<([a-zA-Z][\w-]*)\b((?:[^>"']|"[^"]*"|'[^']*')*)>/g)) {
+    const attrs = m[2]!.replace(/"[^"]*"|'[^']*'/g, '""');
+    for (const n of names) {
+      const count = (attrs.match(new RegExp(`(?:^|\\s)${n}\\s*=`, "gi")) ?? []).length;
+      if (count > 1) out.push(`<${m[1]}>: ${n} ×${count}`);
+    }
+  }
+  return out;
+}

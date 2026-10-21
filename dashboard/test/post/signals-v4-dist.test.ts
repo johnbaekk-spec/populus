@@ -99,9 +99,11 @@ test("T1.1 (R23): signals.v1.json and every notable-moves shard are byte-identic
   assert.equal(sha(listed), base.routes.sha256, "the route set is T0's, file for file");
 });
 
-/** launch M7a (D5, LD27): a held list's island on the built page, parsed. */
+/** launch M7a (D5, LD27): a held list's island on the built page, parsed —
+    the site's one held-rows carrier since the integration (lib/held-rows.ts:
+    `{ v, offset, shared, rows }`, the row function in `data-held-render`). */
 function heldIsland<T>(html: string, listId: string): T | null {
-  const m = new RegExp(`<script type="application/json" data-held-for="${listId}">([\\s\\S]*?)</script>`).exec(html);
+  const m = new RegExp(`<script type="application/json" data-held-for="${listId}" data-held-render="[a-z-]+">([\\s\\S]*?)</script>`).exec(html);
   return m ? (JSON.parse(m[1]!) as T) : null;
 }
 
@@ -119,8 +121,8 @@ test("signals-v4 M1 + launch M7a on the built page: every triage row once; the p
   const trs = [...body.matchAll(/<tr class="si-hit[^"]*"[^>]*>/g)].map((m) => m[0]);
   assert.equal(trs.length, Math.min(lines, shown), "the first ten lines are in the DOM");
   assert.ok(trs.every((x) => !/ hidden>$/.test(x)), "and visible");
-  const held = heldIsland<{ lines: unknown[] }>(html, "signal-hits-body");
-  assert.equal(trs.length + (held?.lines.length ?? 0), Math.min(lines, domRows), "with the island, the page carries min(lines, 40) lines");
+  const held = heldIsland<{ rows: unknown[] }>(html, "signal-hits-body");
+  assert.equal(trs.length + (held?.rows.length ?? 0), Math.min(lines, domRows), "with the island, the page carries min(lines, 40) lines");
   assert.match(html, /<div class="seg pane-switch" role="group" aria-label="Show" data-pane-switch hidden>/);
   assert.doesNotMatch(html, /<section class="panel si-triage" id="triage"[^>]*\shidden/);
   assert.doesNotMatch(html, /<div class="si-side" id="signals-side"[^>]*\shidden/);

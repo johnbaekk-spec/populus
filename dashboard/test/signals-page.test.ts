@@ -13,7 +13,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { signalsBody, triageRowHtml, lagBandHtml, groupHits, hitMatches, hitsView, hitsHiddenText, signalSentence, memberSignalsPanel, hitsBodyHtml, sortHits, type HitFilter } from "../src/lib/ui/index.ts";
-import { COMMITTEE_CAVEAT, COMMITTEE_CAVEAT_SHORT, DEFAULT_HIT_FILTER, ctxOfCut, leadCardsHtml, memberLastName, SIGNAL_HITS_COMPACT_ROWS, SIGNAL_HITS_DOM_ROWS, SIGNAL_HITS_PAGE_SIZE, triageRowId, type HeldHits } from "../src/lib/ui/signals.ts";
+import { COMMITTEE_CAVEAT, COMMITTEE_CAVEAT_SHORT, DEFAULT_HIT_FILTER, ctxOfCut, heldHitRowHtml, leadCardsHtml, memberLastName, SIGNAL_HITS_COMPACT_ROWS, SIGNAL_HITS_DOM_ROWS, SIGNAL_HITS_PAGE_SIZE, triageRowId, type HeldHits } from "../src/lib/ui/signals.ts";
 import type { Signal, SignalArtifact } from "../src/lib/signals.ts";
 import type { TxnRow } from "../src/lib/format.ts";
 import { buildTriage, daysBetween, type TriageResult } from "../src/lib/signal-triage.ts";
@@ -332,10 +332,12 @@ test("signals-v3 M1: the page embeds no watch band and no data island; hostile n
   /* Reversal record (launch M7a, D5/LD27): the page now carries inert JSON
      islands for its held lists. Property kept: no executable script and no
      watch-band data anywhere on the page — every script element is a
-     `type="application/json"` island naming the list it holds, and parses. */
+     `type="application/json"` island naming the list it holds (and, since
+     the integration onto the one held-rows carrier, the row function it
+     renders through), and parses. */
   const scripts = [...goldenPage().html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)];
   for (const [, attrs, body] of scripts) {
-    assert.match(attrs!, /^ type="application\/json" data-held-for="[a-z-]+"$/, "an inert held-list island, nothing else");
+    assert.match(attrs!, /^ type="application\/json" data-held-for="[a-z-]+" data-held-render="[a-z-]+"$/, "an inert held-list island, nothing else");
     assert.doesNotMatch(body!, /</, "no tag can open inside an island");
     assert.doesNotThrow(() => JSON.parse(body!));
   }
@@ -658,8 +660,9 @@ test("R13 / signals-v4 R5: the slim hits — Kind · Ticker · Who · Traded →
   assert.equal(all.length, 10, "the first ten lines are in the page");
   const rows = all.filter((r) => !r.hasAttribute("hidden"));
   assert.equal(rows.length, 10, "the first 10 visible");
-  const island = JSON.parse(/<script type="application\/json" data-held-for="signal-hits-body">([\s\S]*?)<\/script>/.exec(html)![1]!) as { lines: unknown[] };
-  assert.equal(island.lines.length, Math.min(25, SIGNAL_HITS_DOM_ROWS) - 10, "the island holds the rest of the lines the page carries");
+  const island = JSON.parse(/<script type="application\/json" data-held-for="signal-hits-body" data-held-render="signal-hits">([\s\S]*?)<\/script>/.exec(html)![1]!) as { offset: number; rows: unknown[] };
+  assert.equal(island.offset, 10, "the island continues after the tenth line");
+  assert.equal(island.rows.length, Math.min(25, SIGNAL_HITS_DOM_ROWS) - 10, "the island holds the rest of the lines the page carries");
   assert.equal(hits.getAttribute("data-dom-rows"), String(SIGNAL_HITS_DOM_ROWS));
   assert.equal(hits.getAttribute("data-shown"), "10");
   assert.equal(SIGNAL_HITS_COMPACT_ROWS, 10);
@@ -948,15 +951,18 @@ test("R13 + launch M7a (D5): hitsBodyHtml is the ONE body renderer — the page'
   const view = hitsView(sortHits(active), DEFAULT_HIT_FILTER);
   const body = /<tbody id="signal-hits-body">([\s\S]*?)<\/tbody>/.exec(html)![1]!;
   assert.equal(body, hitsBodyHtml(view.lines.slice(0, SIGNAL_HITS_COMPACT_ROWS), CTX, cols, SIGNAL_HITS_COMPACT_ROWS));
-  const m = /<script type="application\/json" data-held-for="signal-hits-body">([\s\S]*?)<\/script>/.exec(html);
+  const m = /<script type="application\/json" data-held-for="signal-hits-body" data-held-render="signal-hits">([\s\S]*?)<\/script>/.exec(html);
   if (view.lines.length > SIGNAL_HITS_COMPACT_ROWS) {
     const island = JSON.parse(m![1]!) as HeldHits;
-    // the client's composition (signals-client materializeLines): hidden rows through the same renderer and the island's ctx
-    const client = hitsBodyHtml(island.lines, ctxOfCut(island.cut), island.columns, 0);
+    /* the client's composition: the one binder draws each island line
+       through the registered row function (`heldHitRowHtml`, hidden rows
+       over the island's ctx), joined as the server joins lines */
+    const client = island.rows.map((l, j) => heldHitRowHtml(l, island.offset + j, island.shared)).join("\n");
     const server = hitsBodyHtml(view.lines.slice(SIGNAL_HITS_COMPACT_ROWS, SIGNAL_HITS_DOM_ROWS), CTX, cols, 0);
     assert.equal(client, server, "byte for byte");
+    assert.equal(client, hitsBodyHtml(island.rows, ctxOfCut(island.shared.cut), island.shared.columns, 0), "the registered row function is the body renderer's row");
     // control: a planted cut member changes the client's link, so the ctx is load-bearing
-    const t = island.lines.find((l) => l.lead.entities.bioguide);
-    if (t) assert.notEqual(hitsBodyHtml(island.lines, ctxOfCut({ members: [t.lead.entities.bioguide!], tickers: [] }), island.columns, 0), server);
+    const t = island.rows.find((l) => l.lead.entities.bioguide);
+    if (t) assert.notEqual(island.rows.map((l, j) => heldHitRowHtml(l, island.offset + j, { ...island.shared, cut: { members: [t.lead.entities.bioguide!], tickers: [] } })).join("\n"), server);
   } else assert.equal(m, null, "no island with ten lines or fewer");
 });

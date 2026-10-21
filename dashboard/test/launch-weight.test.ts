@@ -13,7 +13,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import {
@@ -267,4 +267,136 @@ test("rule 8: the binder never reads a <noscript> and never moves DOM text into 
   assert.ok(!/noscript/i.test(code), "no code path touches a noscript");
   assert.ok(!/innerHTML\s*=\s*[^;]*textContent/.test(code), "no textContent → innerHTML");
   assert.ok(!/insertAdjacentHTML\([^)]*textContent/.test(code), "no textContent → insertAdjacentHTML");
+});
+
+/* ---------------------------------------------------------------------------
+   Launch integration: ONE held-rows implementation (rule 8, "One island, one
+   render path, several views"). The member tables (M4a), the Signals hits,
+   Named moves, Congress-lines bank and Overlap names (M7a) and the holders
+   lists (M7b) were built in parallel with three island shapes and three
+   binders; they now share the one island `heldIslandHtml` writes and the one
+   render path `heldRowsHtml` draws through (the registered row function, then
+   the page's explicit table roles). */
+
+import { withTableRoles } from "../src/lib/format.ts";
+import { signalsBody, signalsInstitutionalHtml, signalsOverlapHtml } from "../src/lib/ui/index.ts";
+import { tickerInstSectionHtml, TICKER_HOLDER_HELD } from "../src/lib/ui/ticker.ts";
+import { fixtureInstitutional, fixtureMoves } from "./lib/inst-signals-fixture.ts";
+import { fixtureOverlap } from "./lib/overlap-fixture.ts";
+import { loadTriageFixture } from "./lib/triage-fixture.ts";
+import { duplicateAttributeTags } from "./lib/table-roles.ts";
+
+const holdersTab = (n: number): string =>
+  tickerInstSectionHtml(
+    {
+      state: "data", name: "X", cik: "0000000001", period: "2026-03-31", latestFiled: "2026-05-15", topn: n, holdersPage: true,
+      holders: Array.from({ length: n }, (_, i) => ({ rank: i + 1, cik: String(i + 1).padStart(10, "0"), name: `HOLDER <${i + 1}> & CO`, value: i === 30 ? null : 1_000_000 - i, securities: 1, keySource: "mapped", flags: i % 4 === 0 ? ["security_not_in_mapping"] : [], tier: i % 2 ? "top" : "tail" })),
+      mapped: { issuer: "X", titleOfClass: "COM", holderCount: 900 },
+    } as never,
+    "XYZ",
+  );
+
+/** Every island element in `html`: its attribute text and its parsed body. */
+function islands(html: string): { attrs: string; body: HeldIsland | null; raw: string }[] {
+  return [...html.matchAll(/<script\b([^>]*\bdata-held-for=[^>]*)>([\s\S]*?)<\/script>/g)].map((m) => ({ attrs: m[1]!, body: parseHeldIsland(m[2]!), raw: m[2]! }));
+}
+
+test("rule 8 (launch integration): every held list ships the ONE island — the member tables, the four Signals lists and the holders list alike", () => {
+  const f = loadTriageFixture();
+  const corpus: Record<string, string> = {
+    member: HTML,
+    hits: signalsBody(f.artifact, CTX, { rowsEvaluated: 2051 }),
+    moves: signalsInstitutionalHtml(fixtureInstitutional({ moves: fixtureMoves(200, { broadOnly: 10 }) }), CTX),
+    overlap: signalsOverlapHtml(fixtureOverlap(), CTX),
+    holders: holdersTab(60),
+  };
+  const roots = new Set<string>();
+  for (const [name, html] of Object.entries(corpus)) {
+    const found = islands(html);
+    assert.ok(found.length > 0, `${name}: the fixture holds rows back`);
+    for (const { attrs, body, raw } of found) {
+      assert.match(attrs, /^ type="application\/json" data-held-for="[a-z0-9-]+" data-held-render="[a-z-]+"$/, `${name}: the one island's attributes, nothing else`);
+      assert.ok(body && body.v === 1 && Number.isInteger(body.offset) && body.offset >= 0 && body.rows.length > 0, `${name}: the one body, { v, offset, shared, rows }`);
+      assert.doesNotMatch(raw, /</, `${name}: inert — no tag can open inside it`);
+      roots.add(/data-held-for="([^"]+)"/.exec(attrs)![1]!);
+    }
+  }
+  /* the bank's island ships only when a held row links a block no visible
+     row does (none on these fixtures); its writer is the same call, and the
+     source scan below proves there is no other */
+  for (const id of ["member-top-all-tbody", "member-history-tbody", "signal-hits-body", "mv-list", "ov-list", "ticker-holders-held"]) assert.ok(roots.has(id), `${id} is a held list of the one carrier`);
+  // control: the reading catches an island in another shape (the old Signals one)
+  assert.equal(parseHeldIsland(JSON.stringify({ columns: [], lines: [], cut: {} })), null, "control: a second island shape does not parse as the one");
+});
+
+test("rule 8 (launch integration): the island is written in one module and read in one — no second implementation in the tree", () => {
+  const SRC = path.resolve(import.meta.dirname, "..", "src");
+  const files = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(path.join(dir, e.name)) : /\.(ts|astro)$/.test(e.name) ? [path.join(dir, e.name)] : []));
+  const code = (f: string): string => readFileSync(f, "utf-8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  const writers: string[] = [];
+  const readers: string[] = [];
+  for (const f of files(SRC)) {
+    const c = code(f);
+    const rel = path.relative(SRC, f);
+    if (/data-held-for="\$\{/.test(c)) writers.push(rel);
+    if (/\[data-held-for\]|data-held-for="\$\{[^}]*\}"\]/.test(c) || /JSON\.parse\([^)]*held/i.test(c)) readers.push(rel);
+  }
+  assert.deepEqual(writers, ["lib/held-rows.ts"], "one island writer");
+  assert.deepEqual(readers, ["scripts/inst-index-client.ts"], "one island reader: the binder");
+  // control: the scan sees a second writer and a second reader
+  assert.ok(/data-held-for="\$\{/.test('`<script type="application/json" data-held-for="${id}">`'), "control: a template writer is seen");
+  assert.ok(/\[data-held-for\]/.test('document.querySelector(`script[data-held-for]`)'), "control: a second reader is seen");
+});
+
+test("rule 8 + R40 (launch integration): a drawn held row is the SERVED page's row — the registered function, then the page's table roles and card labels", () => {
+  /* The page as Base.astro serves it (withTableRoles over the body): the
+     holders list's no-JS second table carries the roles and labels the
+     layout added; the binder's rows, drawn into the held table, must equal
+     them byte for byte. */
+  const served = withTableRoles(holdersTab(60));
+  const noscriptRows = /<noscript>[\s\S]*?<tbody role="rowgroup">([\s\S]*?)<\/tbody>[\s\S]*?<\/noscript>/.exec(served)![1]!;
+  const { doc, restore } = installDom(served);
+  const g = globalThis as unknown as Record<string, unknown>;
+  const prevWin = g.window;
+  const listeners = new Map<string, (() => void)[]>();
+  g.window = { addEventListener: (t: string, fn: () => void) => void listeners.set(t, [...(listeners.get(t) ?? []), fn]) };
+  try {
+    registerHeldRows(TICKER_HOLDER_HELD.render, TICKER_HOLDER_HELD.row, { text: TICKER_HOLDER_HELD.text });
+    initDomDisclosures();
+    for (const fn of listeners.get("beforeprint") ?? []) fn(); // print draws every held row
+    const drawn = doc.getElementById("ticker-holders-held")!.innerHTML;
+    assert.equal(drawn, noscriptRows, "the binder's rows are the served rows, roles and labels included");
+    assert.match(drawn, /<td role="cell" class="c-num c-muted" data-label="#">26<\/td>/, "a number cell prints its column label on a phone card");
+    // control: the row function's raw output (no roles path) is NOT the served row
+    const island = islands(served).find((i) => /ticker-holders-held/.test(i.attrs))!.body!;
+    const raw = island.rows.map((r, j) => TICKER_HOLDER_HELD.row(r, island.offset + j, island.shared)).join("\n");
+    assert.notEqual(raw, noscriptRows, "control: without the roles path the bytes differ");
+    for (const fn of listeners.get("afterprint") ?? []) fn();
+  } finally {
+    g.window = prevWin;
+    restore();
+  }
+});
+
+test("rule 8 + R40 (launch integration): the member page's compact table draws its held rows through the same path — each row carries its card labels, none twice", () => {
+  const served = withTableRoles(HTML);
+  const { doc, restore } = installDom(served);
+  try {
+    registerHeldRows(MEMBER_NET_ROWS, memberNetRowHtml);
+    registerHeldRows(MEMBER_HISTORY_ROWS, memberHistoryRowHtml);
+    initDomDisclosures();
+    doc.querySelector(`.compact-disclosure[data-compact-for="${ROOT}"] button`)!.bubbleClick();
+    const tbody = doc.getElementById(ROOT)!;
+    const rows = tbody.children;
+    assert.equal(rows.length, 29, "8 served + 21 drawn");
+    /* the served rows went through the layout's roles; the drawn ones through
+       rolesFor — the same labels on the same cells */
+    const labels = (tr: (typeof rows)[number]): (string | null)[] => tr.querySelectorAll("td").map((td) => td.getAttribute("data-label"));
+    assert.deepEqual(labels(rows[9]!), labels(rows[1]!), "a drawn row's cells carry the served row's labels");
+    assert.ok(labels(rows[9]!).some((l) => l !== null), "and there are labels to carry");
+    assert.deepEqual(duplicateAttributeTags(tbody.innerHTML), [], "no element states a role or a label twice");
+  } finally {
+    restore();
+  }
 });

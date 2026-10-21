@@ -34,7 +34,8 @@ import { affTextOf } from "../derive.ts";
 import { BROAD_ACCOUNT_NAMES, CONGRESS_DETAIL_LINES, quarterLabel, quarterMembers, type BroadMember, type CongressQuarter, type MemberLines } from "../congress-quarter.ts";
 import type { NotableMove } from "../notable-moves.ts";
 import { signedUsd } from "../notable-moves.ts";
-import { congressLineHtml, heldIslandHtml, memberLastName, type HeldCut } from "./signals.ts";
+import { congressLineHtml, ctxOfCut, memberLastName, type HeldCut } from "./signals.ts";
+import { heldIslandHtml, type HeldIsland } from "../held-rows.ts";
 import { playbookStripHtml } from "./signals-playbooks.ts";
 import type { LedgerItem } from "./shared.ts";
 import { disclosureLedger } from "./shared.ts";
@@ -339,11 +340,19 @@ export interface HeldOverlapItem {
   all: OverlapRow;
   ord: { core: number | null; all: number };
 }
-/** The Overlap's island: the carried names past the first view. */
-export interface HeldOverlap {
+/** The Overlap's island (the one held-rows carrier, `lib/held-rows.ts`): the
+    carried names past the first view, with the quarter and the budget-cut
+    flags every name reads. */
+export interface HeldOverlapShared {
   q: Pick<Overlap, "period" | "start" | "end">;
-  items: HeldOverlapItem[];
   cut: HeldCut;
+}
+export type HeldOverlap = HeldIsland<HeldOverlapItem, HeldOverlapShared>;
+/** The name the Overlap names' function is registered under. */
+export const OVERLAP_NAME_ROWS = "overlap-names";
+/** A held name, rendered hidden as the server renders a carried one. */
+export function heldOverlapItemHtml(it: HeldOverlapItem, _index: number, s: HeldOverlapShared): string {
+  return overlapItemHtml(it.core, it.all, it.ord, s.q, ctxOfCut(s.cut), false);
 }
 
 /** One name (both variants): an `article.ov-item` holding a `<details>`. */
@@ -495,7 +504,16 @@ export function signalsOverlapHtml(o: Overlap | null, ctx: RenderCtx, opts: { pl
     if (ctx.cutTickers?.has(it.all.ticker)) cutTickers.add(it.all.ticker);
     for (const m of [...it.all.buy, ...it.all.sell]) for (const t of m.rows) if (t.bioguide && ctx.cutMembers?.has(t.bioguide)) cutMembers.add(t.bioguide);
   }
-  const island = heldItems.length > 0 ? heldIslandHtml("ov-list", { q: { period: o.period, start: o.start, end: o.end }, items: heldItems, cut: { members: [...cutMembers].sort(), tickers: [...cutTickers].sort() } } satisfies HeldOverlap) : "";
+  const island =
+    heldItems.length > 0
+      ? heldIslandHtml<HeldOverlapItem, HeldOverlapShared>({
+          rootId: "ov-list",
+          render: OVERLAP_NAME_ROWS,
+          offset: items.length - heldItems.length,
+          shared: { q: { period: o.period, start: o.start, end: o.end }, cut: { members: [...cutMembers].sort(), tickers: [...cutTickers].sort() } },
+          rows: heldItems,
+        })
+      : "";
   const count = (k: "same" | "opposite" | "all"): string => {
     const core = fmtInt(nc[k]);
     const all = fmtInt(na[k]);

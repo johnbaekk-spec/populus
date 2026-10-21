@@ -118,9 +118,10 @@ test("T3.3 (LD14): no quarter, no moves — the stated absences; ticker spelling
 /** launch M7a (D5): the carried names — the page's and the island's, the
     island's rendered the client's way (through `overlapItemHtml`, held). */
 function carriedItems(html: string): MiniElement[] {
-  const m = /<script type="application\/json" data-held-for="ov-list">([\s\S]*?)<\/script>/.exec(html);
+  // launch integration: the site's one held-rows island (lib/held-rows.ts)
+  const m = /<script type="application\/json" data-held-for="ov-list" data-held-render="overlap-names">([\s\S]*?)<\/script>/.exec(html);
   const held = m ? (JSON.parse(m[1]!) as HeldOverlap) : null;
-  const island = held ? held.items.map((it) => overlapItemHtml(it.core, it.all, it.ord, held.q, ctxOfCut(held.cut), false)).join("") : "";
+  const island = held ? held.rows.map((it) => overlapItemHtml(it.core, it.all, it.ord, held.shared.q, ctxOfCut(held.shared.cut), false)).join("") : "";
   return [...domOf(html).querySelectorAll("article.ov-item"), ...domOf(island).querySelectorAll("article.ov-item")];
 }
 

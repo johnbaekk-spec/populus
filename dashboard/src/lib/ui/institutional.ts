@@ -68,7 +68,7 @@ import {
   sortQoqDeltas,
   type FilerBudgetState,
 } from "../holdings.ts";
-import { serializeInlineJson } from "../inline-json.ts";
+import { heldIslandHtml } from "../held-rows.ts";
 import { positionAnchor } from "../notable-moves.ts";
 import type { ConcentrationRow, QoqDeltaRow, TopHolderRow, TickerHolderRow, TickerTotalsRow } from "../inst.ts";
 import type { ClusterBoardResult, ClusterRow } from "../activity.ts";
@@ -1401,8 +1401,9 @@ export function notableRailHtml(res: NotableRecentResult, ctx: RenderCtx): strin
 /* ---------- launch M7b (R33, LD26, LD30): holders held past the first 25 ----------
 
    A holders list opens at its first 25 rows; rows 26..N are NOT in the DOM.
-   They travel ONCE as an inert JSON island (`data-held-for`) that the binder
-   (`initHeldRows`, scripts/inst-index-client.ts) draws in steps of 25 through
+   They travel ONCE in the site's one held-rows island (`heldIslandHtml`,
+   lib/held-rows.ts), which the one binder (scripts/inst-index-client.ts:
+   `registerHeldRows`, then `initDomDisclosures`) draws in steps of 25 through
    the SAME row function the server uses — registered by name — with a local
    search over those rows. Readers without JavaScript keep every holder: a
    `<noscript>` inside the "Show all N holders" disclosure holds a SECOND
@@ -1415,14 +1416,14 @@ export const HOLDERS_VISIBLE = 25;
 /** Rows one "Show 25 more" press adds. */
 export const HOLDERS_STEP = 25;
 
-/** The JSON-safe inputs the island carries for one held list. */
-export interface HeldIsland<R> {
-  shown: number;
+/** The list-wide inputs a held list's island carries in `shared`: the row
+    function's own (`ctx`) and the stepped view's — rows per step, the whole
+    collection's size N and its noun. The island's `offset` is the 25 shown. */
+export interface HeldListShared<C = unknown> {
+  ctx: C;
   step: number;
   total: number;
   noun: string;
-  ctx: unknown;
-  rows: readonly R[];
 }
 
 export interface HeldHoldersOpts<R> {
@@ -1451,7 +1452,6 @@ export function heldHoldersHtml<R>(o: HeldHoldersOpts<R>): string {
   if (held.length === 0) return "";
   const total = o.total ?? o.rows.length;
   const first = HOLDERS_VISIBLE + 1;
-  const island: HeldIsland<R> = { shown: HOLDERS_VISIBLE, step: HOLDERS_STEP, total, noun: "holders", ctx: o.ctx, rows: held };
   return (
     `<details class="tk-holders-more" data-held-more="${esc(o.rootId)}">` +
     `<summary>Show all ${fmtInt(total)} holders</summary>` +
@@ -1463,7 +1463,7 @@ export function heldHoldersHtml<R>(o: HeldHoldersOpts<R>): string {
     `<p class="held-count" data-held-count="${esc(o.rootId)}" role="status" aria-live="polite" hidden></p>` +
     `<button class="linklike compact-toggle" type="button" data-held-step="${esc(o.rootId)}" aria-controls="${esc(o.rootId)}" hidden></button>` +
     `</details>` +
-    `<script type="application/json" data-held-for="${esc(o.rootId)}" data-held-render="${esc(o.render)}">${serializeInlineJson(island)}</script>`
+    heldIslandHtml<R, HeldListShared>({ rootId: o.rootId, render: o.render, offset: HOLDERS_VISIBLE, shared: { ctx: o.ctx, step: HOLDERS_STEP, total, noun: "holders" }, rows: held })
   );
 }
 
@@ -1494,9 +1494,11 @@ export function holdersPageRowHtml(h: HoldersPageRow): string {
   );
 }
 
-/** The holders page's registered renderer (`initHeldRows`). */
+/** The holders page's held-rows renderer and its search text, registered by
+    the page script (`registerHeldRows("holders-page", row, { text })`). */
 export const HOLDERS_PAGE_HELD = {
-  row: (r: unknown): string => holdersPageRowHtml(r as HoldersPageRow),
+  render: "holders-page",
+  row: (r: unknown, _index: number, _shared: unknown): string => holdersPageRowHtml(r as HoldersPageRow),
   text: (r: unknown): string => (r as HoldersPageRow).name,
 };
 
@@ -1593,7 +1595,7 @@ export function tickerHoldersBody(i: TickerHoldersPageInputs): string {
     `<div class="panel-head"><h2 class="section-h">Holders — quarter ended ${esc(t.period_of_report)}</h2>` +
     `<span class="panel-note">ranked by reported value · Δ shares vs ${esc(t.prev_period ?? "the prior quarter")} · kind by shares</span></div>` +
     table(list.slice(0, HOLDERS_VISIBLE).map(holdersPageRowHtml).join("\n"), paged ? `${caption}, ${rangeOfTotal(1, HOLDERS_VISIBLE, list.length, "holders")}` : caption, "ticker-holders-rows") +
-    heldHoldersHtml({ rootId: "ticker-holders-held", render: "holders-page", rows: list, rowHtml: holdersPageRowHtml, ctx: null, table, caption }) +
+    heldHoldersHtml({ rootId: "ticker-holders-held", render: HOLDERS_PAGE_HELD.render, rows: list, rowHtml: holdersPageRowHtml, ctx: null, table, caption }) +
     cardFoot({ short: `Quarter ended ${t.period_of_report}`, full: instFiledNote(i.latestFiled), scope: "ticker-holders-foot", key: "stamp" }) +
     `</section>` +
     i.overlapHtml +

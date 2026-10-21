@@ -345,9 +345,13 @@ test("T2.7 / signals-v4 T1.6: the island's repaint equals the server body (40 he
   assert.equal((serverBody.match(/ hidden>/g) ?? []).length, 0);
   assert.equal(serverBody, hitsBodyHtml(view.lines.slice(0, 10), {}, cols, 10));
   const { ctxOfCut } = await import("../src/lib/ui/signals.ts");
-  const island = JSON.parse(/<script type="application\/json" data-held-for="signal-hits-body">([\s\S]*?)<\/script>/.exec(html)![1]!);
-  assert.equal(island.lines.length, 30, "lines 11–40 wait in the island");
-  const carried = serverBody + "\n" + hitsBodyHtml(island.lines, ctxOfCut(island.cut), island.columns, 0);
+  /* launch integration: the hits ship in the site's one held-rows island
+     (lib/held-rows.ts: `{ v, offset, shared, rows }`, the row function named
+     in `data-held-render`), drawn by the one binder */
+  const island = JSON.parse(/<script type="application\/json" data-held-for="signal-hits-body" data-held-render="signal-hits">([\s\S]*?)<\/script>/.exec(html)![1]!);
+  assert.equal(island.offset, 10, "the island's first line is line 11");
+  assert.equal(island.rows.length, 30, "lines 11–40 wait in the island");
+  const carried = serverBody + "\n" + hitsBodyHtml(island.rows, ctxOfCut(island.shared.cut), island.shared.columns, 0);
   // the pure composition the island paints with
   const first = hitsRepaint(active, { family: "all", stocksOnly: true }, 10, {}, cols, 40);
   assert.equal(first.body, carried, "the client's repaint at shown = 10 is the page's 40 lines, byte for byte");

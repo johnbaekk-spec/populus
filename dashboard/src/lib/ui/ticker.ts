@@ -61,7 +61,7 @@ import { fmtCik, note, noteFromHtml, rangeOfTotal, thHtml } from "../format.ts";
 import type { FilerBudgetState } from "../holdings.ts";
 import { onSignalsLines, tickerOnSignalsHtml } from "./signals.ts";
 import { entityTxnRowsHtml, entityTxnTable } from "./congress.ts";
-import { HOLDERS_VISIBLE, heldHoldersHtml, instStamp, instFiledNote } from "./institutional.ts";
+import { HOLDERS_VISIBLE, heldHoldersHtml, instStamp, instFiledNote, type HeldListShared } from "./institutional.ts";
 
 /* ---------- unified ticker page body ---------- */
 
@@ -195,7 +195,7 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
     `</div>` +
     universalFlagNote(statedHolders) +
     tableHtml(shown.map((r) => tickerHolderRowHtml(r, ctx)).join("\n"), held ? `${caption}, ${rangeOfTotal(1, shown.length, holders.length, "holders")}` : caption, held ? "ticker-holders-top" : null, true) +
-    heldHoldersHtml({ rootId: "ticker-holders-held", render: "ticker-holder", rows, rowHtml: (r) => tickerHolderRowHtml(r, ctx), ctx, table: tableHtml, caption }) +
+    heldHoldersHtml({ rootId: "ticker-holders-held", render: TICKER_HOLDER_HELD.render, rows, rowHtml: (r) => tickerHolderRowHtml(r, ctx), ctx, table: tableHtml, caption }) +
     /* The anchor `#ticker-inst-footnotes` (linked from older pages and read by
        the tab binder's hash routing) now marks the table's truncation line. */
     `<div id="ticker-inst-footnotes">` +
@@ -251,9 +251,13 @@ export function tickerHolderRowHtml(h: TickerHolderRow, ctx: TickerHolderCtx): s
   );
 }
 
-/** The ticker tab's registered held-rows renderer (`initHeldRows`). */
+/** The ticker tab's held-rows renderer and its search text, registered by
+    the page script (`registerHeldRows("ticker-holder", row, { text })`): the
+    row reads the island's `shared.ctx`, the flags hoisted over all N. */
 export const TICKER_HOLDER_HELD = {
-  row: (r: unknown, ctx: unknown): string => tickerHolderRowHtml(r as TickerHolderRow, ctx as TickerHolderCtx),
+  render: "ticker-holder",
+  row: (r: unknown, _index: number, shared: unknown): string =>
+    tickerHolderRowHtml(r as TickerHolderRow, (shared as HeldListShared<TickerHolderCtx>).ctx),
   text: (r: unknown): string => (r as TickerHolderRow).name,
 };
 

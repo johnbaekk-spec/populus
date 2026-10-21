@@ -1111,10 +1111,13 @@ test("T3.5 (R21) → launch M7b (R33): holders 1–25 show; 26..N are held — a
     assert.ok(before.lastIndexOf("<tbody") <= before.lastIndexOf("</tbody>"), "no <noscript> opens inside a tbody");
   }
   // the island: rows 26..N with every input the row function reads; drawn byte-identically
-  const island = JSON.parse(/<script type="application\/json" data-held-for="ticker-holders-held" data-held-render="ticker-holder">([\s\S]*?)<\/script>/.exec(html)![1]!) as { shown: number; step: number; total: number; ctx: unknown; rows: unknown[] };
-  assert.deepEqual([island.shown, island.step, island.total, island.rows.length], [25, 25, 40, 15]);
+  /* launch integration: the site's one held-rows island (lib/held-rows.ts):
+     `offset` is the 25 shown; `shared` carries the row function's ctx and the
+     stepped view's step, total and noun */
+  const island = JSON.parse(/<script type="application\/json" data-held-for="ticker-holders-held" data-held-render="ticker-holder">([\s\S]*?)<\/script>/.exec(html)![1]!) as { offset: number; shared: { step: number; total: number; ctx: unknown }; rows: unknown[] };
+  assert.deepEqual([island.offset, island.shared.step, island.shared.total, island.rows.length], [25, 25, 40, 15]);
   const noscriptBody = /<tbody role="rowgroup">([\s\S]*?)<\/tbody>/.exec(noscript)![1]!;
-  assert.equal(island.rows.map((r) => TICKER_HOLDER_HELD.row(r, island.ctx)).join("\n"), noscriptBody, "the binder's rows are the server's rows, byte for byte");
+  assert.equal(island.rows.map((r, j) => TICKER_HOLDER_HELD.row(r, island.offset + j, island.shared)).join("\n"), noscriptBody, "the binder's rows are the server's rows, byte for byte");
   // the rows past 25 are not in the DOM: the held table the binder fills is empty
   assert.equal(domOf(html).querySelector("#ticker-holders-held")!.querySelectorAll("tr").length, 0);
   assert.match(html, /data-paged="1"/, "each part says it shows part of the collection");
@@ -1135,8 +1138,8 @@ test("T3.5 (R21) → launch M7b (R33): holders 1–25 show; 26..N are held — a
   assert.ok(!topOnly.includes("table-caveat"), "the first 25 carry it, holders 26..40 do not: never hoisted from the visible 25");
   const firstCells = domOf(topOnly).querySelector("#ticker-holders table")!.querySelectorAll("td.c-flags").map((td) => visibleText(td).trim() !== "");
   assert.deepEqual(firstCells, Array.from({ length: 25 }, () => true), "it stays on the 25 rows that carry it");
-  const heldIsland = JSON.parse(/data-held-render="ticker-holder">([\s\S]*?)<\/script>/.exec(topOnly)![1]!) as { ctx: { stated: string[] } };
-  assert.deepEqual(heldIsland.ctx.stated, [], "the held rows' renderer gets the same all-N hoist");
+  const heldIsland = JSON.parse(/data-held-render="ticker-holder">([\s\S]*?)<\/script>/.exec(topOnly)![1]!) as { shared: { ctx: { stated: string[] } } };
+  assert.deepEqual(heldIsland.shared.ctx.stated, [], "the held rows' renderer gets the same all-N hoist");
   // the full holders view: only when that page is built
   assert.ok(data(40, { holdersPage: true }).includes("All holders ↗"));
   assert.ok(!data(40, { holdersPage: false }).includes("/holders/"));

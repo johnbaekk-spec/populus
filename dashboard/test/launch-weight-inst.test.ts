@@ -33,7 +33,7 @@ import {
   type HoldersPageRow,
 } from "../src/lib/ui/institutional.ts";
 import { TICKER_HOLDER_HELD, tickerInstSectionHtml } from "../src/lib/ui/ticker.ts";
-import { heldCountText, heldStepLabel, initHeldRows } from "../src/scripts/inst-index-client.ts";
+import { heldCountText, heldStepLabel, initDomDisclosures, registerHeldRows } from "../src/scripts/inst-index-client.ts";
 import type { TickerHolderRow, TickerTotalsRow } from "../src/lib/inst.ts";
 
 const SRC = path.resolve(import.meta.dirname, "..", "src");
@@ -132,8 +132,11 @@ const tickerHolders = (n: number, flagged: (i: number) => boolean = () => false)
 const tab = (n: number, flagged?: (i: number) => boolean): string =>
   tickerInstSectionHtml({ state: "data", name: "X", cik: "0000000001", period: "2026-03-31", latestFiled: "2026-05-15", topn: n, holders: tickerHolders(n, flagged), holdersPage: true, mapped: { issuer: "X", titleOfClass: "COM", holderCount: 900 } } as never, "XYZ");
 
-function islandOf(html: string, id: string): { shown: number; step: number; total: number; ctx: unknown; rows: unknown[] } {
-  const m = new RegExp(`<script type="application/json" data-held-for="${id}"[^>]*>([\\s\\S]*?)</script>`).exec(html);
+/** A holders list's island — since the integration, the site's one held-rows
+    carrier (lib/held-rows.ts): `offset` is the 25 shown, `shared` carries the
+    row function's ctx and the stepped view's step, total and noun. */
+function islandOf(html: string, id: string): { offset: number; shared: { ctx: unknown; step: number; total: number; noun: string }; rows: unknown[] } {
+  const m = new RegExp(`<script type="application/json" data-held-for="${id}" data-held-render="[a-z-]+">([\\s\\S]*?)</script>`).exec(html);
   assert.ok(m, `island for ${id}`);
   return JSON.parse(m![1]!);
 }
@@ -147,9 +150,9 @@ test("R33: the ticker tab's island rows render byte-identically to its no-JS sec
   const html = tab(60, (i) => i % 4 === 0);
   const island = islandOf(html, "ticker-holders-held");
   assert.equal(island.rows.length, 35);
-  assert.equal(island.rows.map((r) => TICKER_HOLDER_HELD.row(r, island.ctx)).join("\n"), noscriptBody(html));
+  assert.equal(island.rows.map((r, j) => TICKER_HOLDER_HELD.row(r, island.offset + j, island.shared)).join("\n"), noscriptBody(html));
   // control: the wrong hoisted set changes the bytes — the ctx is load-bearing
-  const wrong = island.rows.map((r) => TICKER_HOLDER_HELD.row(r, { stated: ["security_not_in_mapping"] })).join("\n");
+  const wrong = island.rows.map((r, j) => TICKER_HOLDER_HELD.row(r, island.offset + j, { ...island.shared, ctx: { stated: ["security_not_in_mapping"] } })).join("\n");
   assert.notEqual(wrong, noscriptBody(html), "control: the island must carry the all-N hoist");
 });
 
@@ -164,8 +167,8 @@ test("R33: the holders page opens at 25; 26..N are held — island rows equal th
   const first = /<tbody role="rowgroup" id="ticker-holders-rows">([\s\S]*?)<\/tbody>/.exec(html)![1]!;
   assert.equal((first.match(/<tr role="row"/g) ?? []).length, HOLDERS_VISIBLE);
   const island = islandOf(html, "ticker-holders-held");
-  assert.deepEqual([island.shown, island.step, island.total, island.rows.length], [25, 25, 70, 45]);
-  assert.equal(island.rows.map((r) => HOLDERS_PAGE_HELD.row(r, island.ctx)).join("\n"), noscriptBody(html));
+  assert.deepEqual([island.offset, island.shared.step, island.shared.total, island.rows.length], [25, 25, 70, 45]);
+  assert.equal(island.rows.map((r, j) => HOLDERS_PAGE_HELD.row(r, island.offset + j, island.shared)).join("\n"), noscriptBody(html));
   assert.equal((island.rows as HoldersPageRow[])[2]!.value, null, "an undisclosed value travels as null and renders —");
   assert.match(holdersPageRowHtml((island.rows as HoldersPageRow[])[2]!), /<td role="cell" class="c-num">—<\/td>/);
   assert.match(html, /<summary>Show all 70 holders<\/summary>/);
@@ -192,15 +195,17 @@ test("R33/LD26: no <noscript> copy ever opens inside a tbody (the parser would h
   assert.ok(!(before.lastIndexOf("<tbody") <= before.lastIndexOf("</tbody>")), "control: a planted one is caught");
 });
 
-/** Mount a server body and run the binder over it, with a `window` double
+/** Mount a server body and run the one binder over it — the page script's
+    `registerHeldRows` then `initDomDisclosures` — with a `window` double
     that records the print listeners. */
-function mount(html: string, renderers: Parameters<typeof initHeldRows>[0]) {
+function mount(html: string, held: typeof TICKER_HOLDER_HELD | null) {
   const { doc, restore } = installDom(html);
   const g = globalThis as unknown as Record<string, unknown>;
   const priorWin = g.window;
   const winListeners = new Map<string, (() => void)[]>();
   g.window = { addEventListener: (t: string, fn: () => void) => void winListeners.set(t, [...(winListeners.get(t) ?? []), fn]) };
-  initHeldRows(renderers);
+  if (held) registerHeldRows(held.render, held.row, { text: held.text });
+  initDomDisclosures();
   return {
     doc,
     fire: (t: string) => (winListeners.get(t) ?? []).forEach((fn) => fn()),
@@ -215,7 +220,7 @@ const rowsIn = (doc: { getElementById(id: string): MiniElement | null }, id: str
 const range = (a: number, b: number): string[] => Array.from({ length: b - a + 1 }, (_, i) => String(a + i));
 
 test("R33: the binder draws 25 more on open, 25 more per press, searches the held rows by name, and prints every holder", () => {
-  const m = mount(tab(80), { "ticker-holder": TICKER_HOLDER_HELD });
+  const m = mount(tab(80), TICKER_HOLDER_HELD);
   try {
     const { doc } = m;
     const id = "ticker-holders-held";
@@ -255,7 +260,9 @@ test("R33: the binder draws 25 more on open, 25 more per press, searches the hel
 });
 
 test("R33: the binder renders through the REGISTERED function only — an island with no registered renderer is left inert", () => {
-  const m = mount(tab(40), {});
+  /* the registry is the page's (module-wide), so the control names a
+     renderer no page registers */
+  const m = mount(tab(40).replace('data-held-render="ticker-holder"', 'data-held-render="unregistered-holders"'), null);
   try {
     toggleDetails(m.doc.querySelector("details.tk-holders-more")!);
     assert.deepEqual(rowsIn(m.doc, "ticker-holders-held"), [], "no renderer, no rows");

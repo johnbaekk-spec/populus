@@ -213,8 +213,11 @@ import { fixtureMoves } from "./lib/inst-signals-fixture.ts";
 import { installDom } from "./lib/mini-dom.ts";
 import { initNamedMoves } from "../src/scripts/signals-client.ts";
 
+/** A held list's island — the site's one held-rows carrier (lib/held-rows.ts,
+    launch integration): `{ v, offset, shared, rows }`, the row function named
+    in `data-held-render`. */
 function island<T>(html: string, listId: string): T | null {
-  const m = new RegExp(`<script type="application/json" data-held-for="${listId}">([\\s\\S]*?)</script>`).exec(html);
+  const m = new RegExp(`<script type="application/json" data-held-for="${listId}" data-held-render="[a-z-]+">([\\s\\S]*?)</script>`).exec(html);
   return m ? (JSON.parse(m[1]!) as T) : null;
 }
 /** Elements at first load, as a browser parses the served HTML: every start
@@ -234,7 +237,7 @@ test("R31 (D5, LD27): the Named moves' first load carries the first fifteen rows
   const ns = /<noscript><p class="section-note">([^<]*)<\/p><\/noscript>\s*<\/section>/.exec(html.slice(html.indexOf('id="named-moves"')))![1]!;
   assert.equal(ns, `Filtering and paging need JavaScript: the first ${NAMED_MOVES_MIN} of ${model.moves.length} changes in this quarter are listed; filer pages list every move.`);
   // a field carrying markup stays text when the client renders its row
-  const hostile = moveRowFrom({ ...held.rows[0]!, manager: "<b>x</b>", issuer: "</script>" }, held.sec, true, held.tv);
+  const hostile = moveRowFrom({ ...held.rows[0]!, manager: "<b>x</b>", issuer: "</script>" }, held.shared.sec, true, held.shared.tv);
   assert.doesNotMatch(hostile, /<b>x|<\/script>/);
   assert.match(hostile, /&lt;b&gt;x&lt;\/b&gt;/);
 });
@@ -267,7 +270,7 @@ test("R31 / SC3 (D6 record): the first-load elements the islands save on the fix
   const tr = triage();
   const body = signalsBody(f.artifact, CTX, { rowsEvaluated: 2051, triage: tr, institutional: inst, overlap: fixtureOverlap(), playbooks: stressModel() });
   const moves = island<HeldMoves>(body, "mv-list")!;
-  const savedMoves = moves.rows.reduce((n, r) => n + elementCount(moveRowFrom(r, moves.sec, true, moves.tv)), 0);
+  const savedMoves = moves.rows.reduce((n, r) => n + elementCount(moveRowFrom(r, moves.shared.sec, true, moves.shared.tv)), 0);
   const first = elementCount(body);
   t.diagnostic(`fixture /signals/ body: ${first} elements at first load; the Named moves island holds ${moves.rows.length} rows (${savedMoves} elements not built until revealed)`);
   assert.ok(savedMoves > 0 && moves.rows.length === inst.domSet.length - NAMED_MOVES_MIN);

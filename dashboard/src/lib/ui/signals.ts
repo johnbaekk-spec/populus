@@ -88,7 +88,7 @@ import {
 } from "../signal-triage.ts";
 import { COMMITTEE_DIRECT_SOURCE, COMMITTEE_DIRECT_VERSION, DIRECT_COMMITTEE_NAMES, DIRECT_SIC, directRangesText } from "../committee-direct.ts";
 import { SIGNAL_THRESHOLDS } from "../signal-thresholds.ts";
-import { serializeInlineJson } from "../inline-json.ts";
+import { heldIslandHtml, type HeldIsland } from "../held-rows.ts";
 import { disclosureLedger, pairBandHtml } from "./shared.ts";
 import { institutionalLedgerHtml, signalsInstitutionalHtml, type SignalsInstitutional } from "./signals-institutional.ts";
 import { overlapCarried, overlapCounts, overlapLedgerHtml, overlapRowId, signalsOverlapHtml, type Overlap } from "./signals-overlap.ts";
@@ -562,21 +562,21 @@ export function hitsBodyHtml(lines: readonly HitLine[], ctx: RenderCtx, columns:
   return lines.map((line, i) => hitRowHtml(line.lead, ctx, columns, line.members, shown !== null && i >= shown)).join("\n");
 }
 
-/** The island a held list ships in (launch M7a, D5, LD26/LD27): inert JSON
-    the client reads and renders through the list's own row function — never
-    executable, never HTML (`serializeInlineJson` escapes every `<`). The
-    held-rows carrier of LD26 (M4a's binder) reads the same shape. */
-export function heldIslandHtml(listId: string, payload: unknown): string {
-  return `<script type="application/json" data-held-for="${esc(listId)}">${serializeInlineJson(payload)}</script>`;
-}
-
-/** The hits' island (launch M7a, D5): the default view's lines past the
-    first ten, the columns the table renders, and the budget-cut flags of the
-    members and tickers those lines link — every input `hitsBodyHtml` reads. */
-export interface HeldHits {
+/** The hits' island (launch M7a, D5; the one held-rows carrier of LD26,
+    `lib/held-rows.ts`): the default view's lines past the first ten, with
+    the columns the table renders and the budget-cut flags of the members and
+    tickers those lines link — every input the row function reads. */
+export interface HeldHitsShared {
   columns: readonly string[];
-  lines: HitLine[];
   cut: HeldCut;
+}
+export type HeldHits = HeldIsland<HitLine, HeldHitsShared>;
+/** The name the hits' row function is registered under (`data-held-render`). */
+export const SIGNAL_HITS_ROWS = "signal-hits";
+/** A held hit line: the body renderer's row, drawn hidden (it is past the
+    visible lines) — what `hitsBodyHtml` renders for it, byte for byte. */
+export function heldHitRowHtml(line: HitLine, _index: number, s: HeldHitsShared): string {
+  return hitRowHtml(line.lead, ctxOfCut(s.cut), s.columns, line.members, true);
 }
 /** The budget-cut flags (ARCHITECTURE §12.1) of the members and tickers a
     held list links, so the client builds the server's `RenderCtx` for them. */
@@ -835,7 +835,16 @@ function hitsHtml(active: Signal[], ctx: RenderCtx): string {
     : held.length === 0
       ? `<tr><td colspan="${cols.columns.length}" class="si-empty">No hits match this view — a computed answer over every rule, not missing coverage.</td></tr>`
       : hitsBodyHtml(held.slice(0, shown), ctx, cols.columns, shown);
-  const island: HeldHits | null = islandLines.length === 0 ? null : { columns: cols.columns, lines: islandLines, cut: cutFlagsFor(islandLines.flatMap((l) => l.members.length > 0 ? l.members : [l.lead]), ctx) };
+  const island =
+    islandLines.length === 0
+      ? ""
+      : heldIslandHtml<HitLine, HeldHitsShared>({
+          rootId: "signal-hits-body",
+          render: SIGNAL_HITS_ROWS,
+          offset: shown,
+          shared: { columns: cols.columns, cut: cutFlagsFor(islandLines.flatMap((l) => (l.members.length > 0 ? l.members : [l.lead])), ctx) },
+          rows: islandLines,
+        });
   const range = hitsRangeText(0, shown, view.lines.length, view.hits, SIGNAL_HITS_PAGE_SIZE);
   /* signals-v4 LD19: the panel note and the source / size / rule key move
      into "About hits"; the hidden count and the range stay visible. */
@@ -863,7 +872,7 @@ function hitsHtml(active: Signal[], ctx: RenderCtx): string {
     `<caption class="visually-hidden">Signal hits, newest filed first</caption>` +
     `<thead><tr>${SIGNAL_HIT_COLUMNS.filter((c) => cols.columns.includes(SIGNAL_HIT_COLUMN_KEYS[c])).map((c) => thHtml({ label: c, mark: null, cls: SIGNAL_HIT_COLUMN_CLASSES[c], col: SIGNAL_HIT_COLUMN_KEYS[c] })).join("")}</tr></thead>` +
     `<tbody id="signal-hits-body">${body}</tbody></table></div>` +
-    (island ? heldIslandHtml("signal-hits-body", island) : "") +
+    island +
     tableFootReasonHtml(cols) +
     `<div class="feed-foot"><div class="pager">` +
     `<span class="pager-range" id="signal-hits-range" tabindex="-1">${esc(range)}</span>` +

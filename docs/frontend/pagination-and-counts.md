@@ -226,6 +226,21 @@ every view, and reset returns to the default view.
      table runs over all M rows of the island and shows the first N of the
      result, and `beforeprint` renders and reveals every held row (restored on
      `afterprint`).
+   - **One island, one render path, several views (launch integration).** Every
+     held list on the site ships its rows in the ONE island
+     (`heldIslandHtml`, `lib/held-rows.ts`; body `{ v: 1, offset, shared,
+     rows }`: `offset` is the index of the island's first row in the whole
+     list, `shared` every list-wide input), and every held row reaches the DOM
+     through the binder's ONE render path, `heldRowsHtml`: the registered
+     function, then the explicit table roles of the table it lands in
+     (`rolesFor`), so a drawn row equals the served page's row. What differs is
+     only when rows are drawn: a compact table's disclosure reveals every held
+     row in one press (rule 7's step); a stepped list (the holders' "Show all
+     N holders") and a pager (the Signals hits, Named moves, Congress-lines
+     bank and Overlap names) draw in their own step through the same path and
+     state their counts in rule 6's grammar. A deep link or an in-page link to
+     an element only a held row carries opens what holds it
+     (`revealHeldTarget`) and lands on the row.
 
 ## Changing this mechanism
 

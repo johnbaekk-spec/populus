@@ -81,7 +81,8 @@ import {
 import type { NewPositionLeaders } from "../inst-analytics.ts";
 import { convictionCountsText, convictionRuleText } from "./institutional.ts";
 import { disclosureLedger, pairBandHtml, type LedgerItem } from "./shared.ts";
-import { congressLineHtml, heldIslandHtml, paneSwitchHtml, type HeldCut } from "./signals.ts";
+import { congressLineHtml, ctxOfCut, paneSwitchHtml, type HeldCut } from "./signals.ts";
+import { heldIslandHtml, type HeldIsland } from "../held-rows.ts";
 import { playbookStripHtml } from "./signals-playbooks.ts";
 
 /** LD20: the owner's reference label for the new-position leaders. Outside
@@ -390,11 +391,18 @@ export function congressBankBlockFrom(b: BankBlock, ctx: RenderCtx): string {
     `</section>`
   );
 }
-/** The bank's island: the blocks no visible row or name links, with the
-    budget-cut flags of the members their lines link. */
-export interface HeldBank {
-  blocks: BankBlock[];
+/** The bank's island (the one held-rows carrier, `lib/held-rows.ts`): the
+    blocks no visible row or name links, with the budget-cut flags of the
+    members their lines link. */
+export interface HeldBankShared {
   cut: HeldCut;
+}
+export type HeldBank = HeldIsland<BankBlock, HeldBankShared>;
+/** The name the bank's block function is registered under. */
+export const CONGRESS_BANK_ROWS = "congress-bank";
+/** A held bank block, rendered as the bank renders its own. */
+export function heldBankBlockHtml(b: BankBlock, _index: number, s: HeldBankShared): string {
+  return congressBankBlockFrom(b, ctxOfCut(s.cut));
 }
 
 /** LD10: the bank — each (ticker, side) the page's moves and names show, with
@@ -429,7 +437,7 @@ function congressBankHtml(q: CongressQuarter | null, keys: readonly { ticker: st
     inPage.map((b) => congressBankBlockFrom(b, ctx)).join("") +
     (held.length > 0
       ? `<p class="section-note">${plural(held.length, "more name and side opens", "more names and sides open")} with ${held.length === 1 ? "its row" : "their rows"}; each ticker page lists every line.</p>` +
-        heldIslandHtml("mv-bank", { blocks: held, cut: { members: [...members].sort(), tickers: [...tickers].sort() } } satisfies HeldBank)
+        heldIslandHtml<BankBlock, HeldBankShared>({ rootId: "mv-bank", render: CONGRESS_BANK_ROWS, offset: inPage.length, shared: { cut: { members: [...members].sort(), tickers: [...tickers].sort() } }, rows: held })
       : "") +
     `</details>`
   );
@@ -629,11 +637,18 @@ export function moveRowFrom(r: MoveRowData, sec: MoveSection, hidden = false, tv
   );
 }
 
-/** The Named moves' island: the rows past the first `NAMED_MOVES_MIN`. */
-export interface HeldMoves {
+/** The Named moves' island (the one held-rows carrier): the rows past the
+    first `NAMED_MOVES_MIN`, with the section's inputs every row reads. */
+export interface HeldMovesShared {
   sec: MoveSection;
   tv: string | null;
-  rows: MoveRowData[];
+}
+export type HeldMoves = HeldIsland<MoveRowData, HeldMovesShared>;
+/** The name the Named moves' row function is registered under. */
+export const NAMED_MOVES_ROWS = "named-moves";
+/** A held move row: the server's row function, drawn hidden. */
+export function heldMoveRowHtml(r: MoveRowData, _index: number, s: HeldMovesShared): string {
+  return moveRowFrom(r, s.sec, true, s.tv);
 }
 
 /** The verification date most of the carried rows share — the section's
@@ -731,7 +746,7 @@ function namedMovesHtml(model: SignalsInstitutional, ctx: RenderCtx, overlapIds:
      the same row function (`moveRowFrom`), so the first load carries 15
      rows, not the 770 a production build holds */
   const rows = model.domSet.slice(0, shown).map((m, i) => moveRowHtml(m, ids[i]!, model, false, tvDefault, overlapIds)).join("\n");
-  const heldRows: HeldMoves = { sec: moveSection(model), tv: tvDefault, rows: model.domSet.slice(shown).map((m, i) => moveRowData(m, ids[shown + i]!, model, overlapIds)) };
+  const heldRows = model.domSet.slice(shown).map((m, i) => moveRowData(m, ids[shown + i]!, model, overlapIds));
   const chip = (attr: string, value: string, label: string): string =>
     `<button type="button" ${attr}="${esc(value)}" aria-pressed="false">${esc(label)}</button>`;
   /* the name filter's Congress detail, one per name a control can apply */
@@ -786,7 +801,7 @@ function namedMovesHtml(model: SignalsInstitutional, ctx: RenderCtx, overlapIds:
     `<span class="mv-hc mv-hc-r" aria-hidden="true">Filed</span>` +
     `</div>` +
     `<div class="mv-list" id="mv-list">${rows}</div>` +
-    (heldRows.rows.length > 0 ? heldIslandHtml("mv-list", heldRows) : "") +
+    (heldRows.length > 0 ? heldIslandHtml<MoveRowData, HeldMovesShared>({ rootId: "mv-list", render: NAMED_MOVES_ROWS, offset: shown, shared: { sec: moveSection(model), tv: tvDefault }, rows: heldRows }) : "") +
     `<p class="section-note" id="mv-empty" hidden>No moves match this filter.</p>` +
     `<div class="feed-foot"><div class="pager">` +
     `<span class="pager-range" id="mv-range" tabindex="-1">${esc(namedMovesRangeText(shown, total))}</span>` +

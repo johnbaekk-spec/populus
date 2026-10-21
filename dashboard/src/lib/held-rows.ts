@@ -1,7 +1,15 @@
 /* The held-rows carrier — the SERVER half of pagination-and-counts.md rule 8
-   (launch redesign LD26, R27). The client half is the one binder,
-   `initDomDisclosures` in `scripts/inst-index-client.ts`, extended with
-   `registerHeldRows`.
+   (launch redesign LD26, R27). The client half is the one binder in
+   `scripts/inst-index-client.ts`: `registerHeldRows` names a row function,
+   `heldRowsHtml` renders island rows through it (with the page's explicit
+   table roles), and its views — a compact table's "Show all"
+   (`initDomDisclosures`), a holders list's "Show all N holders" steps, the
+   Signals pagers — decide which rows to draw when.
+
+   EVERY held list on the site ships its rows in the one island this module
+   writes (`heldIslandHtml`): the member page's compact tables
+   (`heldTableParts`), the Signals hits, Named moves, Congress-lines bank and
+   Overlap names (launch M7a), and the holders lists (launch M7b).
 
    A held table renders its first N rows into its `tbody` and NOTHING ELSE of
    rows N+1..M. Those rows travel as JSON in an inline island
@@ -90,11 +98,7 @@ export function heldTableParts<R, S>(o: HeldTableOpts<R, S>): HeldTableParts {
   if (heldRows.length === 0) {
     return { bodyRows, island: "", noscript: "", total: o.rows.length, shown, held: 0 };
   }
-  const body: HeldIsland<R, S> = { v: 1, offset: shown, shared: o.shared, rows: heldRows };
-  const island =
-    `<script type="application/json" data-held-for="${attr(o.rootId)}" data-held-render="${attr(o.render)}">` +
-    serializeInlineJson(body) +
-    `</script>`;
+  const island = heldIslandHtml({ rootId: o.rootId, render: o.render, offset: shown, shared: o.shared, rows: heldRows });
   const noscript = o.noscript
     ? `<noscript>` +
       o.noscript.tableOpen +
@@ -104,6 +108,21 @@ export function heldTableParts<R, S>(o: HeldTableOpts<R, S>): HeldTableParts {
       `</table></noscript>`
     : "";
   return { bodyRows, island, noscript, total: o.rows.length, shown, held: heldRows.length };
+}
+
+/** THE island element (rule 8): inert JSON — never executable, never HTML
+    (`serializeInlineJson` escapes every `<`) — naming the root whose rows it
+    extends (`data-held-for`) and the registered row function they render
+    through (`data-held-render`). `offset` is the index of the island's first
+    row in the whole list (the rows the server already rendered before it);
+    `shared` carries every list-wide input the row function reads. */
+export function heldIslandHtml<R, S>(o: { rootId: string; render: string; offset: number; shared: S; rows: readonly R[] }): string {
+  const body: HeldIsland<R, S> = { v: 1, offset: o.offset, shared: o.shared, rows: [...o.rows] };
+  return (
+    `<script type="application/json" data-held-for="${attr(o.rootId)}" data-held-render="${attr(o.render)}">` +
+    serializeInlineJson(body) +
+    `</script>`
+  );
 }
 
 /** Parse an island body, or null when it is not one. The client binder calls
