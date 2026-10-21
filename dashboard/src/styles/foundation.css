@@ -172,7 +172,10 @@
    720px fold take the 16px gutter and the smaller display sizes; a coarse
    pointer (or the fold) takes the 44px hit square and the 44px ledger row. */
 @media (max-width:720px) {
-  :root { --gutter: 16px; --fs-display: 22px; --fs-hero: 28px; --masthead-h: 54px; }
+  /* --masthead-h is the WHOLE header (launch review m1): the 54px bar, its 1px
+     rule and the top inset its padding clears, so what sticks below it and
+     every anchor lands clear of it */
+  :root { --gutter: 16px; --fs-display: 22px; --fs-hero: 28px; --masthead-h: calc(55px + env(safe-area-inset-top)); }
   /* launch M1b (LD12, R6): the phone type ramp, as token VALUES. No visible
      text under 11px at the fold: labels and badges 11, data 12–13, names and
      prose 14–15. Every value is at or above its desktop value, so no text

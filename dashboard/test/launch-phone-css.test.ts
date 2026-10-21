@@ -271,13 +271,22 @@ test("R13 (LD10): the sticky header, the drawer, the search panel, the note shee
 
 /* ------------------------------------------ R8 / LD8: the slim sticky header */
 
-test("R8 (LD8): at ≤720px the masthead sticks at top 0, 54px tall; tab bars sit below it; anchors land below it", () => {
+test("R8 (LD8): at ≤720px the masthead sticks at top 0, a 54px bar; --masthead-h is the whole header; tab bars sit below it; anchors land below it", () => {
   const rules = parseRules(CSS);
   const mh: El[] = [{ tag: "html" }, { tag: "body" }, { tag: "header", classes: ["masthead"] }];
   assert.equal(winning(rules, mh, "position", PHONE)?.value, "sticky");
   assert.equal(winning(rules, mh, "top", PHONE)?.value, "0");
   assert.notEqual(winning(rules, mh, "position", DESKTOP)?.value, "sticky", "above the fold the masthead does not stick");
-  assert.equal(rootToken(rules, "--masthead-h", PHONE), "54px");
+  /* launch review m1 (the property kept, the value corrected): the token was
+     the bar's 54px, but the header is the bar, its 1px rule and the top inset
+     its padding clears — so what sticks below it and every anchor sat 1px plus
+     the inset under it. The token is now the header's whole height. */
+  const bar = winning(rules, [...mh, { tag: "div", classes: ["shell", "masthead-inner"] }], "height", PHONE)?.value;
+  assert.equal(bar, "54px", "the bar itself stays 54px");
+  const rule = /^(\d+)px\b/.exec(winning(rules, mh, "border-bottom", PHONE)?.value ?? "")?.[1];
+  assert.equal(rule, "1", "the header's one-pixel rule");
+  assert.match(winning(rules, mh, "padding-top", PHONE)?.value ?? "", /env\(safe-area-inset-top\)/, "the header clears the top inset");
+  assert.equal(rootToken(rules, "--masthead-h", PHONE), `calc(${54 + Number(rule)}px + env(safe-area-inset-top))`, "--masthead-h = bar + rule + inset");
   assert.equal(rootToken(rules, "--masthead-h", DESKTOP), "0px");
   for (const cls of ["sig-tabs-scroll", "tk-tabs"]) {
     assert.equal(winning(rules, [{ tag: "html" }, { tag: "body" }, { tag: "div", classes: [cls] }], "top", PHONE)?.value, "var(--masthead-h)", `.${cls} sticks below the header`);

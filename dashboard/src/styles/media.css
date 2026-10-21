@@ -80,8 +80,8 @@
      it is a SLIM STICKY header: 54px (--masthead-h), clear of the top inset,
      with the drawer and the search sheet hanging from it */
   .masthead-inner {
-    height: var(--masthead-h);
-    min-height: var(--masthead-h);
+    height: 54px;
+    min-height: 54px;
   }
   .masthead-left {
     gap: 0;
