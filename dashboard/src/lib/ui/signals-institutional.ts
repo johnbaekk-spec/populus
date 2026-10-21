@@ -698,8 +698,10 @@ export function namedMovesRangeText(shown: number, total: number): string {
 
 /** LD11: the page's own bound, stated where the DOM runs out before the total. */
 export function namedMovesBoundText(n: number): string {
-  /* copy item signals-12 */
-  return `This page carries the first ${fmtInt(n)} — filer pages list every move.`;
+  /* copy item signals-12; "every change", never "every move": the site-wide
+     banned-wording gate (post/banned-wording §0) reads every built HTML and
+     JS file, and this string ships in the client bundle too */
+  return `This page carries the first ${fmtInt(n)} — filer pages list every change.`;
 }
 
 /** The detail a name filter shows above its moves (LD10's "Consensus
@@ -728,7 +730,7 @@ function namedMovesHtml(model: SignalsInstitutional, ctx: RenderCtx, overlapIds:
       `Classified by share count — a dollar change alone is not a position change; an exit is inferred from absence in the next filing. ` +
       `Tickers appear only where the reviewed mapping names one.</span>` +
       `<span class="si-tip-p">Counts cover the build's whole population for each filter (${plural(model.moves.length, "change", "changes")} this quarter); ` +
-      `this page carries the first ${fmtInt(model.sliceRows)} per filter and every change on a Consensus or lead-card name. Filer pages list every move.</span>`,
+      `this page carries the first ${fmtInt(model.sliceRows)} per filter and every change on a Consensus or lead-card name. Filer pages list every change.</span>`,
     { scope: "signals-inst-moves" },
     "about",
     { trigger: "mark", name: "About named moves" },
@@ -818,7 +820,7 @@ function namedMovesHtml(model: SignalsInstitutional, ctx: RenderCtx, overlapIds:
     `<p class="section-note mv-bound" id="mv-bound"${boundShown ? "" : " hidden"}>${esc(namedMovesBoundText(model.domSet.length))}</p>` +
     bank +
     `<p class="visually-hidden" id="mv-status" role="status" aria-live="polite"></p>` +
-    `<noscript><p class="section-note">Filtering and paging need JavaScript: the first ${fmtInt(shown)} of ${plural(total, "change", "changes")} in this quarter are listed; filer pages list every move.</p></noscript>` +
+    `<noscript><p class="section-note">Filtering and paging need JavaScript: the first ${fmtInt(shown)} of ${plural(total, "change", "changes")} in this quarter are listed; filer pages list every change.</p></noscript>` +
     `</section>`
   );
 }

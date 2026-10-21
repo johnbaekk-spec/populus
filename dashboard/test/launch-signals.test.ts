@@ -235,7 +235,9 @@ test("R31 (D5, LD27): the Named moves' first load carries the first fifteen rows
   assert.deepEqual([...dom, ...held.rows.map((r) => r.id)], namedMoveIds(model), "the page's set, in its order, each once");
   assert.ok(!/<article class="mv-item"[^>]*\shidden/.test(html), "no held row in the DOM");
   const ns = /<noscript><p class="section-note">([^<]*)<\/p><\/noscript>\s*<\/section>/.exec(html.slice(html.indexOf('id="named-moves"')))![1]!;
-  assert.equal(ns, `Filtering and paging need JavaScript: the first ${NAMED_MOVES_MIN} of ${model.moves.length} changes in this quarter are listed; filer pages list every move.`);
+  assert.equal(ns, `Filtering and paging need JavaScript: the first ${NAMED_MOVES_MIN} of ${model.moves.length} changes in this quarter are listed; filer pages list every change.`);
+  /* launch final pass: "every change", never "every move" — post/banned-wording §0 reads \bmove\b in every built HTML and JS file */
+  assert.doesNotMatch(html, /\bmove\b/i, "no bare 'move' anywhere in the tab's markup");
   // a field carrying markup stays text when the client renders its row
   const hostile = moveRowFrom({ ...held.rows[0]!, manager: "<b>x</b>", issuer: "</script>" }, held.shared.sec, true, held.shared.tv);
   assert.doesNotMatch(hostile, /<b>x|<\/script>/);

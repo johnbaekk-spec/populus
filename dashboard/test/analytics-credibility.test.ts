@@ -245,7 +245,7 @@ test("T4.3 (R28): reviewed fund wrappers are excluded and counted; operating iss
   assert.equal(b.unkeyedMoves, 2);
   const html = consensusPanelHtml(b, null);
   // the exclusions are the panel's tip (LD19); the qualifying count stays visible
-  assert.match(domOf(html).querySelector(".note-pop")!.textContent.replace(/\s+/g, " "), /2 fund-wrapper registrants on the reviewed list are excluded · 2 moves carry no issuer identity and are outside this board\./);
+  assert.match(domOf(html).querySelector(".note-pop")!.textContent.replace(/\s+/g, " "), /2 fund-wrapper registrants on the reviewed list are excluded · 2 changes carry no issuer identity and are outside this board\./);
   assert.match(visibleText(domOf(html).querySelector("p.cs-count")!), /^3 issuers qualify$/);
 
   // the Institutional tab's "Top add" figure (signals-v4 LD9; it was the

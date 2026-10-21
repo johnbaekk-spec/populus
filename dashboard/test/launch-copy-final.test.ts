@@ -199,7 +199,7 @@ test("signals-10 (adapted): the five header tips are shorter and keep every qual
     "an exit is inferred from absence in the next filing",
     "Tickers appear only where the reviewed mapping names one",
     "Counts cover the build's whole population for each filter",
-    "Filer pages list every move",
+    "Filer pages list every change",
     "Broad accounts — members who traded more than",
     "A co-occurrence in public filings, never coordination",
     "broad accounts not counted (a name only they traded says so)",

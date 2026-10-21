@@ -110,7 +110,7 @@ export function overlapAbsenceText(ticker: string, why: OverlapInstAbsence): str
     case "artifact-missing":
       return `Not available for ${ticker}: this build's institutional (13F) aggregate is missing, so no notable manager's holding can be read.`;
     case "no-closed-quarter":
-      return `Not available for ${ticker}: this build holds no closed 13F quarter yet, so no notable manager's move can be read.`;
+      return `Not available for ${ticker}: this build holds no closed 13F quarter yet, so no notable manager's position change can be read.`;
     default:
       return `Not available for ${ticker}: the reviewed 13F name-and-class mapping does not name this ticker yet, so no notable manager's holding of it can be read.`;
   }
