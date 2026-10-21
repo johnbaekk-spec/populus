@@ -27,7 +27,7 @@ import { CARD_KINDS, cardKindOf, feedItemHtml, thHtml, withTableRoles, type TxnR
 import { entityTxnRowsHtml, entityTxnTable } from "../src/lib/ui/congress.ts";
 import { headLabels, rolesFor } from "../src/scripts/table-roles.ts";
 import { MiniElement } from "./lib/mini-dom.ts";
-import { cardTableCounts, stripTableRoles, tableRoleViolations } from "./lib/table-roles.ts";
+import { cardTableCounts, duplicateAttributeTags, stripTableRoles, tableRoleViolations } from "./lib/table-roles.ts";
 import { renderParitySurfaces } from "./lib/ui-parity-surfaces.ts";
 import { fixtureTxns } from "./lib/inst-signals-fixture.ts";
 
@@ -301,4 +301,56 @@ test("R40: Base.astro renders the page body through withTableRoles, once, and no
   assert.match(base, /const pageBody = withTableRoles\(await Astro\.slots\.render\("default"\)\);/);
   assert.match(base, /<Fragment set:html=\{pageBody\} \/>/);
   assert.doesNotMatch(base, /<slot\s*\/>/, "a bare slot would let a page body skip the roles");
+});
+
+/* ------------------------------------------- launch integration: no duplicates */
+
+test("R40 (launch integration): withTableRoles never states a role, a label or a card twice — over every parity surface, several of whose renderers emit their own roles — and running it again changes nothing", async () => {
+  const all = await surfaces();
+  let preRoled = 0;
+  for (const [name, html] of Object.entries(all)) {
+    if (/<(?:table|thead|tbody|tfoot|tr|th|td)\b[^>]*\srole="/.test(html)) preRoled++;
+    const out = withTableRoles(html);
+    assert.deepEqual(duplicateAttributeTags(out), [], `${name}: no element states role, data-label or data-card twice`);
+    assert.equal(withTableRoles(out), out, `${name}: idempotent`);
+  }
+  /* the member tables (M4), the boards (M3), the Triggers table (M5), the
+     home tables (M2) and the holders rows (M7b) state roles themselves */
+  assert.ok(preRoled >= 5, `the sweep includes renderers that emit their own roles (${preRoled} surfaces)`);
+  // controls: an adder that ignores a stated role is caught; so is a planted duplicate; a value naming the attribute is not one
+  const roledName = Object.keys(all).find((k) => /<tr\b[^>]*role="row"/.test(withTableRoles(all[k]!)))!;
+  const naive = (h: string): string => h.replace(/<tr\b((?:[^>"']|"[^"]*"|'[^']*')*)>/g, '<tr$1 role="row">');
+  assert.ok(duplicateAttributeTags(naive(withTableRoles(all[roledName]!))).length > 0, "control: a naive role adder is caught");
+  assert.deepEqual(duplicateAttributeTags('<td role="cell" role="cell">1</td>'), ["<td>: role ×2"], "control: a planted duplicate is caught");
+  assert.deepEqual(duplicateAttributeTags('<td title="role=cell" role="cell">1</td>'), [], "a quoted value naming the attribute is not the attribute");
+  assert.deepEqual(duplicateAttributeTags('<script type="application/json">{"a":"<td role=\\"cell\\" role=\\"cell\\">"}</script>'), [], "an island's JSON is text, not tags");
+});
+
+test("R40 (launch integration): every island row reaches the DOM through the binder's one render path, and that path applies rolesFor", () => {
+  const strip = (s: string): string => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  const binder = strip(src("scripts/inst-index-client.ts"));
+  const body = (name: string): string => {
+    const at = binder.indexOf(`export function ${name}(`);
+    assert.ok(at >= 0, `the binder defines ${name}`);
+    const next = binder.slice(at + 1).search(/\n(?:export )?function /);
+    return binder.slice(at, next < 0 ? undefined : at + 1 + next);
+  };
+  assert.match(body("heldRowsHtml"), /return rolesFor\(document\.getElementById\(rootId\), html\);/, "the render path ends in rolesFor");
+  /* the island's row functions are called in two places only: the render
+     path, and the deep-link search, which reads the string and never writes it */
+  const calls = [...binder.matchAll(/entry\.render\(/g)].length;
+  assert.equal(calls, 2, "entry.render is called by heldRowsHtml and revealHeldTarget only");
+  assert.match(body("revealHeldTarget"), /entry\.render\([^)]*\)\.includes\(needle\)/, "the search only reads");
+  // every write of island rows is the render path's output
+  const inserts = [...binder.matchAll(/(\w+)!?\.insertAdjacentHTML\(([^;]*)\);/g)].map((m) => m[0]);
+  assert.deepEqual(inserts, ['root.insertAdjacentHTML("beforeend", lead + html);'], "one insert: drawHeldRows");
+  assert.match(body("drawHeldRows"), /const html = root \? heldRowsHtml\(rootId, positions\) : null;/);
+  assert.match(binder, /tbody!\.innerHTML = heldRowsHtml\(id, list\.slice\(0, rendered\)\) \?\? "";/, "the holders list writes the render path's output");
+  // the Signals pagers draw through the binder, never by hand
+  const sig = strip(src("scripts/signals-client.ts"));
+  assert.doesNotMatch(sig, /insertAdjacentHTML\(/, "no pager inserts rows itself");
+  assert.doesNotMatch(sig, /\b(moveRowFrom|overlapItemHtml|congressBankBlockFrom)\(/, "no pager calls an island row function itself");
+  // control: the same readings catch a pager that draws by hand
+  assert.match('list!.insertAdjacentHTML("beforeend", rows);', /insertAdjacentHTML\(/);
+  assert.match("x = moveRowFrom(r, sec, true, tv)", /\b(moveRowFrom|overlapItemHtml|congressBankBlockFrom)\(/);
 });
