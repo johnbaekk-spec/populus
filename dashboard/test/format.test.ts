@@ -532,7 +532,7 @@ test("row HTML: a paper row states needs-OCR and that it carries no machine-read
      the feed's paper row has carried since DESIGN-POLISH M1. */
   const html = feedItemHtml(paper(), CTX);
   assert.ok(html.includes("Paper filing · needs OCR · no machine-readable transactions"));
-  assert.match(html, /<td class="cell cell-side c-kind">Paper<\/td>/, "the kind cell names it a paper filing");
+  assert.match(html, /<td class="cell cell-side c-kind"[^>]*>Paper<\/td>/, "the kind cell names it a paper filing");
 });
 
 test("row HTML (signals-v3 M1): no feed row carries a watch control — joined, unjoined or paper", () => {
@@ -1070,4 +1070,151 @@ test("R3: Tier C key normalizers match the shared Python fixture case for case",
     assert.equal(tierCKey(c.name, c.cls), `${c.name_key}|${c.class_key}`);
   }
   assert.equal(normalizeTicker13f("brk.b"), "BRK-B");
+});
+
+/* ---------- launch M3a: the 20-row page, part-metadata page counts, the
+   "With ticker" view and I7 (pagination-and-counts.md rules 1a, 2a, 2b) ---------- */
+
+import { DESIGN_FEED_PAGE_SIZE } from "../src/lib/format.ts";
+import {
+  decodeFeedPart as decodePartM3a,
+  feedItemHasTicker,
+  feedItemKey,
+  feedPageCount,
+  pageSliceFrom as pageSliceFromM3a,
+  partsForPage as partsForPageM3a,
+  planFeedParts as planFeedPartsM3a,
+  planTickerOffsets,
+  tickerPageCount,
+  tickerPageSliceFrom,
+  tickerPartsForPage,
+} from "../src/lib/feed-parts.ts";
+
+/** Build a feed of `n` transactions on one filed date with paper rows planted
+    at the given transaction positions (a paper row at position p sits after
+    the first p transactions). Every txn date is equal, so mergeFeed keeps the
+    planted order exactly. */
+function feedWithPaperAt(n: number, positions: number[]): ReturnType<typeof mergeFeed> {
+  const out: ReturnType<typeof mergeFeed> = [];
+  for (let i = 0; i <= n; i++) {
+    for (const p of positions) if (p === i) out.push(paper({ doc: `https://p/${i}-${out.length}` }));
+    if (i < n) out.push(txn({ txnId: `t${i}` }));
+  }
+  return out;
+}
+
+test("rule 1a/2a: every item is on exactly one 20-row page — exhaustive over paper positions, multiples of 20 included", () => {
+  const size = DESIGN_FEED_PAGE_SIZE;
+  assert.equal(size, 20);
+  for (const n of [0, 1, 19, 20, 21, 39, 40, 41, 60]) {
+    for (let p = 0; p <= n; p++) {
+      for (const extra of [[], [0], [n], [20], [40]] as number[][]) {
+        const merged = feedWithPaperAt(n, [p, ...extra.filter((x) => x <= n)]);
+        const pages = pageCountFor(merged, size);
+        const seen = new Map<unknown, number>();
+        const concat: unknown[] = [];
+        for (let page = 0; page < pages; page++) {
+          const slice = pageSlice(merged, page, size);
+          assert.ok(slice.length > 0, `n=${n} p=${p}: page ${page} is not blank (I2)`);
+          assert.ok(slice.filter((i) => i.kind === "txn").length <= size, "I4");
+          for (const it of slice) seen.set(it, (seen.get(it) ?? 0) + 1);
+          concat.push(...slice);
+        }
+        assert.deepEqual(concat, merged, `n=${n} p=${p}: pages concatenate to the feed (I3)`);
+        assert.ok([...seen.values()].every((c) => c === 1) && seen.size === merged.length, `n=${n} p=${p}: I1`);
+        // Rule 2a: the part-metadata count equals the walk, across part cuts.
+        if (merged.length > 0) {
+          const plan = planFeedPartsM3a(merged, { build_id: "b", generated_at: null }, { ceilingBytes: 2_500 });
+          assert.equal(feedPageCount(plan.index, size), pages, `n=${n} p=${p}: feedPageCount is the last item's position`);
+          assert.equal(plan.index.page_size, PAGE_SIZE, "the published index keeps its 50-row page_size");
+          const bodies = new Map([...plan.bodies].map(([k, v]) => [k, decodePartM3a(JSON.parse(v))!.items]));
+          for (let page = 0; page < pages; page++) {
+            const parts = partsForPageM3a(plan.index, page, size);
+            const got = pageSliceFromM3a(parts.flatMap((x) => bodies.get(x.part)!), parts[0]!.txn_offset, page, size);
+            assert.deepEqual(got.map(feedItemKey), pageSlice(merged, page, size).map(feedItemKey), `n=${n} p=${p}: page ${page} from its parts`);
+          }
+        } else {
+          assert.equal(pages, 0);
+        }
+      }
+    }
+  }
+});
+
+test("rule 2a control: a formula over counts is one page short exactly where the spec says", () => {
+  // 40 transactions then one paper row: the paper row's page is 2 (0-based).
+  const merged = feedWithPaperAt(40, [40]);
+  const plan = planFeedPartsM3a(merged, { build_id: "b", generated_at: null });
+  assert.equal(feedPageCount(plan.index, 20), 3);
+  assert.equal(Math.ceil(plan.index.txn_total / 20), 2, "control: ceil(txn/size) drops the trailing paper row's page");
+});
+
+test("rule 2b: ticker-view pages partition the ticker rows, located by the offsets island alone", () => {
+  // A mixed feed: tickers, no-ticker rows in runs, paper rows — over several parts.
+  const rows: ReturnType<typeof mergeFeed> = [];
+  for (let i = 0; i < 230; i++) {
+    const day = String(28 - Math.floor(i / 10)).padStart(2, "0");
+    const noTicker = i % 7 === 3 || (i >= 60 && i < 95);
+    rows.push(txn({ txnId: `t${i}`, filed: `2026-07-${day}`, ticker: noTicker ? null : `T${i}`, name: `M${i}` }));
+    if (i % 23 === 5) rows.push(paper({ filed: `2026-07-${day}`, doc: `https://p/${i}` }));
+  }
+  const merged = rows; // already in feed order (filed desc, txns before paper within a date)
+  const plan = planFeedPartsM3a(merged, { build_id: "b", generated_at: null }, { ceilingBytes: 6_000 });
+  assert.ok(plan.index.parts.length >= 4, "the fixture spans several parts");
+  const offsets = planTickerOffsets(merged, plan.index);
+  const view = merged.filter(feedItemHasTicker);
+  assert.equal(offsets.ticker_total, view.length);
+  assert.equal(offsets.no_ticker_total, merged.filter((i) => i.kind === "txn").length - view.length);
+  assert.equal(offsets.paper_total, merged.filter((i) => i.kind === "paper").length);
+  const bodies = new Map([...plan.bodies].map(([k, v]) => [k, decodePartM3a(JSON.parse(v))!.items]));
+  const pages = tickerPageCount(offsets, 20);
+  assert.equal(pages, pageCountFor(view, 20));
+  const concat: unknown[] = [];
+  let spanned = 0;
+  for (let page = 0; page < pages; page++) {
+    const holding = tickerPartsForPage(offsets, page, 20);
+    if (holding.length > 1) spanned++;
+    const got = tickerPageSliceFrom(holding.flatMap((p) => bodies.get(p.part)!), holding[0]!.ticker_before, page, 20);
+    assert.deepEqual(got.map(feedItemKey), pageSlice(view, page, 20).map(feedItemKey), `ticker page ${page}`);
+    assert.ok(got.every(feedItemHasTicker), "only ticker rows");
+    concat.push(...got.map(feedItemKey));
+    // only parts that hold ticker rows of this page are named
+    for (const p of holding) {
+      const items = bodies.get(p.part)!.filter(feedItemHasTicker);
+      assert.ok(items.length > 0);
+    }
+  }
+  assert.deepEqual(concat, view.map(feedItemKey), "the ticker pages partition the ticker rows, in feed order");
+  assert.ok(spanned > 0, "a ticker page spans two parts in this fixture");
+  // control: an offsets map shifted by one row pages the wrong rows
+  const shifted = { ...offsets, parts: offsets.parts.map((p, i) => (i === 1 ? { ...p, ticker_before: p.ticker_before + 1 } : p)) };
+  const p1 = Math.floor(offsets.parts[1]!.ticker_before / 20) + 1;
+  const h = tickerPartsForPage(shifted, p1, 20);
+  const wrong = tickerPageSliceFrom(h.flatMap((p) => bodies.get(p.part)!), h[0]!.ticker_before, p1, 20);
+  assert.notDeepEqual(wrong.map(feedItemKey), pageSlice(view, p1, 20).map(feedItemKey), "control: a stale offset is caught");
+});
+
+test("feedCountText I7: hidden populations are whole-set figures, stated with where they are", () => {
+  const view = { noun: "transactions with a ticker", hiddenNoTicker: 12565, hiddenPaper: 3061 };
+  const base = { page: 0, pageSize: 20, txnMatched: 59842, paperMatched: 0, txnOnPage: 20, paperOnPage: 0, txnTotal: 59842, indeterminate: 0 };
+  assert.equal(
+    feedCountText({ ...base, view }),
+    "1–20 of 59,842 transactions with a ticker · 12,565 without a ticker and 3,061 paper filings are in All rows",
+  );
+  assert.equal(feedCountText({ ...base, view: { ...view, hiddenPaper: 0 } }), "1–20 of 59,842 transactions with a ticker · 12,565 without a ticker are in All rows");
+  assert.equal(feedCountText({ ...base, view: { ...view, hiddenNoTicker: 0, hiddenPaper: 1 } }), "1–20 of 59,842 transactions with a ticker · 1 paper filing is in All rows");
+  assert.equal(feedCountText({ ...base, view: { ...view, hiddenNoTicker: 0, hiddenPaper: 0 } }), "1–20 of 59,842 transactions with a ticker", "nothing hidden, nothing said");
+  // the page fragment stays page-local (I5); the hidden clause never changes with the page
+  const p2 = feedCountText({ ...base, page: 2, txnOnPage: 7, txnMatched: 47, view });
+  assert.equal(p2, "41–47 of 47 transactions with a ticker · 12,565 without a ticker and 3,061 paper filings are in All rows");
+  // zero matches keep the clause: the reader learns where the rows are
+  assert.equal(
+    feedCountText({ ...base, txnMatched: 0, txnOnPage: 0, view: { ...view, hiddenNoTicker: 3, hiddenPaper: 0 } }),
+    "0 of 59,842 transactions with a ticker · 3 without a ticker are in All rows",
+  );
+  // All rows (no view) is today's string
+  assert.equal(
+    feedCountText({ page: 0, pageSize: 20, txnMatched: 72407, paperMatched: 3061, txnOnPage: 20, paperOnPage: 1, txnTotal: 72407, indeterminate: 0 }),
+    "1–20 of 72,407 transactions · 3,061 paper filings (1 here)",
+  );
 });

@@ -190,15 +190,19 @@ test("R19: a cached client that still asks for feed.v1.json is REFUSED, never fe
 });
 
 test("R12/LD7: page 2 costs exactly ONE part fetch and never the full dataset", async () => {
-  const { planFeedParts, feedPartHref } = await import("../src/lib/feed-parts.ts");
+  const { planFeedParts, planTickerOffsets, feedPartHref } = await import("../src/lib/feed-parts.ts");
   const { mergeFeed } = await import("../src/lib/format.ts");
   // One filed date: the feed order is then the load order, so page 2 is
-  // rows 50–99 exactly.
+  // rows 20–39 exactly. Launch M3a (LD20): the feed pages 20 rows and its
+  // default view is "With ticker", located by the offsets island the page
+  // ships beside the part index (rule 2b) — the property is unchanged.
   const rows = Array.from({ length: 120 }, (_, i) => txn({ txnId: `t-${i}`, ticker: `T${i}X`, filed: "2026-08-01" }));
-  const plan = planFeedParts(mergeFeed(rows, []), { build_id: "b", generated_at: null });
-  const dom = makeDom([...FEED_IDS, "feed-parts-index"]);
+  const merged = mergeFeed(rows, []);
+  const plan = planFeedParts(merged, { build_id: "b", generated_at: null });
+  const dom = makeDom([...FEED_IDS, "feed-parts-index", "feed-ticker-offsets"]);
   dom.elements.get("congress-feed")!.dataset = { txnCount: String(rows.length) };
   dom.elements.get("feed-parts-index")!.textContent = JSON.stringify(plan.index);
+  dom.elements.get("feed-ticker-offsets")!.textContent = JSON.stringify(planTickerOffsets(merged, plan.index));
   const restore = dom.install((url: string) => {
     const m = /\/congress\/data\/feed\/(.+)\.v1\.json$/.exec(url);
     if (m) return JSON.parse(plan.bodies.get(decodeURIComponent(m[1]!))!);
@@ -220,12 +224,12 @@ test("R12/LD7: page 2 costs exactly ONE part fetch and never the full dataset", 
     assert.deepEqual(dom.fetchCalls, [feedPartHref(plan.index.parts[0]!.part)], "one part, and only a part");
     assert.equal(received, false, "paging never decodes the full dataset");
     const body = dom.elements.get("feed-tbody")!.innerHTML;
-    assert.equal((body.match(/<tr\b/g) ?? []).length, 50, "page 2 holds the next fifty rows");
-    assert.match(body, />T50X</);
-    assert.match(body, />T99X</);
-    assert.doesNotMatch(body, />T49X</);
-    assert.doesNotMatch(body, />T100X</);
-    assert.match(dom.elements.get("pager-range")!.textContent, /^51–100 of 120 transactions/);
+    assert.equal((body.match(/<tr\b/g) ?? []).length, 20, "page 2 holds the next twenty rows");
+    assert.match(body, />T20X</);
+    assert.match(body, />T39X</);
+    assert.doesNotMatch(body, />T19X</);
+    assert.doesNotMatch(body, />T40X</);
+    assert.match(dom.elements.get("pager-range")!.textContent, /^21–40 of 120 transactions with a ticker/);
   } finally {
     g.HTMLElement = priorEls.HTMLElement;
     g.HTMLButtonElement = priorEls.HTMLButtonElement;

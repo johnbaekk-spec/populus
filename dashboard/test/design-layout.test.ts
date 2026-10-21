@@ -135,15 +135,18 @@ test('design label exemption cannot exempt unsupported analytical claims', async
 });
 
 
-test('fifty-row feed paging (R12) retains every transaction and trailing paper filing', async () => {
+// REVERSED by launch M3a (LD20): the feed pages 20 rows, not 50. The property
+// kept: every transaction and a trailing paper filing stay reachable, and the
+// count describes the page.
+test('twenty-row feed paging (launch M3a, was R12 fifty) retains every transaction and trailing paper filing', async () => {
   const {pageSlice, pageCountFor, feedCountText, DESIGN_FEED_PAGE_SIZE} = await import('../src/lib/format.ts');
-  assert.equal(DESIGN_FEED_PAGE_SIZE, 50);
+  assert.equal(DESIGN_FEED_PAGE_SIZE, 20);
   const rows = Array.from({length:100}, (_,i) => ({kind:'txn',txnId:String(i)})) as any[];
   rows.push({kind:'paper',doc:'trailing'});
   const pages = Array.from({length:pageCountFor(rows,DESIGN_FEED_PAGE_SIZE)}, (_,page)=>pageSlice(rows,page,DESIGN_FEED_PAGE_SIZE));
-  assert.deepEqual(pages.map(p=>p.length), [50,50,1]);
+  assert.deepEqual(pages.map(p=>p.length), [20,20,20,20,20,1]);
   assert.deepEqual(pages.flat(),rows);
-  assert.match(feedCountText({page:1,pageSize:50,txnMatched:100,paperMatched:1,txnOnPage:50,paperOnPage:0,txnTotal:100,indeterminate:0}),/^51–100/);
+  assert.match(feedCountText({page:1,pageSize:20,txnMatched:100,paperMatched:1,txnOnPage:20,paperOnPage:0,txnTotal:100,indeterminate:0}),/^21–40/);
 });
 
 test('reference ticker ranks keep count bars and distinct member totals on sort repaint', async () => {

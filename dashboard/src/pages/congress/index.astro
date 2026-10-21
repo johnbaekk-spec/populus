@@ -17,12 +17,17 @@ import { congressTickersRollup, leadersRollup } from "../../lib/derive";
 import { briefingCards, congressRankingSection, disclosureLedger, markPairPrimary, monthlyFlowPanel, rankingAlternatives, CONGRESS_ROOTS, type BuildStamps } from "../../lib/ui/index.ts";
 import { serializeInlineJson } from "../../lib/inline-json";
 import { COMPACT_ROWS } from "../../lib/format";
+import { feedItemHasTicker, planTickerOffsets } from "../../lib/feed-parts";
 
 const build = getBuildData();
 const coverage = coverageSummary(build.stats);
 /* R12 / LD7: the part index rides inline so paging costs only the part that
    holds the page — the same plan the /congress/data/feed/ routes emit. */
 const partsIndex = feedPartsPlan(build).index;
+/* Launch M3a (LD20, pagination-and-counts.md rule 2b): the "With ticker"
+   default view pages by ticker position; its offsets ride inline beside the
+   part index, from the SAME plan, with the whole-set totals I7 states. */
+const tickerOffsets = planTickerOffsets(build.merged, partsIndex);
 const largest = build.txns.reduce<(typeof build.txns)[number] | null>((best, row) =>
   row.low !== null && (best === null || row.low > best.low!) ? row : best, null);
 const latestLate = build.txns.find(row => row.late === 1);
@@ -88,13 +93,16 @@ const stamps: BuildStamps = {
   generatedAtDate: build.generatedAtDate,
 };
 
-// SSR page 1 through the same renderer the client island uses.
+// SSR page 1 of the DEFAULT view ("With ticker", LD20) through the same
+// renderer and the same slice rule the client island uses.
 const ssrCtx: RenderCtx = {
   cutMembers: build.cutMembers,
   cutTickers: build.cutTickers,
 };
-const pageOne = pageSlice(build.merged, 0, DESIGN_FEED_PAGE_SIZE);
+const tickerView = build.merged.filter(feedItemHasTicker);
+const pageOne = pageSlice(tickerView, 0, DESIGN_FEED_PAGE_SIZE);
 const partsIndexJson = serializeInlineJson(partsIndex);
+const tickerOffsetsJson = serializeInlineJson(tickerOffsets);
 const rowsHtml = pageOne.map((item) => feedItemHtml(item, ssrCtx)).join("\n");
 const sectionCtx: RenderCtx = {
   referenceRankings: true,
@@ -163,20 +171,27 @@ const footnoteHtml = footnoteBlock(
 );
 
 // The count is assembled by the same function the client island uses, so the
-// pre-rendered and re-rendered counts cannot drift.
+// pre-rendered and re-rendered counts cannot drift. I7: the default view
+// states, as whole-set figures, the transactions without a ticker and the
+// paper filings it hides, and where they are.
 const rangeText = feedCountText({
   page: 0,
   pageSize: DESIGN_FEED_PAGE_SIZE,
-  txnMatched: build.txnCount,
-  paperMatched: build.paperCount,
+  txnMatched: tickerOffsets.ticker_total,
+  paperMatched: 0,
   txnOnPage: pageOne.filter((i) => i.kind === "txn").length,
-  paperOnPage: pageOne.filter((i) => i.kind === "paper").length,
-  txnTotal: build.txnCount,
+  paperOnPage: 0,
+  txnTotal: tickerOffsets.ticker_total,
   indeterminate: 0,
+  view: {
+    noun: "transactions with a ticker",
+    hiddenNoTicker: tickerOffsets.no_ticker_total,
+    hiddenPaper: tickerOffsets.paper_total,
+  },
 });
 // Whether a second page exists is a property of this build, not an assumption:
 // a reduced extract must not pre-render an "older →" that goes nowhere.
-const hasOlderPage = pageCountFor(build.merged, DESIGN_FEED_PAGE_SIZE) > 1;
+const hasOlderPage = pageCountFor(tickerView, DESIGN_FEED_PAGE_SIZE) > 1;
 
 const description =
   "Congressional stock trading from primary sources — House Clerk PTRs and Senate eFD. " +
@@ -235,17 +250,48 @@ const description =
          the desktop layout exactly as designed. -->
     <section class="panel panel-wide" id="feed-section" aria-label="Disclosure feed">
       <div class="panel-head"><h2 class="section-h">Disclosure feed</h2>
-        <span class="panel-note">{fmtInt(build.txnCount)} rows · sorted filed ↓</span></div>
+        <span class="panel-note">newest filed first</span></div>
     <div class="filterbar" id="filterbar">
       <div class="filter-controls">
+      <!-- Launch M3a (LD20): the view and the two quick filters lead; the text
+           filter stands on its own row; Party, Amount, Owner, Late, Dates and
+           the EXCHANGE side stay under More filters (DV17). -->
+      <div class="filter-quick">
+      <div class="filter-group" role="group" aria-label="Rows">
+        <span class="filter-label" aria-hidden="true">Rows</span>
+        <div class="seg">
+          <button data-group="view" data-value="ticker" aria-pressed="true">With ticker</button>
+          <button data-group="view" data-value="all" aria-pressed="false">All rows</button>
+        </div>
+      </div>
+      <div class="filter-group" role="group" aria-label="Side">
+        <span class="filter-label" aria-hidden="true">Side</span>
+        <div class="seg">
+          <button data-group="side" data-value="all" aria-pressed="true">All</button>
+          <button data-group="side" data-value="buy" aria-pressed="false">Buys</button>
+          <button data-group="side" data-value="sell" aria-pressed="false">Sells</button>
+        </div>
+      </div>
       <div class="filter-group" role="group" aria-label="Chamber">
         <span class="filter-label" aria-hidden="true">Chamber</span>
         <div class="seg">
-          <button data-group="chamber" data-value="all" aria-pressed="true">All</button>
+          <button data-group="chamber" data-value="all" aria-pressed="true">Both</button>
           <button data-group="chamber" data-value="house" aria-pressed="false">House</button>
           <button data-group="chamber" data-value="senate" aria-pressed="false">Senate</button>
         </div>
       </div>
+      </div>
+      <div class="filter-group filter-search">
+        <label class="filter-label" for="filter-q">Filter</label>
+        <input
+          class="filter-select filter-text"
+          type="search"
+          id="filter-q"
+          placeholder="Member or ticker"
+          aria-label="filter by ticker prefix or member name — on this device"
+        />
+      </div>
+      <details class="advanced-filters" id="advanced-filters"><summary>More filters</summary><div class="advanced-filter-body">
       <div class="filter-group" role="group" aria-label="Party">
         <span class="filter-label" aria-hidden="true">Party</span>
         <div class="seg">
@@ -255,14 +301,10 @@ const description =
           <button data-group="party" data-value="I" class="tint-ind" aria-pressed="false" aria-label="Independent">I</button>
         </div>
       </div>
-      <details class="advanced-filters" id="advanced-filters"><summary>More filters</summary><div class="advanced-filter-body">
-      <div class="filter-group" role="group" aria-label="Side">
+      <div class="filter-group" role="group" aria-label="Exchanges">
         <span class="filter-label" aria-hidden="true">Side</span>
         <div class="seg">
-          <button data-group="side" data-value="all" aria-pressed="true">All</button>
-          <!-- DESIGN-POLISH M3 (R18): the side filter speaks the feed's own kind words -->
-          <button data-group="side" data-value="buy" class="tint-buy" aria-pressed="false">BUY</button>
-          <button data-group="side" data-value="sell" class="tint-sell" aria-pressed="false">SELL</button>
+          <!-- the feed's own kind word; pressing it again returns to All -->
           <button data-group="side" data-value="exch" aria-pressed="false">EXCHANGE</button>
         </div>
       </div>
@@ -297,16 +339,6 @@ const description =
         late only
       </label>
       <div class="filter-group">
-        <label class="filter-label" for="filter-q">Filter</label>
-        <input
-          class="filter-select filter-text"
-          type="search"
-          id="filter-q"
-          placeholder="ticker or member"
-          aria-label="filter by ticker prefix or member name — on this device"
-        />
-      </div>
-      <div class="filter-group">
         <label class="filter-label" for="filter-date-basis">Dates</label>
         <select class="filter-select" id="filter-date-basis" aria-label="date basis for the range filter">
           <option value="filed" selected>filed</option>
@@ -339,7 +371,7 @@ const description =
       </div>
 
       <div class="feed-empty" id="feed-empty" hidden>
-        <h2>No disclosures match — and that's an answer, not an error.</h2>
+        <h2>No disclosures match these filters.</h2>
         <p id="feed-empty-detail"></p>
         <div class="suggestions" id="feed-empty-suggestions"></div>
       </div>
@@ -347,7 +379,7 @@ const description =
       <!-- Not a scroll region (DESIGN-POLISH M1, R3): the ledger feed is page-flow
            rows, so the wrapper carries no focus stop and no "scroll" name. -->
       <div class="reference-feed-scroll">
-      <table class="feed-table reference-feed">
+      <table class="feed-table reference-feed" role="table" data-card="feed">
         <caption class="visually-hidden">
           Disclosed congressional transactions, newest filed first. Sort by clicking a column
           header; amounts sort on their disclosed lower bound and wholly-undisclosed rows are
@@ -359,14 +391,14 @@ const description =
         <Fragment set:html={feedHeadHtml({ activeKey: "filed", activeDir: "desc", notes: { scope: "congress-feed" } })} />
 
 
-        <tbody id="feed-tbody" set:html={rowsHtml} />
+        <tbody id="feed-tbody" role="rowgroup" set:html={rowsHtml} />
       </table>
       </div>
 
       <Fragment set:html={footnoteHtml} />
       <!-- The feed's compact bound is its PAGE, and the pager below is
            the disclosure that lifts it. A second "show all" control over a
-           50-row page of ~46,000 rows would be a control that cannot honour
+           20-row page of ~60,000 rows would be a control that cannot honour
            its own label; the pager states the bound and moves through it. -->
       <div class="feed-foot">
         <div class="pager">
@@ -386,6 +418,7 @@ const description =
     </section>
 
     <script is:inline type="application/json" id="feed-parts-index" set:html={partsIndexJson} />
+    <script is:inline type="application/json" id="feed-ticker-offsets" set:html={tickerOffsetsJson} />
   </main>
 
   <script>

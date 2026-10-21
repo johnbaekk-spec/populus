@@ -806,7 +806,7 @@ test("the fold keeps the feed's dual dates on screen — re-placed in the stacke
     ticker: "WMB", side: "purchase", owner: null, low: 1001, high: 15000, lag: 27, late: 0, flags: [],
     doc: "https://efdsearch.senate.gov/x",
   }, {});
-  assert.match(row, /<td class="cell cell-traded c-num"><span class="design-dates">[\s\S]*2026-06-24[\s\S]*2026-07-21/, "both dates sit in that one cell");
+  assert.match(row, /<td class="cell cell-traded c-num"[^>]*><span class="design-dates">[\s\S]*2026-06-24[\s\S]*2026-07-21/, "both dates sit in that one cell");
 });
 
 /* ---------- R13: corrected tokens verbatim ---------- */

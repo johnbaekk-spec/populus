@@ -10,9 +10,11 @@ import {
   COMPACT_ROWS,
   COMPACT_STEP,
   DESIGN_FEED_PAGE_SIZE,
+  PAGE_SIZE,
   compactBoundCount,
   compactExpandLabel,
   mergeFeed,
+  pageCountFor,
   pageSlice,
   type TxnRow,
   type PaperRow,
@@ -22,6 +24,7 @@ import {
   decodeFeedItem,
   decodeFeedPart,
   encodeFeedItem,
+  feedPageCount,
   pageSliceFrom,
   partsForPage,
   planFeedParts,
@@ -196,8 +199,11 @@ test("R11/R13: a ranking section shows 10 rows and ships the next 50 hidden for 
 
 /* ---------- R12: feed page size + LD7 parts ---------- */
 
-test("R12: the feed pages 50 rows", () => {
-  assert.equal(DESIGN_FEED_PAGE_SIZE, 50);
+// REVERSED by launch M3a (LD20, pagination-and-counts.md rule 1a): the feed
+// pages 20 rows; the published part index keeps page_size 50 byte-for-byte.
+test("R12 / launch M3a: the feed pages 20 rows; the published index keeps 50", () => {
+  assert.equal(DESIGN_FEED_PAGE_SIZE, 20);
+  assert.equal(PAGE_SIZE, 50, "the transport page size the published index carries");
 });
 
 function corpus(): { merged: ReturnType<typeof mergeFeed>; txns: TxnRow[]; papers: PaperRow[] } {
@@ -267,7 +273,11 @@ test("LD7: every page — including one that crosses a part boundary — equals 
   const plan = planFeedParts(merged, { build_id: "b", generated_at: null }, { ceilingBytes: 8_000 });
   const bodies = new Map([...plan.bodies].map(([k, v]) => [k, decodeFeedPart(JSON.parse(v))!.items]));
   let crossed = 0;
-  for (let page = 0; page < plan.index.page_count; page++) {
+  // Launch M3a (rule 2a): the 20-row page count comes from part metadata, not
+  // the index's 50-row page_count — every 20-row page is swept.
+  const pages = feedPageCount(plan.index, DESIGN_FEED_PAGE_SIZE);
+  assert.equal(pages, pageCountFor(merged, DESIGN_FEED_PAGE_SIZE), "the position-derived count equals the walk");
+  for (let page = 0; page < pages; page++) {
     const parts = partsForPage(plan.index, page, DESIGN_FEED_PAGE_SIZE);
     assert.ok(parts.length >= 1, `page ${page} maps to at least one part`);
     if (parts.length > 1) crossed++;
@@ -322,7 +332,9 @@ test("R12/R19: a FILTER loads the WHOLE corpus — every part, once — never a 
       !dom.fetchCalls.some((u) => u.includes("feed.v1.json")),
       "the retired single-asset feed must never be fetched",
     );
-    assert.match(dom.elements.get("pager-range")!.textContent, /^1–50 of 60 transactions/, "60 late rows over the full corpus");
+    // Launch M3a: 20 rows a page, in the default "With ticker" view (every
+    // fixture row carries a ticker, so nothing is hidden and nothing is stated).
+    assert.match(dom.elements.get("pager-range")!.textContent, /^1–20 of 60 transactions with a ticker$/, "60 late rows over the full corpus");
   } finally {
     restore();
   }

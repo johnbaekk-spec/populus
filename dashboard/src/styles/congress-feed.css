@@ -21,6 +21,25 @@
   max-width: 100%;
   display: contents;
 }
+/* Launch M3a (LD20): the view and the two quick filters lead as one wrapping
+   group; the text filter stands on its own row (a full-basis flex item breaks
+   the line); More filters follow. No width hides any of them. */
+.filter-quick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 22px;
+}
+.filter-search {
+  flex: 1 0 100%;
+}
+.filter-search .filter-text {
+  flex: 1 1 auto;
+  max-width: 420px;
+  cursor: text;
+  background-image: none;
+  padding-right: 11px;
+}
 /* `.filter-group`, `.filter-label` and the segmented `.seg` control are the
    ledger region's one control spec now (entities.css): one joined group, the
    active item filled with a 2px cue bar. The party tints stay (the design

@@ -331,14 +331,18 @@ const FEED_IDS = [
 ];
 
 test("F5: switching to a filtered view invalidates a part request still in flight", async () => {
-  const { planFeedParts, feedPartHref } = await import("../src/lib/feed-parts.ts");
+  const { planFeedParts, planTickerOffsets, feedPartHref } = await import("../src/lib/feed-parts.ts");
   const rows = Array.from({ length: 120 }, (_, i) =>
     txn({ txnId: `t-${i}`, ticker: `T${i}X`, filed: "2026-08-01", name: i === 5 ? "Needle Member" : "Hay Member" }),
   );
-  const plan = planFeedParts(mergeFeed(rows, []), { build_id: "b", generated_at: null });
-  const dom = makeDom(FEED_IDS);
+  const merged = mergeFeed(rows, []);
+  const plan = planFeedParts(merged, { build_id: "b", generated_at: null });
+  // Launch M3a (rule 2b): the default "With ticker" view pages through the
+  // parts by the offsets island the page ships; the race is unchanged.
+  const dom = makeDom([...FEED_IDS, "feed-ticker-offsets"]);
   dom.elements.get("congress-feed")!.dataset = { txnCount: String(rows.length) };
   dom.elements.get("feed-parts-index")!.textContent = JSON.stringify(plan.index);
+  dom.elements.get("feed-ticker-offsets")!.textContent = JSON.stringify(planTickerOffsets(merged, plan.index));
   let releasePart!: () => void;
   const partGate = new Promise<void>((r) => (releasePart = r));
   /* R19: the corpus is now assembled from the SAME part family the pager uses,

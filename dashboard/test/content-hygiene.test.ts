@@ -178,7 +178,7 @@ test("T3.2 (R18): BUY / SELL / EXCHANGE / — everywhere; a late row keeps its s
   /* control (P-10, M3 review — the old control matched a string literal
      against itself): the retired rendering, the late row's kind cell reading
      LATE, planted into the real row, fails the same side-word check */
-  const retired = domOf(late.replace(/(<td class="cell cell-side c-kind [^"]*">)SELL/, "$1LATE"));
+  const retired = domOf(late.replace(/(<td class="cell cell-side c-kind [^"]*"[^>]*>)SELL/, "$1LATE"));
   assert.doesNotMatch(visibleText(retired.querySelectorAll("tr")[0]!.querySelector("td.c-kind")!), /^SELL/, "control: a LATE kind cell is caught");
   // the member flows' Net words
   assert.equal(netKindWord({ kind: "finite", low: 5000, high: 15000 }).word, "NET BUY");
@@ -201,11 +201,15 @@ test("T3.2 (R18): BUY / SELL / EXCHANGE / — everywhere; a late row keeps its s
   assert.doesNotMatch(client, /const SHORT\b/);
   assert.match(client, /\bhitsBodyHtml\(/);
   assert.doesNotMatch(client, /signalKindShort|"(?:LARGE|NEW|RARE|LATE|COMMITTEE)"/, "no kind word is spelled in the island");
-  // the side filter's segments
+  // the side filter's segments. REVERSED by launch M3a (R20, the approved
+  // Congress board): the quick side filter reads All · Buys · Sells; the
+  // EXCHANGE side keeps the feed's own kind word under More filters. The
+  // property kept: one closed vocabulary, never the retired "Purchase"/"Sale".
   const congress = readFileSync(path.join(SRC, "pages", "congress", "index.astro"), "utf-8");
-  assert.match(congress, /data-value="buy"[^>]*>BUY</);
-  assert.match(congress, /data-value="sell"[^>]*>SELL</);
+  assert.match(congress, /data-group="side" data-value="buy"[^>]*>Buys</);
+  assert.match(congress, /data-group="side" data-value="sell"[^>]*>Sells</);
   assert.match(congress, /data-value="exch"[^>]*>EXCHANGE</);
+  assert.doesNotMatch(congress, /data-group="side"[^>]*>(?:Purchase|Sale)s?</, "control: no retired side word on a filter");
   // control: the dist predicate catches a retired side word in a cell
   assert.ok(contentHits("<td class=\"c-kind\">Purchase</td>").some((h) => h.check === "a cell reads the retired side word"));
   assert.equal(contentHits("<td class=\"c-kind\">BUY</td>").length, 0);

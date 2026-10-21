@@ -1383,9 +1383,12 @@ export function amountVerdict(
 /* ---------- merge + pagination (shared so SSR page 1 === client page 1) ---- */
 
 export const PAGE_SIZE = 50;
-/** R12: the Congress feed pages 50 rows; page 1 is server-rendered from the
-    same slice the client pages through the byte-bounded feed parts. */
-export const DESIGN_FEED_PAGE_SIZE = 50;
+/** Launch M3a (LD20, pagination-and-counts.md rule 1a): the Congress feed
+    pages 20 rows in both views; page 1 is server-rendered from the same slice
+    the client pages through the byte-bounded feed parts. The published part
+    index keeps `page_size` 50 (`PAGE_SIZE`) byte-for-byte: a 20-row page is
+    derived from part metadata (`feedPageCount`, rule 2a), never from it. */
+export const DESIGN_FEED_PAGE_SIZE = 20;
 
 /** Merge transactions with paper filings by filed date (desc); transactions
     first within a date. Both inputs must already be sorted filed-desc. */
@@ -1473,6 +1476,12 @@ export interface CountInputs {
   txnTotal: number;
   /** rows whose amount can be neither ruled in nor out of the threshold */
   indeterminate: number;
+  /** I7 (launch M3a): a VIEW that hides populations — the "With ticker"
+      default. `noun` names the view's transactions ("transactions with a
+      ticker"); `hiddenNoTicker` and `hiddenPaper` are WHOLE-SET sizes under the
+      reader's other filters, stated as the rows All rows holds. Absent in All
+      rows. */
+  view?: { noun: string; hiddenNoTicker: number; hiddenPaper: number };
 }
 
 /** THE range-of-total count (DESIGN-POLISH M1, R8): "1–10 of 608 tickers",
@@ -1497,10 +1506,21 @@ export function rangeOfTotal(
   return `${fmtInt(first)}–${fmtInt(last)} of ${opts.definite ? "the " : ""}${fmtInt(total)} ${noun}`;
 }
 
+/** I7: the populations a view hides, as one whole-set clause naming where
+    they are. A zero population is not stated; nothing hidden, nothing said. */
+function hiddenViewText(noTicker: number, paper: number): string {
+  const papers = (n: number): string => `${fmtInt(n)} paper ${n === 1 ? "filing" : "filings"}`;
+  if (noTicker > 0 && paper > 0) return ` · ${fmtInt(noTicker)} without a ticker and ${papers(paper)} are in All rows`;
+  if (noTicker > 0) return ` · ${fmtInt(noTicker)} without a ticker ${noTicker === 1 ? "is" : "are"} in All rows`;
+  if (paper > 0) return ` · ${papers(paper)} ${paper === 1 ? "is" : "are"} in All rows`;
+  return "";
+}
+
 export function feedCountText(i: CountInputs): string {
+  const noun = i.view?.noun ?? "transactions";
   let txnPart: string;
   if (i.txnMatched === 0) {
-    txnPart = `0 of ${fmtInt(i.txnTotal)} transactions`;
+    txnPart = `0 of ${fmtInt(i.txnTotal)} ${noun}`;
   } else if (i.txnOnPage === 0) {
     // A reachable page can hold only trailing paper filings; a numeric range
     // would have to invert to describe it.
@@ -1508,7 +1528,7 @@ export function feedCountText(i: CountInputs): string {
   } else {
     const lo = i.page * (i.pageSize ?? PAGE_SIZE) + 1;
     const hi = Math.min(lo + i.txnOnPage - 1, i.txnMatched);
-    txnPart = rangeOfTotal(lo, hi, i.txnMatched, "transactions");
+    txnPart = rangeOfTotal(lo, hi, i.txnMatched, noun);
   }
   const paperPart =
     i.paperMatched === 0
@@ -1517,7 +1537,8 @@ export function feedCountText(i: CountInputs): string {
         (i.paperOnPage > 0 ? ` (${fmtInt(i.paperOnPage)} here)` : "");
   const unknownPart =
     i.indeterminate === 0 ? "" : ` · ${fmtInt(i.indeterminate)} amount not comparable`;
-  return txnPart + paperPart + unknownPart;
+  const hiddenPart = i.view ? hiddenViewText(i.view.hiddenNoTicker, i.view.hiddenPaper) : "";
+  return txnPart + paperPart + unknownPart + hiddenPart;
 }
 
 /* ---------- row renderers (single source for SSR + client) ---------- */
@@ -1608,9 +1629,10 @@ export function srcLink(doc: string, extraClass = ""): string {
   return `<div class="cell cell-src${extraClass ? " " + extraClass : ""}">${srcLinkInner(doc)}</div>`;
 }
 
-/** The feed row's provenance CELL. Same content, table-row container. */
+/** The feed row's provenance CELL. Same content, table-row container, with
+    the receipt role class and its explicit cell role (R40). */
 export function srcLinkCell(doc: string): string {
-  return `<td class="cell cell-src">${srcLinkInner(doc)}</td>`;
+  return `<td class="cell cell-src c-src" role="cell">${srcLinkInner(doc)}</td>`;
 }
 
 /** SrcLink, aggregate form (G7): derived rows carry "derived ·§" resolving to
@@ -1740,32 +1762,35 @@ export function txnRowHtml(r: TxnRow, ctx: RenderCtx): string {
       }) +
       `</span>`
     : "";
-  return `<tr class="feed-row feed-grid-cols reference-row ${esc(side.cls)}${r.late === 1 ? " reference-late" : ""}"${edge ? ` data-edge="${edge}"` : ""}>` +
+  /* R40 (launch M1 contract, emitted here by M3a): explicit table roles on the
+     row and every cell, at every width, so the ≤720px card keeps its table
+     semantics where WebKit drops them on a `display` change. */
+  return `<tr class="feed-row feed-grid-cols reference-row ${esc(side.cls)}${r.late === 1 ? " reference-late" : ""}"${edge ? ` data-edge="${edge}"` : ""} role="row">` +
     /* L4 (DESIGN-POLISH M3, T3.2): a late row keeps its side word — the
        lateness is the gold edge and the dates cell's LATE·Nd, never a
        replacement for the side, which is honesty content (§1). */
-    `<td class="cell cell-side c-kind ${esc(side.cls)}">${esc(side.text)}</td>` +
-    `<td class="cell cell-member c-member"><span class="visually-hidden">Member </span>${memberCellHtml(r, ctx)}</td>` +
-    `<td class="cell cell-ticker c-ticker">${r.ticker ? `<a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>` : '<span class="none">—</span>'}</td>` +
+    `<td class="cell cell-side c-kind ${esc(side.cls)}" role="cell">${esc(side.text)}</td>` +
+    `<td class="cell cell-member c-member" role="cell"><span class="visually-hidden">Member </span>${memberCellHtml(r, ctx)}</td>` +
+    `<td class="cell cell-ticker c-ticker" role="cell">${r.ticker ? `<a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>` : '<span class="none">—</span>'}</td>` +
     /* R17 (M3, T3.3): the default asset text, its as-filed note, and the
        qualifiers OUTSIDE the ellipsis — one separator, never "· ·" (A9). */
-    `<td class="cell cell-asset c-secondary">${assetLineHtml(r, { notes: { scope: "feed-asset" }, qualifiers: true })}</td>` +
-    `<td class="cell cell-amount c-num${amountUnknown ? " unknown" : ""}">${esc(amount)}${capMark}</td>` +
+    `<td class="cell cell-asset c-secondary" role="cell">${assetLineHtml(r, { notes: { scope: "feed-asset" }, qualifiers: true })}</td>` +
+    `<td class="cell cell-amount c-num${amountUnknown ? " unknown" : ""}" role="cell">${esc(amount)}${capMark}</td>` +
     /* H-17: the row's flags are VISIBLE chips in the range cell — never folded
        behind a note. Each chip is the label trigger of its OWN definition
        (FEED_FLAG_DEFINITIONS). */
-    `<td class="cell cell-range c-bar">${rangeBand(r)}${flagTags(r.flags, r, { definitions: { notes: { scope: "feed-flag" }, key: r.txnId } })}</td>` +
-    `<td class="cell cell-traded c-num">${dualDate(r, true)}</td>` +
-    `<td class="cell cell-src c-src">${srcLinkInner(r.doc)}</td></tr>`;
+    `<td class="cell cell-range c-bar" role="cell">${rangeBand(r)}${flagTags(r.flags, r, { definitions: { notes: { scope: "feed-flag" }, key: r.txnId } })}</td>` +
+    `<td class="cell cell-traded c-num" role="cell">${dualDate(r, true)}</td>` +
+    `<td class="cell cell-src c-src" role="cell">${srcLinkInner(r.doc)}</td></tr>`;
 }
 
 export function paperRowHtml(r: PaperRow, ctx: RenderCtx): string {
   /* The ledger's grid row (DESIGN-POLISH M1): the kind word, the member, one
      cell spanning the four columns a paper filing cannot fill, the filed
      date in the dates column, the receipt. */
-  return `<tr class="feed-row paper reference-paper"><td class="cell cell-side c-kind">Paper</td><td class="cell cell-member c-member">${memberCellHtml(r, ctx)}</td>` +
-    `<td colspan="4" class="paper-main c-secondary">Paper filing · needs OCR · no machine-readable transactions</td>` +
-    `<td class="cell cell-traded c-num"><span class="visually-hidden">Filed </span>${esc(r.filed)}</td>${srcLinkCell(r.doc)}</tr>`;
+  return `<tr class="feed-row paper reference-paper" role="row"><td class="cell cell-side c-kind" role="cell">Paper</td><td class="cell cell-member c-member" role="cell">${memberCellHtml(r, ctx)}</td>` +
+    `<td colspan="4" class="paper-main c-secondary" role="cell">Paper filing · needs OCR · no machine-readable transactions</td>` +
+    `<td class="cell cell-traded c-num" role="cell"><span class="visually-hidden">Filed </span>${esc(r.filed)}</td>${srcLinkCell(r.doc)}</tr>`;
 }
 
 /* ---------- the feed table's COLUMN CONTRACT ----------
@@ -1787,6 +1812,8 @@ export interface FeedColumn {
   /** why this column has no defined order — required on every column that
       carries no `sortKey`, so a mute column cannot be added by omission */
   why?: string;
+  /** `why` as trusted html, when the reason carries a link */
+  whyHtml?: string;
   /** extra class on the `<th>`, matching the grid track it heads */
   cls?: string;
 }
@@ -1800,16 +1827,28 @@ export interface FeedHeadOpts {
 }
 
 export function feedHeadHtml(opts: FeedHeadOpts): string {
+  /* Launch M3a (LD22): "Kind" → "Side", "Amount range" → "Size", "Source" →
+     "Src"; each keeps its definition as the header note, and a paper row keeps
+     "Paper" in the Side column. */
   const columns: readonly FeedColumn[] = [
-    { label: "Kind", why: "Purchase, sale or exchange as disclosed.", cls: "c-kind" },
+    { label: "Side", why: "Purchase, sale or exchange as disclosed; a paper filing reads Paper.", cls: "c-kind" },
     { label: "Member", why: "Member and affiliation as recorded in the filing.", cls: "c-member" },
     { label: "Ticker", why: TICKER_ABSENT_NOTE, cls: "c-ticker" },
-    /* CD3-4 (b)/(c), M3 review: the asset rule, stated once on the column */
-    { label: "Asset · Owner", why: `${assetColumnNote()} The partial-sale and owner qualifiers are kept beside it.`, cls: "c-secondary" },
+    /* CD3-4 (b)/(c), M3 review: the asset rule, stated once on the column —
+       shortened for the feed by copy item congress-25, keeping the pinned
+       "without the parts that repeat the row" and the as-filed note. */
+    {
+      label: "Asset · owner",
+      whyHtml:
+        `The asset as filed, without the parts that repeat the row (its ticker, the [ST] code, a trailing “Common Stock”). ` +
+        `Any other difference makes the name a button whose note gives the text as filed; the partial-sale and owner qualifiers are kept beside it. ` +
+        `<a href="/methodology/#owner-codes">Owner codes ↗</a>`,
+      cls: "c-secondary",
+    },
     { label: "Range", sortKey: "amount", cls: "c-num" },
-    { label: "Amount range", why: "The statutory interval on a fixed log scale ($1K–$50M+); hatching identifies open or unknown bounds.", cls: "range c-bar" },
-    { label: "Traded → Filed", sortKey: "filed", cls: "c-num" },
-    { label: "Source", why: "Each link opens the original disclosure.", cls: "src c-src" },
+    { label: "Size", why: "The statutory interval on a fixed log scale ($1K–$50M+); hatching identifies open or unknown bounds.", cls: "range c-bar" },
+    { label: "Traded → filed", sortKey: "filed", cls: "c-num" },
+    { label: "Src", why: "Each link opens the original disclosure.", cls: "src c-src" },
   ];
   const cells = columns.map((c) => {
     const cls = c.cls ? ` class="${c.cls}"` : "";
@@ -1821,7 +1860,7 @@ export function feedHeadHtml(opts: FeedHeadOpts): string {
             : "descending"
           : "none";
       return (
-        `<th scope="col"${cls} data-feed-sort="${c.sortKey}" data-feed-dir="desc" ` +
+        `<th scope="col"${cls} role="columnheader" data-feed-sort="${c.sortKey}" data-feed-dir="desc" ` +
         `aria-sort="${dir}"><button class="th-sort" type="button">${thLabelHtml(c.label)}</button>` +
         SORT_CARET +
         `</th>`
@@ -1830,8 +1869,8 @@ export function feedHeadHtml(opts: FeedHeadOpts): string {
     /* The stated reason is the header's own LABEL trigger: the label is the
        button, so the header adds no inline width. */
     return (
-      `<th scope="col"${cls}>` +
-      noteFromHtml(esc(c.why ?? ""), opts.notes, c.label, {
+      `<th scope="col"${cls} role="columnheader">` +
+      noteFromHtml(c.whyHtml ?? esc(c.why ?? ""), opts.notes, c.label, {
         trigger: "label",
         textHtml: thLabelHtml(c.label),
         name: c.label,
@@ -1839,7 +1878,7 @@ export function feedHeadHtml(opts: FeedHeadOpts): string {
       `</th>`
     );
   }).join("");
-  return `<thead><tr class="feed-head feed-grid-cols reference-head">${cells}</tr></thead>`;
+  return `<thead role="rowgroup"><tr class="feed-head feed-grid-cols reference-head" role="row">${cells}</tr></thead>`;
 }
 
 export function feedItemHtml(item: FeedItem, ctx: RenderCtx): string {
