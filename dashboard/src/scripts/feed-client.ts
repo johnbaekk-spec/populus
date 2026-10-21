@@ -30,6 +30,7 @@ import {
   tickerPageCount,
   tickerPageSliceFrom,
   tickerPartsForPage,
+  TICKER_VIEW_NOUN,
   type FeedPartsIndex,
   type FeedTickerOffsets,
 } from "../lib/feed-parts.ts";
@@ -78,8 +79,7 @@ const DEFAULTS: State = {
 
 /** I7: the count string's view clause — the "With ticker" noun and the
     whole-set sizes of what it hides — or undefined in All rows. */
-export const TICKER_VIEW_NOUN = "transactions with a ticker";
-export function viewClause(
+function viewClause(
   view: "ticker" | "all",
   hiddenNoTicker: number,
   hiddenPaper: number,
@@ -355,7 +355,9 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
   function pagesFromParts(s: State): boolean {
     return (
       partsIndex !== null &&
-      (s.view === "all" || tickerOffsets !== null) &&
+      // An empty ticker view takes the corpus path, which renders the empty
+      // state (rule 4) and offers "All rows" — never a blank table.
+      (s.view === "all" || (tickerOffsets !== null && tickerOffsets.ticker_total > 0)) &&
       s.sort === "filed" &&
       s.chamber === "all" &&
       s.party === "all" &&

@@ -181,7 +181,7 @@ test("R20: the page renders the default view through the expressions this suite 
   assert.match(PAGE_SRC, /const pageOne = pageSlice\(tickerView, 0, DESIGN_FEED_PAGE_SIZE\);/);
   assert.match(PAGE_SRC, /txnMatched: tickerOffsets\.ticker_total,/);
   assert.match(PAGE_SRC, /hiddenNoTicker: tickerOffsets\.no_ticker_total,\s*hiddenPaper: tickerOffsets\.paper_total,/);
-  assert.match(PAGE_SRC, /noun: "transactions with a ticker"/);
+  assert.match(PAGE_SRC, /noun: TICKER_VIEW_NOUN,/);
   assert.match(PAGE_SRC, /<script is:inline type="application\/json" id="feed-ticker-offsets" set:html=\{tickerOffsetsJson\} \/>/);
   assert.equal(DESIGN_FEED_PAGE_SIZE, 20, "20 rows a page (LD20)");
 });

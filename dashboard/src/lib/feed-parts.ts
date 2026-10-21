@@ -253,6 +253,10 @@ export function feedPageCount(index: Pick<FeedPartsIndex, "parts">, pageSize: nu
 
 /* ---------- launch M3a: the "With ticker" view (rule 2b, invariant I7) ---------- */
 
+/** I7: the default view's own noun for its transactions — ONE source for the
+    server's count and the client's. */
+export const TICKER_VIEW_NOUN = "transactions with a ticker";
+
 /** A row the default "With ticker" view shows: a transaction whose ticker is
     set — the same test the ticker ranking applies (`!t.ticker` is a row with
     no ticker there). A paper filing has no ticker, so it is never shown. */
