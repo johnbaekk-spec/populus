@@ -443,7 +443,7 @@ export function tickerUnifiedBody(
     `</div>` +
     `</section>` +
     /* PANEL 2 — Institutional (R21): who holds (with crowding), then the
-       Congress ↔ notable-managers overlap, then "Do the two regimes agree?" */
+       Congress ↔ notable-managers overlap, then "Congress vs filers" (ticker-13) */
     `<section class="tk-panel" role="tabpanel" id="institutional" aria-labelledby="tab-institutional">` +
     `<div class="design-band design-ticker-band design-ticker-holders">` +
     `<div>` + tickerInstSectionHtml(inst, t.ticker) + `</div>` +
@@ -683,13 +683,19 @@ function agreementHtml(t: TickerEntity, stamps: BuildStamps, inst: TickerInstSec
   const row = (k: string, left: number, right: number, text: string, cls: string): string =>
     `<div class="agree-row"><span class="agree-k">${esc(k)}</span><span class="design-diverging" aria-hidden="true"><span style="right:50%;width:${((left / total) * 50).toFixed(1)}%"></span><span class="sale" style="left:50%;width:${((right / total) * 50).toFixed(1)}%"></span></span><span class="agree-v ${cls}">${esc(text)}</span></div>`;
   return (
-    `<section class="panel design-agree" aria-label="Do the two regimes agree">` +
-    `<div class="panel-head"><h2 class="section-h">Do the two regimes agree?</h2><span class="panel-note">TRAILING 12M · CONGRESS vs FILERS NET</span></div>` +
+    /* launch copy item ticker-13 (adapted): one head and one line for the
+       side this build cannot compute; WHY it cannot, and that agreement is
+       stated only when both sides are computed, are that line's tip */
+    `<section class="panel design-agree" aria-label="Congress vs filers">` +
+    `<div class="panel-head"><h2 class="section-h">Congress vs filers</h2><span class="panel-note">12 months</span></div>` +
     row("Congress net (rows)", buys, sells, rows.length === 0 ? "no rows" : `${fmtInt(buys)} buy / ${fmtInt(sells)} sell`, dir === "accumulation" ? "c-buy" : dir === "disposal" ? "c-sell" : "c-muted") +
     row("Congress net ($ bound)", dir === "accumulation" ? 1 : 0, dir === "disposal" ? 1 : 0, netIntervalText(net), dir === "accumulation" ? "c-buy" : dir === "disposal" ? "c-sell" : "c-muted") +
-    `<div class="agree-row agree-unavailable"><span class="agree-k">Filers net (actions)</span><span class="design-diverging" aria-hidden="true"></span><span class="agree-v c-muted">not in build</span></div>` +
-    `<div class="agree-row agree-unavailable"><span class="agree-k">Filers net ($ Q/Q)</span><span class="design-diverging" aria-hidden="true"></span><span class="agree-v c-muted">not in build</span></div>` +
-    `<p class="section-note">${instAbsenceReason(inst, "the filer side cannot be computed", "The filer side needs per-issuer quarter-over-quarter actions, which the published aggregate does not carry for this issuer.")} Convergence and divergence are stated only when both sides are computed.</p>` +
+    `<div class="agree-row agree-unavailable"><span class="agree-k">Filers</span><span class="design-diverging" aria-hidden="true"></span><span class="agree-v c-muted">not computed${noteFromHtml(
+      `${instAbsenceReason(inst, "the filer side cannot be computed", "The filer side needs per-issuer quarter-over-quarter actions, which the published aggregate does not carry for this issuer.")} Convergence and divergence are stated only when both sides are computed.`,
+      { scope: "ticker-agree" },
+      "filers",
+      { trigger: "mark", name: "Why the filer side is not computed" },
+    )}</span></div>` +
     `</section>`
   );
 }

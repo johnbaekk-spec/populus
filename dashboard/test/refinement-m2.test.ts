@@ -811,7 +811,7 @@ test("R19/R20: the band renders on BOTH routes — the unified ticker page (via 
   assert.equal(overlapEl.closest('[role="tabpanel"]')?.getAttribute("id"), "institutional", "the overlap band sits in the Institutional panel");
   assert.ok(ticker.indexOf('id="congress"') < ticker.indexOf('id="institutional"'), "Congress, then Institutional");
   const instPanel = ticker.slice(ticker.indexOf('id="institutional"'));
-  assert.ok(instPanel.indexOf('id="ticker-holders"') < instPanel.indexOf('id="overlap"') && instPanel.indexOf('id="overlap"') < instPanel.indexOf("Do the two regimes agree?"), "holders, then the overlap band, then the agreement");
+  assert.ok(instPanel.indexOf('id="ticker-holders"') < instPanel.indexOf('id="overlap"') && instPanel.indexOf('id="overlap"') < instPanel.indexOf('class="panel design-agree"'), "holders, then the overlap band, then the agreement (launch ticker-13: its head reads 'Congress vs filers')");
   // control: the pre-M3 order (the band between the two sections, outside both) fails the panel reading
   assert.notEqual(domOf(`<section role="tabpanel" id="congress"></section>${overlapHtml}<section role="tabpanel" id="institutional"></section>`).querySelector("#overlap")!.closest('[role="tabpanel"]')?.getAttribute("id"), "institutional");
   const holders = tickerHoldersBody({

@@ -15,7 +15,7 @@
    markup on a ticker page).
    Below both: a merged timeline, 20 rows, newest first. */
 
-import { esc, fmtInt, fmtUsd, kindWord, memberHrefFor, sideLabel, amountText, utcDayNumber, thHtml, type RenderCtx, type TxnRow } from "./format.ts";
+import { esc, fmtInt, fmtUsd, kindWord, memberHrefFor, note, sideLabel, amountText, utcDayNumber, thHtml, type RenderCtx, type TxnRow } from "./format.ts";
 import { sumRanges, sumRangesText, excludeDateAnomalies, affTextOf } from "./derive.ts";
 import { type InstData, type TickerHolderRow, tickerHoldersFor, tickerTotalsFor } from "./inst.ts";
 import type { ManagerTyping } from "./manager-directory.ts";
@@ -263,7 +263,8 @@ export function overlapBandHtml(b: OverlapBand, ctx: RenderCtx, filerHref: (cik:
     `<dl class="overlap-rows">` +
     `<div><dt>Buyers</dt><dd><span class="overlap-n c-buy">${fmtInt(b.buyers.length)}</span> ${memberList(b.buyers, ctx)} <span class="overlap-total c-num">${esc(b.buyTotal)}</span></dd></div>` +
     `<div><dt>Sellers</dt><dd><span class="overlap-n c-sell">${fmtInt(b.sellers.length)}</span> ${memberList(b.sellers, ctx)} <span class="overlap-total c-num">${esc(b.sellTotal)}</span></dd></div>` +
-    `</dl><p class="section-note">filed ${esc(b.window.start)} → ${esc(b.window.end)} · totals are statutory ranges</p>` +
+    /* launch copy item ticker-12: the window and the ranges caveat, once each */
+    `</dl><p class="section-note">filed ${esc(b.window.start)} → ${esc(b.window.end)} · statutory ranges</p>` +
     (opts.congressNotice ? `<p class="section-note overlap-notice">${esc(CONGRESS_USE_NOTICE)}</p>` : "") +
     `</div>`;
   const inst = b.inst
@@ -271,7 +272,10 @@ export function overlapBandHtml(b: OverlapBand, ctx: RenderCtx, filerHref: (cik:
       `<dl class="overlap-rows">` +
       `<div><dt>Adding</dt><dd><span class="overlap-n c-buy">${fmtInt(b.inst.adding.length)}</span> ${managerList(b.inst.adding, filerHref)} <span class="overlap-total c-num">${esc(fmtUsd(b.inst.addingValue))} held</span></dd></div>` +
       `<div><dt>Trimming</dt><dd><span class="overlap-n c-sell">${fmtInt(b.inst.trimming.length)}</span> ${managerList(b.inst.trimming, filerHref)} <span class="overlap-total c-num">${esc(fmtUsd(b.inst.trimmingValue))} held</span></dd></div>` +
-      `</dl><p class="section-note">NEW + ADD vs TRIM + EXIT, by shares · $ = reported value now, not the change · <span class="filed-name">${esc(b.inst.issuer)}</span></p></div>`
+      /* launch copy item ticker-12 (adapted): the classification and what $
+         means go to a tip; the issuer as filed stays — it names which filed
+         13F issuer the reviewed mapping reads for the ticker */
+      `</dl><p class="section-note">by shares · $ = value held${note("NEW + ADD vs TRIM + EXIT, by share count. $ = reported value now, not the change.", { scope: "overlap" }, "inst", { trigger: "mark", name: "About the managers' side" })} · <span class="filed-name">${esc(b.inst.issuer)}</span></p></div>`
     : opts.absence === "statement"
       ? `<div class="overlap-half overlap-inst" data-absent="${esc(b.instAbsence ?? "unmapped")}"><h3 class="section-h">Notable managers</h3>` +
         `<p class="section-note">${esc(overlapAbsenceText(b.ticker, b.instAbsence ?? "unmapped"))}${(b.instAbsence ?? "unmapped") === "unmapped" ? ` <a href="/methodology/#ticker-mapping">how tickers are mapped ↗</a>` : ""}</p></div>`
@@ -296,14 +300,15 @@ export function overlapBandHtml(b: OverlapBand, ctx: RenderCtx, filerHref: (cik:
   return (
     `<section class="panel panel-wide design-overlap" id="overlap" aria-label="Congress and notable managers on ${esc(b.ticker)}">` +
     `<div class="panel-head"><h2 class="section-h">Congress ↔ notable managers · ${esc(b.ticker)}</h2>` +
-    `<span class="panel-note">who in Congress disclosed purchases or sales beside which notable managers added or trimmed</span></div>` +
+    /* launch copy item ticker-12: the meta restated the heading; cut */
+    `</div>` +
     `<div class="overlap-halves">${congress}${inst}</div>` +
     (b.timeline.length === 0
       ? `<p class="section-note">No moves on either side in the window.</p>`
       : `<div class="table-scroll"><table class="etable etable-compact"><caption class="visually-hidden">Merged timeline of congressional filings and notable-manager moves on ${esc(b.ticker)}</caption>` +
         `<thead><tr>${thHtml({ label: "Date", cls: "c-num" })}${thHtml({ label: "Who", cls: "c-member c-flex" })}${thHtml({ label: "Change", cls: "c-kind" })}${thHtml({ label: "Size", cls: "c-num" })}</tr></thead>` +
         `<tbody>${rows}</tbody></table></div>` +
-        `<p class="section-note">${fmtInt(b.timeline.length)} newest rows · every row dates by its filing date: a disclosure's, or the 13F's for the quarter · a 13F row is a quarter-end snapshot, not a trade</p>`) +
+        `<p class="section-note">${fmtInt(b.timeline.length)} newest, by filing date · 13F rows are quarter-end snapshots, not trades</p>`) +
     `</section>`
   );
 }

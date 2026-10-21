@@ -99,8 +99,11 @@ test("W-2 / K-2: the overlap timeline's 13F rows read the caps kind word; the ra
   assert.deepEqual(rows.map((tr) => [tr.getAttribute("data-edge"), visibleText(tr.querySelector("td.c-kind")!).trim()]), [["exit", "EXIT"], ["add", "ADD"]]);
   assert.deepEqual(contentHits(html).filter((h) => /raw producer kind/.test(h.check)), []);
   // the section notes say what the rows are: the kind words, and every row dates by filing
-  assert.match(html, /NEW \+ ADD vs TRIM \+ EXIT, by shares/);
-  assert.match(html, /every row dates by its filing date/);
+  /* launch copy item ticker-12: the kind words moved into the managers'
+     side's tip (still on the page, once); the timeline note says the order
+     and the snapshot caveat in fewer words */
+  assert.match(visibleText(domOf(html).querySelector(".overlap-inst .note-pop")!), /NEW \+ ADD vs TRIM \+ EXIT, by share count\. \$ = reported value now, not the change\./);
+  assert.match(html, /\d+ newest, by filing date · 13F rows are quarter-end snapshots, not trades/);
   assert.doesNotMatch(html, /13F rows by quarter end/, "control: the note's retired claim (13F rows date by their FILED date since T20)");
   // control: the retired cell — the raw producer kind — is caught by the dist scan's predicate
   assert.ok(contentHits('<table><tr data-edge="add"><td class="c-kind c-buy">add</td></tr></table>').some((h) => /raw producer kind/.test(h.check)));
