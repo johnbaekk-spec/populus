@@ -280,6 +280,11 @@ export function installLedgerProbe(): void {
   const MARK_CHARS = "§†‡≈¶ⓘ";
   const CONTROLS =
     ".note-btn, .th-sort, .seg > button, .chips > button, .mgr-chips > button, .pager-btn, .compact-toggle";
+  /** the links that carry the hit square under a coarse pointer or at the
+      ≤720px fold — scripts/hit-areas.ts `LINKS`, verbatim */
+  /** chips are boxes: their edge is the border box (G10's CHIPS, G1's numerals) */
+  const G1_CHIPS = ".flag, .qoq-chip, .nc-chip, .id-chip, span.mgr-chip, .badge-planned";
+  const HIT_LINKS = "a[href]:not(:is(p, li, dd, .note-pop, .footer-notice) a)";
   const SEGMENT_ITEMS = ".seg > button, .chips > button, .mgr-chips > button, .pager-btn, .compact-toggle";
   const ACTIVE_ITEMS =
     ':is(.seg, .chips, .mgr-chips) > :is([aria-pressed="true"], [aria-current]:not([aria-current="false"]), [aria-checked="true"])';
@@ -615,6 +620,25 @@ export function installLedgerProbe(): void {
     );
   }
   const nested = (t: Element): boolean => !!t.parentElement?.closest("table");
+  /** launch M1b (D4, LD5): at ≤720px a table carrying `data-card` (the feed
+      excepted, which keeps its own grid) is no longer a grid of columns — each
+      row is a wrapping card and the head is folded (clipped, still announced).
+      The column predicates (G1, G6, G8, G10, headFont) then measure the card's
+      form of the same property instead of skipping the table (fix round on
+      the integrated gate, 75e9920): the figure names its column (G1), no
+      column is empty everywhere (G6), no card is under the hit square (G8),
+      the cells keep the card's one gap and the gutters, and the kind edge
+      rides on the card (G10), and the printed labels read the label type
+      (headFont). Read off the cascade (`display`), never off the width. */
+  const cardFolded = (t: Element): boolean =>
+    t.matches('[data-card]:not([data-card="feed"])') && getComputedStyle(t).display !== "table";
+  /** the card's printed column label: `data-label` through its ::before */
+  function cardLabel(cell: Element): { attr: string; printed: boolean } {
+    const attr = (cell.getAttribute("data-label") ?? "").trim();
+    const content = getComputedStyle(cell, "::before").content;
+    const printed = !!attr && content !== "none" && content !== "normal" && content !== '""';
+    return { attr, printed };
+  }
   function tableLabel(t: HTMLTableElement): string {
     const idx = allTables().indexOf(t);
     const host = t.closest("section, .panel, details, .design-band");
@@ -882,6 +906,41 @@ export function installLedgerProbe(): void {
       const table = tableLabel(t);
       const tableIndex = allTables().indexOf(t);
       const hr = headerRow(t);
+      if (hr && cardFolded(t)) {
+        /* D4 (LD5): a card has no header line to align to — its head is
+           folded — so a figure is read against the label it PRINTS. Each
+           numeric cell (by role, as below) prints its column's label, and the
+           label is its own head's (`data-label`, copied from the head by
+           withTableRoles): a bare "12", or a figure under another column's
+           name, fails. The declared identity first column is the row's name. */
+        const hmap = colMap(hr);
+        bodyRows(t).forEach((r, ri) => {
+          const m = colMap(r);
+          m.forEach((e, c) => {
+            if (e.span > 1 || m.findIndex((x) => x.cell === e.cell) !== c) return;
+            const th = hmap[c]?.cell;
+            if (!e.cell.classList.contains("c-num") && !th?.classList.contains("c-num")) return;
+            if (!isVisible(e.cell) || !hasBox(e.cell) || visibleString(e.cell) === "") return;
+            const want = (th?.getAttribute("data-label") ?? "").trim();
+            const column = `[${c}] ${want.slice(0, 24)}`;
+            if (c === 0 && th?.classList.contains("c-flex")) {
+              if (ri === 0) exclude(res, { table, tableIndex, column, columnIndex: c, detail: "a declared identity first column (c-flex): the card's name" });
+              return;
+            }
+            res.measured++;
+            const { attr, printed } = cardLabel(e.cell);
+            const fig = visibleString(e.cell).slice(0, 24);
+            if (!attr || !printed) {
+              fail(res, { table, tableIndex, column, columnIndex: c, row: ri, detail: `card figure "${fig}" prints no column label (data-label ${attr ? `"${attr}" is not printed` : "absent"}): the head is folded, so nothing names it` });
+            } else if (!want) {
+              fail(res, { table, tableIndex, column, columnIndex: c, row: ri, detail: `card figure "${fig}" prints "${attr}", but its head carries no data-label to check it against` });
+            } else if (attr !== want) {
+              fail(res, { table, tableIndex, column, columnIndex: c, row: ri, detail: `card figure "${fig}" prints "${attr}", its head is "${want}"` });
+            }
+          });
+        });
+        continue;
+      }
       if (!hr) { exclude(res, { table, tableIndex, detail: "no <thead> row: no header to align to" }); continue; }
       if (!isVisible(hr) || !hasBox(hr)) { exclude(res, { table, tableIndex, detail: "header row not rendered at this width" }); continue; }
       const hmap = colMap(hr);
@@ -935,11 +994,18 @@ export function installLedgerProbe(): void {
           const ce = textEdge(e.cell);
           if (!ce) return;
           res.measured++;
-          const d = ce.right - he.right;
+          /* A chip ending the cell (a flag after the amount: launch M4b moved
+             the member's flags into its Range column) is a box: its edge is
+             its border box, not the text inset within it — G10's chip rule */
+          let right = ce.right;
+          for (const chip of Array.from(e.cell.querySelectorAll(G1_CHIPS))) {
+            if (isVisible(chip) && hasBox(chip)) right = Math.max(right, chip.getBoundingClientRect().right);
+          }
+          const d = right - he.right;
           if (Math.abs(d) > 1) {
             fail(res, {
               table, tableIndex, column, columnIndex: c, row: ri, delta: r2(d),
-              detail: `cell "${visibleString(e.cell).slice(0, 24)}" ends at ${r2(ce.right)}, header label at ${r2(he.right)}`,
+              detail: `cell "${visibleString(e.cell).slice(0, 24)}" ends at ${r2(right)}, header label at ${r2(he.right)}`,
             });
           }
         });
@@ -1121,7 +1187,11 @@ export function installLedgerProbe(): void {
       const table = tableLabel(t);
       const tableIndex = allTables().indexOf(t);
       const hr = headerRow(t);
-      if (!hr || !isVisible(hr)) { exclude(res, { table, tableIndex, detail: "no rendered header row" }); continue; }
+      /* D4 (LD5): a card table's head is folded, never removed, and its
+         columns are still the head's: a column empty in every card fails as
+         it does on the grid (the cells are read by column index) */
+      const folded = cardFolded(t);
+      if (!hr || (!folded && !isVisible(hr))) { exclude(res, { table, tableIndex, detail: "no rendered header row" }); continue; }
       const listed = (t.getAttribute("data-columns") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
       /* Only a column a VALUE proved over the full collection is excused
          (`data-columns-proven`, review Q2-5): an `always` column is listed in
@@ -1132,11 +1202,14 @@ export function installLedgerProbe(): void {
       if (!maps.length) { exclude(res, { table, tableIndex, detail: "no visible body rows" }); continue; }
       for (let c = 0; c < hmap.length; c++) {
         const { cell: th, span } = hmap[c]!;
-        if (span > 1 || !isVisible(th) || !hasBox(th)) continue;
+        if (span > 1 || (!folded && (!isVisible(th) || !hasBox(th)))) continue;
         let n = 0, empty = 0;
         for (const m of maps) {
           const e = m[c];
           if (!e || e.span > 1 || !isVisible(e.cell)) continue;
+          /* on a card a cell with no box shows nothing — no empty column is
+             seen (the graphic it held is one the card omits) */
+          if (folded && !hasBox(e.cell)) continue;
           n++;
           const s = visibleString(e.cell);
           if ((s === "" || s === "—" || s === "-") && !hasGraphic(e.cell)) empty++;
@@ -1228,6 +1301,12 @@ export function installLedgerProbe(): void {
       if (t.matches("[data-multiline]")) { exclude(res, { table, tableIndex, detail: "declared prose table ([data-multiline])" }); continue; }
       const fold = t.matches(FEED) && env.width <= 1080;
       const foldRows: { ri: number; h: number }[] = [];
+      /* D4 (LD5): a row card wraps its cells onto two or three lines by its
+         content (names and assets wrap, never clamp), so there is no single
+         row height to hold it to; the property kept is the one a finger needs
+         — no card is shorter than the hit square */
+      const card = cardFolded(t);
+      const cardRows: { ri: number; h: number }[] = [];
       /* Multi-line rows at the fold or under a coarse pointer, by line count
          (M1 review Q-8): a table whose rows are two lines by design there (the
          member's dates, then the lag) is measured, never skipped — each group
@@ -1240,11 +1319,16 @@ export function installLedgerProbe(): void {
           return;
         }
         if (r.querySelector("details[open]")) { exclude(res, { table, tableIndex, row: ri, detail: "row holds an open <details>" }); return; }
+        if (card) { cardRows.push({ ri, h }); return; }
         if (fold) {
           /* flags WRAP rather than truncate (§5): a row whose chips run onto
              a second line is taller by design, and says so */
           const range = r.querySelector(".cell-range");
           if (range && wrapsChildren(range)) { exclude(res, { table, tableIndex, row: ri, detail: `its flags wrap (${r1(h)}px)` }); return; }
+          /* and so does a long member name on a phone (launch M1c, R5: names
+             wrap, never clamp — `.reference-feed .cell-member` at ≤720px) */
+          const member = r.querySelector(".cell-member");
+          if (member && lineCount(textRuns(member, false).flatMap((x) => x.rects)) > 1) { exclude(res, { table, tableIndex, row: ri, detail: `its member name wraps (${r1(h)}px)` }); return; }
           foldRows.push({ ri, h });
           return;
         }
@@ -1263,6 +1347,13 @@ export function installLedgerProbe(): void {
         res.measured++;
         if (Math.abs(h - want) > 1) fail(res, { table, tableIndex, row: ri, delta: r2(h - want), detail: `single-line row is ${r2(h)}px, expected ${want}±1` });
       });
+      if (cardRows.length) {
+        res.measured += cardRows.length;
+        const short = cardRows.filter((x) => x.h < env.expectedHitMin - 1);
+        if (short.length) {
+          fail(res, { table, tableIndex, count: short.length, detail: `row cards under the ${env.expectedHitMin}px hit square: ${short.slice(0, 8).map((x) => `${x.ri}:${r1(x.h)}`).join(", ")}` });
+        }
+      }
       if (foldRows.length) {
         res.measured += foldRows.length;
         const hs = foldRows.map((x) => x.h);
@@ -1457,6 +1548,111 @@ export function installLedgerProbe(): void {
     fontCtx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
     return run.rects[0]!.top + fontCtx.measureText("Hxg").fontBoundingBoxAscent;
   }
+  /** G10 on a D4 row card (LD5). The card's form of each part:
+      (a) GAPS — the cells on one line of a card keep the card's one gap (12px,
+          the card rule in entities.css), read in VISUAL order: the role classes
+          reorder the cells, so DOM neighbours are not neighbours. A cell an
+          auto margin pushes to the line's end (the receipt) is measured net of
+          that margin.
+      (b) SLACK — a card has no columns: nothing to measure (excluded).
+      (c) EDGES — every line of a card starts on its inset (the band's gutter
+          when the table sits in a band, 11px clear of a kind edge), and no box
+          in it — a hanging mark included — passes its right inset.
+      (f) COLOURS — the kind edge rides on the card (the row), not on its first
+          cell, in the kind's own edge token. */
+  function g10Card(
+    res: LedgerResult,
+    sub: Record<G10Part, number>,
+    gapAgg: ReturnType<typeof aggregator>,
+    t: HTMLTableElement,
+    table: string,
+    tableIndex: number,
+    rows: HTMLTableRowElement[],
+  ): void {
+    const GAP = 12;
+    const cardL = resolveLength(t, "var(--card-l)");
+    const cardR = resolveLength(t, "var(--card-r)");
+    exclude(res, { table, tableIndex, detail: "a D4 row card has no columns: no column slack to measure" });
+    if (!Number.isFinite(cardL) || !Number.isFinite(cardR)) {
+      fail(res, { table, tableIndex, detail: "--card-l / --card-r do not resolve on this card table" });
+      return;
+    }
+    rows.forEach((r, ri) => {
+      if (Array.from(r.cells).some((c) => c.colSpan > 1)) return;
+      const rr = r.getBoundingClientRect();
+      const edge = r.getAttribute("data-edge");
+      const cells = Array.from(r.cells)
+        .filter((c) => isVisible(c) && hasBox(c))
+        .map((c) => ({ c, b: c.getBoundingClientRect(), cs: getComputedStyle(c) }));
+      /* the card's lines: flex lines, each the cells whose boxes overlap it */
+      const lines: (typeof cells)[] = [];
+      for (const x of [...cells].sort((a, b) => a.b.top - b.b.top)) {
+        const line = lines.find((l) => l.some((y) => x.b.top < y.b.bottom && y.b.top < x.b.bottom));
+        if (line) line.push(x);
+        else lines.push([x]);
+      }
+      const wantL = rr.left + (edge ? Math.max(cardL, 11) : cardL);
+      const limitR = rr.right - cardR;
+      /* An auto margin (the receipt's, entities.css card rule) pushes a cell
+         to the line's END; the computed margin reads 0px, so it is known by
+         where it lands — flush on the right inset, last on its line. Its gap
+         is then at least the card's gap, never exactly it. */
+      const pushed = (line: typeof cells, x: (typeof cells)[number]): boolean =>
+        x === line[line.length - 1] && Math.abs(x.b.right - limitR) <= 1;
+      for (const line of lines) {
+        line.sort((a, b) => a.b.left - b.b.left);
+        /* (c) the line starts on the inset, unless an auto margin moved it */
+        const head = line[0]!;
+        if (!(line.length === 1 && pushed(line, head) && head.b.left > wantL + 1)) {
+          sub.edges++;
+          res.measured++;
+          const d = head.b.left - wantL;
+          if (Math.abs(d) > 1) {
+            gapAgg.add(`${tableIndex}|edgeL`, { table, tableIndex, row: ri, delta: r2(d), detail: `row card ${ri}: a line starts at x ${r2(head.b.left)}, its inset is ${r2(wantL)} (--card-l ${cardL}${edge ? ", 11px clear of the kind edge" : ""})` });
+          }
+        }
+        /* (a) the one gap between neighbours on the line */
+        for (let i = 1; i < line.length; i++) {
+          const a = line[i - 1]!, b = line[i]!;
+          const gap = b.b.left - a.b.right - px(a.cs.marginRight) - px(b.cs.marginLeft);
+          sub.gaps++;
+          res.measured++;
+          if (pushed(line, b) ? gap < GAP - 2 : Math.abs(gap - GAP) > 2) {
+            const idx = Array.from(r.cells).indexOf(b.c as HTMLTableCellElement);
+            gapAgg.add(`${tableIndex}|${idx}|card`, {
+              table, tableIndex, columnIndex: idx, row: ri, delta: r2(gap - GAP),
+              detail: `row card: gap before ${describe(b.c)} is ${r2(gap)}px, the card's gap is ${GAP}±2${pushed(line, b) ? " (at least, before a cell pushed to the line's end)" : ""}`,
+            });
+          }
+        }
+      }
+      /* (c) nothing passes the right inset: the cells, and every box in them */
+      sub.edges++;
+      res.measured++;
+      let far: { el: Element; right: number } | null = null;
+      for (const x of cells) {
+        for (const el of [x.c, ...Array.from(x.c.querySelectorAll("*"))]) {
+          if (!isVisible(el) || !hasBox(el)) continue;
+          const right = el.getBoundingClientRect().right;
+          if (right > limitR + 1 && (!far || right > far.right)) far = { el, right };
+        }
+      }
+      if (far) {
+        gapAgg.add(`${tableIndex}|edgeR`, { table, tableIndex, row: ri, el: describe(far.el), delta: r2(far.right - limitR), detail: `row card ${ri}: ${describe(far.el)} ends at ${r2(far.right)}, past the right inset ${r2(limitR)} (--card-r ${cardR})` });
+      }
+      /* (f) the kind edge, on the card */
+      if (!edge) return;
+      const token = EDGE_TOKEN[edge];
+      if (!token) { fail(res, { table, tableIndex, row: ri, detail: `unknown data-edge="${edge}"` }); return; }
+      sub.colours++;
+      res.measured++;
+      const want = resolveColor(r, `var(${token})`);
+      const got = shadows(getComputedStyle(r).boxShadow).find((sh) => sh.inset && Math.abs(sh.x - 3) <= 0.5 && sh.y === 0);
+      if (!want) fail(res, { table, tableIndex, row: ri, detail: `${token} does not resolve` });
+      else if (!got || !got.color) fail(res, { table, tableIndex, row: ri, detail: `data-edge="${edge}" row card paints no inset 3px edge` });
+      else if (!sameColor(got.color, want)) fail(res, { table, tableIndex, row: ri, detail: `data-edge="${edge}" card edge is ${hex(got.color)}, ${token} is ${hex(want)}` });
+    });
+  }
   function g10(opts?: { min?: Partial<Record<G10Part, number>> }): LedgerResult {
     reset();
     const res = newResult("G10");
@@ -1471,6 +1667,10 @@ export function installLedgerProbe(): void {
       const compact = t.matches(".etable-compact");
       const hr = headerRow(t);
       const rows = bodyRows(t);
+      if (cardFolded(t)) {
+        g10Card(res, sub, gapAgg, t, table, tableIndex, rows);
+        continue;
+      }
       const all = [...(hr && isVisible(hr) && hasBox(hr) ? [hr] : []), ...rows];
       /* (a) the gap between adjacent cells' content boxes */
       for (const r of all) {
@@ -1933,11 +2133,23 @@ export function installLedgerProbe(): void {
       fail(res, { el: ":root", detail: `--hit-min computes to ${env.computedHitMin}px here; the plan requires ${min}px` });
     }
     const ctls = Array.from(document.querySelectorAll<HTMLElement>(CONTROLS)).filter((c) => isVisible(c) && hasBox(c));
+    /* launch M1c (LD7, R7): under a coarse pointer or at the ≤720px fold a
+       LINK carries the hit square too (layout.css) and joins the page's
+       midpoint split (scripts/hit-areas.ts, its LINKS). The audit splits
+       against the same neighbours the page does — without them a control's
+       square, rightly stopped at the midpoint to the link beside it, was
+       sampled at corners the page gives the link (the gate on 75e9920: every
+       tip beside a link "missed" onto it). Links are neighbours here, not
+       measured targets: their own taps are the phone gate's (small and
+       covered taps, phone.spec.ts). */
+    const links = !env.desktopFine
+      ? Array.from(document.querySelectorAll<HTMLElement>(HIT_LINKS)).filter((c) => isVisible(c) && hasBox(c))
+      : [];
     let targets = opts.only
       ? Array.from(document.querySelectorAll<HTMLElement>(opts.only)).filter((c) => isVisible(c) && hasBox(c))
       : ctls;
     if (opts.limit !== undefined) targets = targets.slice(0, opts.limit);
-    const all = [...new Set([...ctls, ...targets])];
+    const all = [...new Set([...ctls, ...links, ...targets])];
     const x0 = window.scrollX, y0 = window.scrollY;
     /* candidate neighbours, widened by a whole square on each side: the
        table-side clamp SHIFTS a square by up to its side, and beside a sticky
@@ -2070,7 +2282,13 @@ export function installLedgerProbe(): void {
         checkedPairs.add(key);
         for (const [who, by, r] of [[all[j]!, c, pr[1]], [c, all[j]!, pr[0]]] as const) {
           const cx = (r.left + r.right) / 2, cy = (r.top + r.bottom) / 2;
-          const h = hitOk(who, cx, cy);
+          let h = hitOk(who, cx, cy);
+          /* A link that WRAPS (an inline link on two lines, which a phone's
+             width makes common now that links are neighbours, launch M1c) has
+             a bounding box whose centre lies between its two fragments, on
+             the text beside them: there the centre of a fragment is its own */
+          const frags = Array.from(who.getClientRects()).filter((q) => q.width >= 1 && q.height >= 1);
+          if (h && frags.length > 1 && frags.some((q) => !hitOk(who, (q.left + q.right) / 2, (q.top + q.bottom) / 2))) h = null;
           if (h) {
             fail(res, {
               el: `${describe(who)}`,
@@ -2101,6 +2319,39 @@ export function installLedgerProbe(): void {
     for (const t of visibleTables(LEDGER)) {
       if (nested(t)) continue;
       const hr = headerRow(t);
+      if (hr && cardFolded(t)) {
+        /* D4 (LD5): the folded head's words are printed on the card, before
+           each labelled figure (`[data-label]::before`): they read the label
+           type — the mono at 600, uppercase, on the --fs-label token (11px
+           in the phone ramp, LD12), tracked .08em (the card rule in
+           entities.css: tighter than the head's .12em at the larger size) */
+        const table = tableLabel(t);
+        const tableIndex = allTables().indexOf(t);
+        bodyRows(t).forEach((r) => {
+          Array.from(r.cells).forEach((cell, c) => {
+            if (!isVisible(cell) || !hasBox(cell) || !cardLabel(cell).printed) return;
+            const cs = getComputedStyle(cell, "::before");
+            res.measured++;
+            const fam = cs.fontFamily.split(",")[0]!.replace(/["']/g, "").trim();
+            const size = px(cs.fontSize);
+            const want = resolveLength(cell, "var(--fs-label)");
+            const ls = cs.letterSpacing === "normal" ? 0 : px(cs.letterSpacing);
+            const bad: string[] = [];
+            if (fam !== "JetBrains Mono") bad.push(`family ${fam}`);
+            if (cs.fontWeight !== "600") bad.push(`weight ${cs.fontWeight}`);
+            if (!(Math.abs(size - want) <= 0.01)) bad.push(`size ${r2(size)}px (--fs-label ${r2(want)}px)`);
+            if (Math.abs(ls - 0.08 * size) > 0.05) bad.push(`letter-spacing ${r2(ls)}px (.08em = ${r2(0.08 * size)}px)`);
+            if (cs.textTransform !== "uppercase") bad.push(`transform ${cs.textTransform}`);
+            if (bad.length) {
+              agg.add(`${tableIndex}|${c}|card|${bad.join()}`, {
+                table, tableIndex, columnIndex: c,
+                detail: `card label "${cardLabel(cell).attr.slice(0, 20)}": ${bad.join(", ")} (spec: JetBrains Mono 600 --fs-label, .08em, uppercase)`,
+              });
+            }
+          });
+        });
+        continue;
+      }
       if (!hr || !isVisible(hr)) continue;
       const table = tableLabel(t);
       const tableIndex = allTables().indexOf(t);
