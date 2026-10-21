@@ -357,6 +357,21 @@ test("M1 (launch review): the link hit rule weighs nothing, so the signal card's
   assert.deepEqual(linkPositions(planted, PHONE), { open: "relative", receipt: "relative" }, "control: the rule at its old (0,2,2) weight takes both");
 });
 
+test("M5 (launch review): at ≤720px the search results are the open sheet's last row, in flow under its field — never fixed over it; a re-planted fixed panel fails", () => {
+  const panelAt = (css: string): { position: string; basis: string } => {
+    const rules = parseRules(css);
+    const chain: El[] = [
+      { tag: "html" }, { tag: "body" }, { tag: "header", classes: ["masthead"] }, { tag: "div", classes: ["shell", "masthead-inner"] },
+      { tag: "div", classes: ["masthead-right"] }, { tag: "div", classes: ["site-search", "open"], id: "site-search-box" },
+      { tag: "div", classes: ["search-panel"], id: "search-panel" },
+    ];
+    return { position: winning(rules, chain, "position", PHONE)?.value ?? "", basis: winning(rules, chain, "flex-basis", PHONE)?.value ?? "" };
+  };
+  assert.deepEqual(panelAt(CSS), { position: "static", basis: "100%" });
+  const planted = `${CSS}\n@media (max-width: 720px) { .search-panel { position: fixed; top: var(--masthead-h); left: 0; right: 0; } }`;
+  assert.equal(panelAt(planted).position, "fixed", "control: the old panel, fixed at the header's edge over the field, is read");
+});
+
 /* ----------------------------- R10 (launch integration): scroll regions, global */
 
 import { renderParitySurfaces } from "./lib/ui-parity-surfaces.ts";

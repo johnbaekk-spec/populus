@@ -368,12 +368,14 @@
   .rb-labels { gap: 8px; } /* the labels keep the track's columns (launch review M3) */
   .rb-bar { width: 12px; }
 
+  /* The results are the open search sheet's last row, under its field and its
+     hint (launch review M5): a panel fixed at the header's edge was laid over
+     the field it answers. The sheet is the only place the panel shows at the
+     fold (.site-search is display:none until it opens). */
   .search-panel {
-    position: fixed;
-    top: var(--masthead-h);
-    left: 0;
-    right: 0;
-    max-height: calc(100dvh - var(--masthead-h));
+    position: static;
+    flex-basis: 100%;
+    max-height: 60dvh;
     padding-bottom: env(safe-area-inset-bottom);
   }
 }
