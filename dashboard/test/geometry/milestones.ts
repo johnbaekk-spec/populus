@@ -94,12 +94,14 @@ export const CHECK_MILESTONE: Readonly<Record<CheckId, Milestone>> = {
   controlHeights: "m1",
 };
 
-/** The M1 exemption list for G2: exactly the three containers M2 removes —
-    member flows (`late-additions.css:608`), member and filer filing history
-    (`:609`) and the filer's reported positions (`:735`). Pinned to exactly
-    these three by `test/geometry-milestones.test.ts`. */
+/** The M1 exemption list for G2: the containers M2 removes — member and
+    filer filing history (`late-additions.css:609`) and the filer's reported
+    positions (`:735`). Launch M4b (R23, LD24) retired the member's net-flow
+    band, so the third container M2 named — member flows,
+    `.design-flow-band > .panel > .table-scroll` — matches nothing any page
+    serves and left the list (launch integration). Pinned to exactly these by
+    `test/geometry-milestones.test.ts`. */
 export const G2_EXEMPT_M1: readonly string[] = [
-  ".design-flow-band > .panel > .table-scroll",
   ".design-history",
   '[data-holdings-surface="filer"] .table-scroll',
 ];

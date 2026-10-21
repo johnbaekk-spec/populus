@@ -2,8 +2,9 @@
    browser.
 
    Three properties:
-   1. G2's M1 exemption list is EXACTLY the three containers M2 removes — no
-      fourth selector can slip in, none can drop out, no duplicate can pad it
+   1. G2's M1 exemption list is EXACTLY the containers M2 removes (two since
+      launch M4b retired the member's flow band) — no further selector can
+      slip in, none can drop out, no duplicate can pad it
       (T1.4: "the milestone map's M1 exemption list is pinned to exactly those
       three selectors (control: a fourth selector fails the pin)"), and from
       M2 on nothing is exempt (T2.5) — including at the milestone this tree
@@ -33,10 +34,12 @@ import {
   type CheckId,
 } from "./geometry/milestones.ts";
 
-/** The three containers the plan names (Tasks, G2; T1.4), written out here
-    independently of the map so the pin compares two sources. */
+/** The containers the plan names (Tasks, G2; T1.4), written out here
+    independently of the map so the pin compares two sources. The plan named
+    three; launch M4b (R23, LD24) retired the member's flow band, whose
+    container (`.design-flow-band > .panel > .table-scroll`) no page serves,
+    so the record keeps the two that still exist. */
 const PLAN_M1_EXEMPT = [
-  ".design-flow-band > .panel > .table-scroll",
   ".design-history",
   '[data-holdings-surface="filer"] .table-scroll',
 ];
@@ -49,19 +52,21 @@ function exactlyTheseSelectors(actual: readonly string[], expected: readonly str
   return actual.every((s) => want.has(s));
 }
 
-test("G2's M1 exemption list is exactly the three containers M2 removes", () => {
+test("G2's M1 exemption list is exactly the containers M2 removes (the member flow band retired by launch M4b)", () => {
   assert.equal(exactlyTheseSelectors(G2_EXEMPT_M1, PLAN_M1_EXEMPT), true, JSON.stringify(G2_EXEMPT_M1));
   assert.equal(exactlyTheseSelectors(G2_EXEMPT.m1, PLAN_M1_EXEMPT), true, "the m1 slot must be that list");
 });
 
-test("control: a fourth selector, a dropped selector or a duplicate each FAIL the pin", () => {
-  const fourth = [...G2_EXEMPT_M1, ".si-hits-scroll"];
-  assert.equal(exactlyTheseSelectors(fourth, PLAN_M1_EXEMPT), false, "a fourth selector must fail the pin");
-  const dropped = G2_EXEMPT_M1.slice(0, 2);
+test("control: an extra selector, the retired one, a dropped selector or a duplicate each FAIL the pin", () => {
+  const extra = [...G2_EXEMPT_M1, ".si-hits-scroll"];
+  assert.equal(exactlyTheseSelectors(extra, PLAN_M1_EXEMPT), false, "an extra selector must fail the pin");
+  const retired = [".design-flow-band > .panel > .table-scroll", ...G2_EXEMPT_M1];
+  assert.equal(exactlyTheseSelectors(retired, PLAN_M1_EXEMPT), false, "the retired flow-band container must not come back");
+  const dropped = G2_EXEMPT_M1.slice(0, 1);
   assert.equal(exactlyTheseSelectors(dropped, PLAN_M1_EXEMPT), false, "a missing selector must fail the pin");
-  const duplicated = [G2_EXEMPT_M1[0]!, G2_EXEMPT_M1[0]!, G2_EXEMPT_M1[1]!];
+  const duplicated = [G2_EXEMPT_M1[0]!, G2_EXEMPT_M1[0]!];
   assert.equal(exactlyTheseSelectors(duplicated, PLAN_M1_EXEMPT), false, "a duplicate must not stand in for a selector");
-  const widened = [G2_EXEMPT_M1[0]!, G2_EXEMPT_M1[1]!, ".table-scroll"];
+  const widened = [G2_EXEMPT_M1[0]!, ".table-scroll"];
   assert.equal(exactlyTheseSelectors(widened, PLAN_M1_EXEMPT), false, "a broader selector must fail the pin");
 });
 

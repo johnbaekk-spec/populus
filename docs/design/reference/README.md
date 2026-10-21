@@ -43,3 +43,19 @@ board is therefore retired from the structural canvas comparison in
 checks there follow the launch layout. The approved launch Congress boards
 (`launch-congress.dc.html`, `launch-congress-phone.dc.html`) join this folder
 with the launch-board opener in `test/geometry/canvas-compare.ts`.
+
+## Superseded: the September Congress Member board (launch M4b, 2026-10-21)
+
+`Congress Member.dc.html` stays pinned in `manifest.json` byte-for-byte, but it
+no longer governs `/congress/members/<id>/`. The owner-approved launch redesign
+(Design canvas version 9, 2026-10-20) supersedes it: a member with four or more
+trades reads the active layout (the ledger head, then the Quarterly flow chart
+and the trades beside a side column of Top tickers, Profile, Sectors and
+Signals, then the filing history alone), and one with three or fewer reads the
+compact layout (a card per trade and three computed facts) (PLAN.md R23–R27,
+LD24, LD25). Its paired bands, its PLANNED strip and its summary cards are gone,
+so the board is retired from the structural canvas comparison in
+`test/geometry/design-reference.spec.ts` (LD33), whose member composition test
+now measures the launch layouts; the T2.9 controls that ran on the retired
+boards run on the filer's canvas. The approved launch member boards join this
+folder with the launch-board opener in `test/geometry/canvas-compare.ts`.

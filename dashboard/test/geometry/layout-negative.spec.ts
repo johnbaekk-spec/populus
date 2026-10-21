@@ -1122,10 +1122,18 @@ test.describe("route negative controls (clean target → injected defect → sam
     expect(fresh.some((f) => clean.some((t) => t.tableIndex === f.tableIndex && t.columnIndex === f.columnIndex))).toBe(true);
   });
 
+  /* launch M3a (LD20) and M4b (LD25): the feed pages 20 rows and the member's
+     trades 25, so no route's DEFAULT view holds 50 rows any more. The control
+     opens each route's "Show all" disclosures first (held rows drawn by the
+     binder), and the filer's reported positions — expanded, the longest table
+     a route serves — joins the routes it searches. */
   test("T1.3 G1 @1440: ONE misaligned cell in row 30 of a 50-row table is reported, and only that cell", async ({ page }) => {
     let found: { tableIndex: number; columnIndex: number } | null = null;
-    for (const route of ["/congress/", "/congress/members/M001193/", "/signals/"]) {
+    for (const route of ["/congress/", "/institutional/filers/1135730/", "/congress/members/M001193/", "/signals/"]) {
       await openRoute(page, route);
+      for (const btn of await page.locator(".compact-disclosure button.compact-toggle:visible").all()) {
+        if ((await btn.getAttribute("aria-expanded")) === "false") await btn.click();
+      }
       const before = await probe(page, "g1");
       if (before.failures.length !== before.failureCount) continue;
       const failing = new Set(before.failures.map(colKey));
@@ -1155,7 +1163,7 @@ test.describe("route negative controls (clean target → injected defect → sam
         return;
       }
     }
-    expect(found, "no 50-row table with a right-aligned column G1 passes on /congress/, the member or /signals/").not.toBeNull();
+    expect(found, "no 50-row table with a right-aligned column G1 passes on /congress/, the filer, the member or /signals/ (disclosures opened)").not.toBeNull();
   });
 
   test("T1.3 G1 @1440: a label trigger with visibility:hidden reads as UNMEASURED, not aligned", async ({ page }) => {
@@ -1475,10 +1483,14 @@ test.describe("route negative controls (clean target → injected defect → sam
     expect(listed.excluded.some((f) => colKey(f) === `${target!.tableIndex}|${target!.columnIndex}`)).toBe(true);
   });
 
+  /* launch M4b (R23, LD24): the member page's paired bands are retired, so
+     CD-1's primary/side rule is measured on the filer's band F1 — Reported
+     positions (its PRIMARY cell, data-pair-primary) │ Book shape + Filing
+     history — the pair that still carries a primary. */
   test("G9 @1440: 300px under a pair's SIDE cell is DETECTED; 300px under its PRIMARY is not (CD-1)", async ({ page }) => {
-    await openRoute(page, "/congress/members/M001193/");
+    await openRoute(page, "/institutional/filers/1135730/");
     const before = await probe(page, "g9", { expectedPairs: null });
-    expect(before.measured, "the member page has a two-cell band").toBeGreaterThan(0);
+    expect(before.measured, "the filer page has a two-cell band").toBeGreaterThan(0);
     expect(before.failureCount, formatResult(before)).toBe(0);
     const plant = (side: boolean) => page.evaluate((s) => {
       document.getElementById("ctl-g9")?.remove();
@@ -1524,24 +1536,25 @@ test.describe("route negative controls (clean target → injected defect → sam
   });
 
   /* V2 NEW-6 (T2.3): a pair lost for any reason but the empty-state rule
-     fails G9's count. Band M2 rendered without its `.design-pair` wrapper and
-     without `data-collapsed` — its two cells left loose in the page — is one
-     pair fewer than the member route declares, and nothing marks it
-     collapsed. */
-  test("T2.3 G9 @1440: member band M2 without its .design-pair wrapper and without data-collapsed FAILS the pair count", async ({ page }) => {
-    await openRoute(page, "/congress/members/M001193/");
-    const before = await probe(page, "g9", { expectedPairs: 2 });
-    expect(before.failureCount, `the member route's two pairs pass first\n${formatResult(before)}`).toBe(0);
+     fails G9's count. Launch M4b (R23, LD24) retired the member page's band
+     M2 (it declared two pairs; it declares none now), so the control unwraps
+     the pair the Congress route still declares — band C1, Members │ Tickers
+     (`#congress-leaders-band`): its two cells left loose in the page, and
+     nothing marking it collapsed, is one pair fewer than the route declares. */
+  test("T2.3 G9 @1440: a declared pair (Congress band C1) without its band wrapper and without data-collapsed FAILS the pair count", async ({ page }) => {
+    await openRoute(page, "/congress/");
+    const before = await probe(page, "g9", { expectedPairs: 1 });
+    expect(before.failureCount, `the Congress route's one pair passes first\n${formatResult(before)}`).toBe(0);
     const unwrapped = await page.evaluate(() => {
-      const band = document.querySelector(".design-pair.design-member-history-band");
+      const band = document.getElementById("congress-leaders-band");
       if (!band) return null;
       const was = band.getAttribute("data-collapsed");
-      band.replaceWith(...Array.from(band.childNodes)); // the wrapper, and its data-collapsed, gone
+      band.replaceWith(...Array.from(band.childNodes)); // the wrapper, and any data-collapsed, gone
       return was ?? "(not collapsed)";
     });
-    expect(unwrapped, "the member page renders band M2").not.toBeNull();
-    const after = await probe(page, "g9", { expectedPairs: 2 });
-    expect(has(after, (f) => /found \d+ pair\(s\), expected 2/.test(f.detail)), `control (band M2 was ${unwrapped})\n${formatResult(after)}`).toBe(true);
+    expect(unwrapped, "the Congress page renders band C1").not.toBeNull();
+    const after = await probe(page, "g9", { expectedPairs: 1 });
+    expect(has(after, (f) => /found \d+ pair\(s\), expected 1/.test(f.detail)), `control (band C1 was ${unwrapped})\n${formatResult(after)}`).toBe(true);
   });
 
   /* T2.5: G2 exempts nothing from M2 on. The filer's reported-positions box

@@ -172,7 +172,10 @@ function routeAbsent(route: Route, reason: string): { skip: string } | { fail: s
    hold the tables the one 3 × 10 floor stood for. */
 const ROUTES: Route[] = [
   { id: "congress", path: "/congress/", minTables: 3, minColumns: 16, pairs: 1, g10Min: { colours: 1 } },
-  { id: "member", path: "/congress/members/M001193/", minTables: 3, minColumns: 12, pairs: 2, g10Min: { colours: 1 } },
+  /* launch M4b (R23, LD24): the member page's bands M1 and M2 are retired —
+     the active layout is a main column beside a side column, not a pair band —
+     so the route declares no pair, and G9 still runs to keep it that way */
+  { id: "member", path: "/congress/members/M001193/", minTables: 3, minColumns: 12, pairs: 0, g10Min: { colours: 1 } },
   /* signals-v4 M2 (R17): band I1 (Consensus │ Conviction leaders) and the
      named-moves table moved to /signals/#institutional, so the landing carries
      no pair, and one table with rows — the filer directory, 5 columns (T0
