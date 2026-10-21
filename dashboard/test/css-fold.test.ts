@@ -727,12 +727,17 @@ test("SIGNALS-CLARITY M3 (R19): the Monthly flow honesty lines are swept at the 
 /* SIGNALS-CLARITY M3: the Monthly flow panel's classes. Styled ones must be
    styled AND emitted; hooks (read by the toggle, or carrying a shared base
    class's styling) must be emitted and stay unstyled. */
+/* Launch M3b (R21): the breadth strip (`mf-breadth`, `mf-bcol`, `mf-bup`,
+   `mf-bdown`, `mf-bbar`, `mf-breadth-note`) is retired with its CSS; the
+   Members line chart, its axes, zone and readout, and the Dollars axis join. */
 const M3_FLOW_CLASSES = [
-  "ribbon-monthly", "mf-est", "mf-window", "mf-breadth", "mf-bcol", "mf-bup", "mf-bdown", "mf-bbar",
-  "mf-breadth-note", "mf-shade-labels", "mf-shade-est", "mf-shade-window", "mf-swatch", "mf-completeness",
-  "mf-exclusions", "mf-cap", "mf-stub", "mf-tick",
+  "ribbon-monthly", "mf-est", "mf-window", "mf-shade-labels", "mf-shade-est", "mf-shade-window", "mf-swatch",
+  "mf-completeness", "mf-exclusions", "mf-cap", "mf-stub", "mf-tick",
+  "mf-controls", "mf-legend", "mf-key-buy", "mf-key-sell", "mf-chart", "mf-yt", "mf-plot", "mf-hit", "mf-line",
+  "mf-line-buy", "mf-line-sell", "mf-line-est", "mf-yaxis", "mf-ytick", "mf-fill", "mf-cursor", "mf-xaxis", "mf-x",
+  "mf-readout", "mf-dollars", "mf-dollar-axis", "mf-notes",
 ];
-const M3_FLOW_HOOKS = ["mf-variant", "mf-table"];
+const M3_FLOW_HOOKS = ["mf-variant", "mf-table", "mf-measure"];
 
 test("SIGNALS-CLARITY M3: dead-CSS sweep over the Monthly flow panel — styled AND emitted, hooks unstyled", async () => {
   const { monthlyFlowPanel } = await import("../src/lib/ui/index.ts");

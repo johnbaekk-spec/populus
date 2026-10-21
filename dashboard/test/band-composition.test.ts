@@ -656,18 +656,35 @@ function sourceLedgerItems(page: string): { label: string; tone: string }[] {
   }));
 }
 
-test("T2.8 (D2): the Congress ledger carries the four D2 figures in order, tones ink / ink / blue / gold", () => {
+/* REVERSED by launch M3b (R18, LD18; the approved Congress board): the D2
+   figures (Transactions, House parse, Senate parse, Paper) become Trades, Last
+   30 days, Median lag and E-filings read. The property kept: one four-figure
+   ledger in the page head, through the ONE ledger renderer, with its tones in
+   order — and every parse and paper count still stated (in the E-filings
+   figure's sub and note). The figures are built by `congressLedgerItems`. */
+test("T2.8 (D2) → launch M3b: the Congress ledger carries Trades, Last 30 days, Median lag, E-filings read — tones ink / blue / ink / gold", async () => {
   const page = readFileSync(path.join(SRC, "pages", "congress", "index.astro"), "utf-8");
-  assert.deepEqual(sourceLedgerItems(page), [
-    { label: "Transactions", tone: "ink" },
-    { label: "House parse", tone: "ink" },
-    { label: "Senate parse", tone: "blue" },
-    { label: "Paper", tone: "gold" },
+  const { congressLedgerItems } = await import("../src/lib/ui/rankings.ts");
+  const items = congressLedgerItems(
+    { trades: 10, filedFrom: "2014", last30: { rows: 2, members: 1, unjoined: 0, from: "2026-07-25", to: "2026-08-23" }, lag: { median: 28, withLag: 9, late: 2, withStatus: 9 } },
+    { houseParsed: 5, houseEfile: 6, housePct: "83.3", senateParsed: 2, senateEfile: 2, senatePct: "100", needsOcr: 3, efilePct: "87.5" },
+    (n, d) => (d === 0 ? "—" : n === d ? "100" : (Math.floor((n / d) * 1000) / 10).toFixed(1)),
+  );
+  assert.deepEqual(items.map((i) => ({ label: i.label, tone: i.tone ?? "ink" })), [
+    { label: "Trades", tone: "ink" },
+    { label: "Last 30 days", tone: "blue" },
+    { label: "Median lag", tone: "ink" },
+    { label: "E-filings read", tone: "gold" },
   ]);
-  // the ledger renders in the page head (`ledgerHtml`), replacing the coverage strip
+  assert.match(page, /disclosureLedger\(\s*congressLedgerItems\(/, "the page renders these items through the one ledger");
+  // the ledger renders in the page head (`ledgerHtml`), before the provenance strip
   assert.match(page, /<div class="page-head">[\s\S]*?<Fragment set:html=\{ledgerHtml\} \/>[\s\S]*?<\/div>\s*<div class="design-provenance">/);
-  // control: the reader sees a swapped tone
-  assert.notDeepEqual(sourceLedgerItems(page.replace('tone: "blue"', 'tone: "gold"')).map((i) => i.tone), ["ink", "ink", "blue", "gold"]);
+  // the parse and paper counts stay stated (sub and note), never dropped
+  const efile = items[3]!;
+  assert.equal(efile.detail, "3 paper not yet read");
+  assert.match(efile.noteHtml ?? "", /House: 5 of 6 e-filings read \(83\.3%\)\. Senate: 2 of 2 \(100%\)\./);
+  // control: a swapped tone is caught by the same comparison
+  assert.notDeepEqual(items.map((i, k) => (k === 1 ? "gold" : i.tone ?? "ink")), ["ink", "blue", "ink", "gold"]);
 });
 
 test("T2.8: the filer ledger keeps its accessible name, Period statistics for P", () => {

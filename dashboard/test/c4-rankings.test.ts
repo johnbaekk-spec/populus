@@ -133,7 +133,7 @@ test("ranking body: overlap marker when adjacent ranked intervals overlap", () =
      carries ≈, and its text is still reachable in the same body. */
   const rowsHtml = html.slice(html.indexOf("<tbody"), html.indexOf("</tbody>")).split("</tr>");
   assert.doesNotMatch(rowsHtml[0]!, /<span class="hang">≈<\/span>/, "the first row overlaps nothing above it");
-  assert.match(rowsHtml[1]!, /<td class="c-num has-marks c-net">[^<]*<span class="net-dir[^>]*>[^<]*<\/span><span class="hang">≈<\/span><\/td>/);
+  assert.match(rowsHtml[1]!, /<td class="c-num has-marks c-net"(?: role="cell")?>[^<]*<span class="net-dir[^>]*>[^<]*<\/span><span class="hang">≈<\/span><\/td>/);
   assert.match(html, /incomparable<\/strong>, not tied/);
 });
 

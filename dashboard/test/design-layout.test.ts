@@ -159,7 +159,7 @@ test('reference ticker ranks keep count bars and distinct member totals on sort 
     const html=rankingRootHtml(rollup.rows,'txns',dir,'tickers',{referenceRankings:true}).html;
     assert.equal((html.match(/<td\b/g)??[]).length,6);
     assert.match(html,/4 buys; 0 sells/);
-    assert.match(html,/<td class="c-num">2<\/td>/);
+    assert.match(html,/<td class="c-num"(?: role="cell")?>2<\/td>/);
   }
 });
 

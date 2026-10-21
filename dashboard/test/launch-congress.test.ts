@@ -375,3 +375,195 @@ test("LD22 + R40: the feed head reads Side · Member · Ticker · Asset · owner
   const planted = txnRowHtml(txn(), {}).replace(/ role="cell"/, "");
   assert.ok(!(planted.match(/<td\b[^>]*>/g) ?? []).every((c) => /role="cell"/.test(c)));
 });
+
+/* ===================================================== M3b — the page */
+
+import { pct } from "../src/lib/data.ts";
+import { congressTickersRollup, leadersRollup } from "../src/lib/derive.ts";
+import { congressRankingSection, CONGRESS_ROOTS, monthlyFlowPanel, type BuildStamps } from "../src/lib/ui/index.ts";
+import { congressLedgerFigures, congressLedgerItems } from "../src/lib/ui/rankings.ts";
+import { domOf, visibleText } from "./lib/ledger-dom.ts";
+
+const BUILD_DATE = "2026-08-23";
+const STAMPS: BuildStamps = { buildId: "b", generatedAt: "2026-08-23 06:00 UTC", generatedAtDate: BUILD_DATE };
+
+function ledgerFixture(): TxnRow[] {
+  return [
+    txn({ txnId: "a", filed: "2026-08-23", bioguide: "A000001", lag: 10, late: 0 }),
+    txn({ txnId: "b", filed: "2026-07-25", bioguide: "B000002", lag: 50, late: 1 }), // day 30 of the window: in
+    txn({ txnId: "c", filed: "2026-07-24", bioguide: "C000003", lag: 20, late: 0 }), // 30 days before: out
+    txn({ txnId: "d", filed: "2026-08-01", bioguide: "A000001", lag: 46, late: 1 }), // same member again
+    txn({ txnId: "e", filed: "2026-08-10", bioguide: null, name: "Unjoined Filer", lag: null, late: null, side: "exchange" }),
+    txn({ txnId: "f", filed: "2024-01-05", bioguide: "D000004", lag: 5, late: 0 }),
+  ];
+}
+
+test("R18: every ledger figure equals an independent recomputation from the rows and coverage", () => {
+  const rows = ledgerFixture();
+  const fig = congressLedgerFigures(rows, { buildDate: BUILD_DATE, filedFrom: "2014" });
+  // independent recompute
+  const inWindow = rows.filter((r) => Date.parse(`${BUILD_DATE}T00:00:00Z`) - Date.parse(`${r.filed}T00:00:00Z`) < 30 * 86_400_000 && r.filed <= BUILD_DATE);
+  assert.deepEqual(inWindow.map((r) => r.txnId).sort(), ["a", "b", "d", "e"], "the 30 days ending on the build date, inclusive");
+  assert.equal(fig.trades, rows.length);
+  assert.equal(fig.last30.rows, inWindow.length);
+  assert.equal(fig.last30.members, new Set(inWindow.filter((r) => r.bioguide).map((r) => r.bioguide)).size, "joined members only");
+  assert.equal(fig.last30.unjoined, 1, "the unjoined filer is stated, never counted as a member");
+  assert.equal(fig.last30.from, "2026-07-25");
+  const lags = rows.map((r) => r.lag).filter((l): l is number => l != null).sort((x, y) => x - y);
+  assert.equal(fig.lag.median, lags.length % 2 ? lags[(lags.length - 1) / 2] : Math.round((lags[lags.length / 2 - 1]! + lags[lags.length / 2]!) / 2));
+  assert.equal(fig.lag.late, rows.filter((r) => r.late === 1).length);
+  assert.equal(fig.lag.withStatus, rows.filter((r) => r.late !== null).length, "rows with a late status — the exchange row has none");
+  const coverage = { houseParsed: 5600, houseEfile: 5960, housePct: pct(5600, 5960), senateParsed: 1828, senateEfile: 1828, senatePct: pct(1828, 1828), needsOcr: 3061, efilePct: pct(5600 + 1828, 5960 + 1828) };
+  assert.equal(coverage.efilePct, "95.3", "floored, never the mock's 95.4");
+  const items = congressLedgerItems(fig, coverage, pct);
+  assert.deepEqual(items.map((i) => [i.label, i.value, i.detail]), [
+    ["Trades", "6", "since 2014"],
+    ["Last 30 days", "4", "2 members filed"],
+    ["Median lag", "20 days", `${pct(2, 5)}% filed late`],
+    ["E-filings read", "95.3%", "3,061 paper not yet read"],
+  ]);
+  assert.match(items[2]!.noteHtml!, /Filed late: 2 of 5 rows with a late status \(40\.0%\)/, "N of M in the tip");
+  assert.match(items[1]!.noteHtml!, /2026-07-25 to 2026-08-23 inclusive/);
+  assert.match(items[1]!.noteHtml!, /and 1 filer not yet matched to a member record/);
+  assert.match(items[3]!.noteHtml!, /House: 5,600 of 5,960 e-filings read \(93\.9%\)\. Senate: 1,828 of 1,828 \(100%\)\. 3,061 paper filings are counted but not machine-read until OCR/);
+  // control: moving the boundary row one day earlier drops it from the window
+  const shifted = congressLedgerFigures(rows.map((r) => (r.txnId === "b" ? { ...r, filed: "2026-07-24" } : r)), { buildDate: BUILD_DATE, filedFrom: "2014" });
+  assert.equal(shifted.last30.rows, fig.last30.rows - 1);
+});
+
+test("R18: a build with no lag states its absence, never a zero", () => {
+  const fig = congressLedgerFigures([txn({ lag: null, late: null })], { buildDate: BUILD_DATE, filedFrom: "2026" });
+  const items = congressLedgerItems(fig, { houseParsed: 0, houseEfile: 0, housePct: "—", senateParsed: 0, senateEfile: 0, senatePct: "—", needsOcr: 0, efilePct: "—" }, pct);
+  assert.equal(items[2]!.value, "—");
+  assert.equal(items[2]!.detail, "—% filed late");
+  assert.match(items[2]!.noteHtml!, /No row discloses both dates/);
+});
+
+function boardRows(): TxnRow[] {
+  const rows: TxnRow[] = [];
+  for (let i = 0; i < 70; i++) {
+    rows.push(txn({ txnId: `p${i}`, bioguide: `M${String(i).padStart(6, "0")}`, name: `Member ${i}`, ticker: `T${i % 30}`, traded: "2026-06-01", filed: "2026-07-01", low: 1001 * (i + 1), high: 15000 * (i + 1), late: i % 4 === 0 ? 1 : 0 }));
+    if (i % 3 === 0) rows.push(txn({ txnId: `s${i}`, bioguide: `M${String(i).padStart(6, "0")}`, name: `Member ${i}`, ticker: `T${i % 30}`, side: "sale", traded: "2026-06-02", filed: "2026-07-01", low: 1001, high: 15000, late: null }));
+  }
+  rows.push(txn({ txnId: "u", bioguide: "U000001", name: "Undisclosed", low: null, high: null, traded: "2026-06-03" }));
+  rows.push(txn({ txnId: "nt", bioguide: "N000001", name: "No Ticker", ticker: null, traded: "2026-06-04" }));
+  return rows;
+}
+
+function boards(): { members: string; tickers: string } {
+  const ctx = { referenceRankings: true };
+  const rows = boardRows();
+  return {
+    members: congressRankingSection("leaders", leadersRollup(rows, BUILD_DATE, { range: "12m", basis: "traded" }), STAMPS, ctx, {
+      rootId: CONGRESS_ROOTS.membersRanked, undisclosedRootId: CONGRESS_ROOTS.membersUndisclosed, heading: "Members", sectionId: "members-section", compact: 10,
+    }),
+    tickers: congressRankingSection("tickers", congressTickersRollup(rows, BUILD_DATE, { range: "12m", basis: "traded" }), STAMPS, ctx, {
+      rootId: CONGRESS_ROOTS.momentum, heading: "Tickers", sectionId: "momentum-section", controls: true, compact: 10,
+    }),
+  };
+}
+
+function headLabels(html: string): string[] {
+  const at = html.indexOf("<thead");
+  const head = domOf(html.slice(at, html.indexOf("</thead>", at) + 8));
+  return head.querySelectorAll("th").map((th) => {
+    const btn = th.querySelector(".th-sort") ?? th.querySelector(".note-label") ?? th;
+    // the abbreviation twin (`.th-abbr`, shown only on narrow screens) is dropped
+    const full = btn.querySelector(".th-full");
+    return visibleText(full ?? btn).replace(/\s+/g, " ").trim();
+  });
+}
+
+test("R19/LD19: the Members board reads # · Member · Trades · Buys · Sells · Net · Late, Late as \"N of M\", gross ranges in each Net note", () => {
+  const { members } = boards();
+  assert.deepEqual(headLabels(members), ["#", "Member", "Trades", "Buys", "Sells", "Net", "Late"]);
+  const body = members.slice(members.indexOf(`<tbody id="${CONGRESS_ROOTS.membersRanked}"`), members.indexOf("</tbody>"));
+  const first = body.split("</tr>")[0]!;
+  assert.match(first, /<td class="c-num[^"]*" role="cell">\d+ of \d+<\/td>$/, "the last cell, Late, reads N of M");
+  assert.equal((first.match(/<td\b/g) ?? []).length, 7, "seven cells");
+  assert.match(first, /class="note-pop" popover id="n-board-net-[^"]+" role="note">Purchases \$[\d.,KM]+–\$[\d.,KM]+ · sales (?:none|\$[\d.,KM]+–\$[\d.,KM]+) · net /, "each row's Net opens its purchase and sale ranges");
+  assert.doesNotMatch(members, />Gross bought<|>Gross sales<|Gross purch/, "no gross columns on the board");
+  // the one merged Net tip keeps the interval, ≈ and unrankable rules
+  assert.match(members, /Summed statutory ranges, shown as intervals — no midpoints\. Net = purchases&#39; bounds minus sales&#39; bounds|Summed statutory ranges, shown as intervals — no midpoints\. Net = purchases' bounds minus sales' bounds/);
+  assert.match(members, /overlapping intervals are incomparable/);
+  // the window: short and visible, the exact bounds and the exclusions in the note
+  assert.match(members, /12 months · by trade date · <span class="note">/);
+  assert.match(members, /2025-08-24 to 2026-08-23 inclusive\./);
+  // the count line: ranked-row grammar, no dataset sentence (congress-20)
+  assert.match(members, /<span class="compact-bound-count">1–10 of \d+ ranked members<\/span>/);
+  assert.doesNotMatch(members, /published dataset/);
+  assert.match(members, /Every amount on one side failed to parse, so these rows are not ranked\./);
+  // Show 50 more is the in-place binder, never a link
+  assert.match(members, /class="compact-disclosure" data-compact-for="members-ranked-tbody"/);
+  assert.match(members, /<tr hidden data-compact-hidden role="row">/, "the next rows ride hidden for the in-place expansion");
+});
+
+test("R19/LD19: the Tickers board reads # · Ticker · Buys · Sells · Trades · Members · Net", () => {
+  const { tickers } = boards();
+  assert.deepEqual(headLabels(tickers), ["#", "Ticker", "Buys · Sells", "Trades", "Members", "Net"]);
+  assert.match(tickers, /\d+ buys; \d+ sells/, "the count bar states both counts");
+  assert.match(tickers, /<span class="compact-bound-count">1–10 of \d+ ranked tickers<\/span>/);
+  assert.match(tickers, /the member ranking is keyed by member instead/, "no claim that the member ranking is 'below'");
+});
+
+test("R19/R40: board tables carry explicit roles and the ranking card hook", () => {
+  const { members, tickers } = boards();
+  for (const html of [members, tickers]) {
+    assert.match(html, /<table class="etable[^"]*" data-sticky-first role="table" data-card="ranking">/);
+    assert.match(html, /<thead role="rowgroup"><tr role="row">/);
+    const ths = html.match(/<th\b[^>]*>/g) ?? [];
+    assert.ok(ths.length > 0 && ths.every((t) => /role="columnheader"/.test(t) || /scope="row"/.test(t)), "every column head carries its role");
+    const tds = html.match(/<td\b[^>]*>/g) ?? [];
+    assert.ok(tds.length > 0 && tds.every((t) => /role="cell"/.test(t)), "every cell carries its role");
+  }
+  // control: a planted role-less cell fails the same check
+  const planted = members.replace(/ role="cell"/, "");
+  assert.ok(!(planted.match(/<td\b[^>]*>/g) ?? []).every((t) => /role="cell"/.test(t)));
+});
+
+test("R19/R22: no link on /congress/ points at the /congress/leaders/ or /congress/tickers/ stubs", () => {
+  const { members, tickers } = boards();
+  for (const html of [PAGE_SRC, members, tickers, monthlyFlowPanel(boardRows(), BUILD_DATE)]) {
+    assert.doesNotMatch(html, /href="\/congress\/(?:leaders|tickers)\/"/);
+  }
+  assert.doesNotMatch(PAGE_SRC, /All tickers →/, "the mock's All tickers link is not added (DV18)");
+  // control: the check sees such a link
+  assert.match('<a href="/congress/leaders/">x</a>', /href="\/congress\/(?:leaders|tickers)\/"/);
+});
+
+test("R22: the stub pages keep a visible working link to their section, with one line of copy", () => {
+  for (const [file, target, label] of [["leaders", "/congress/#members-section", "Go to Members →"], ["tickers", "/congress/#momentum-section", "Go to Tickers →"]]) {
+    const src = readFileSync(path.resolve(import.meta.dirname, "..", "src", "pages", "congress", file, "index.astro"), "utf-8");
+    assert.match(src, new RegExp(`const target = "${target.replace(/[/#]/g, (c) => `\\${c}`)}";`));
+    assert.match(src, new RegExp(`<a class="stub-link" href=\\{target\\}>${label}</a>`), `${file}: the visible link`);
+    assert.match(src, /<meta http-equiv="refresh" content="0; url=\$\{target\}" \/>/, `${file}: the refresh still targets the section`);
+    assert.doesNotMatch(src, /class="kicker"|caveat-line/, `${file}: kicker and caveat cut (stub-0x)`);
+  }
+});
+
+test("R22: the briefing cards and the Notes drawer are retired; the method links are nouns", () => {
+  assert.doesNotMatch(PAGE_SRC, /briefingCards\(|briefingHtml|<details class="design-supplement" id="congress-notes">/);
+  const links = PAGE_SRC.slice(PAGE_SRC.indexOf('<details class="method-links"'), PAGE_SRC.indexOf("</details>", PAGE_SRC.indexOf('<details class="method-links"')));
+  assert.match(links, /<summary>Method<\/summary>/);
+  const labels = [...links.matchAll(/<a href="\/methodology\/#([a-z-]+)">([^<]+)<\/a>/g)].map((m) => [m[1], m[2]]);
+  assert.deepEqual(labels, [["defaults", "Amendments ↗"], ["coverage", "Coverage ↗"], ["amount-ranges", "Ranges ↗"], ["filing-lag", "45-day lag ↗"], ["owner-codes", "Owner codes ↗"]]);
+  assert.match(PAGE_SRC, /Filed up to 45 days after the trade · amounts are statutory ranges\n/, "the page's one home for the 45-day and ranges caveats");
+  assert.match(PAGE_SRC, /As of \{build\.generatedAt\} · House Clerk \+ Senate eFD/);
+  assert.doesNotMatch(PAGE_SRC, /class="kicker"/, "the kicker is cut (congress-01)");
+  assert.match(PAGE_SRC, /Every trade members of Congress disclose, as filed\./);
+});
+
+test("§0/R30: the new Congress copy carries no banned word", async () => {
+  const { BANNED_PATTERNS, redactFiledNames } = await import("./lib/banned-scan.ts");
+  const { members, tickers } = boards();
+  const { feedHeadHtml } = await import("../src/lib/format.ts");
+  const items = congressLedgerItems(congressLedgerFigures(ledgerFixture(), { buildDate: BUILD_DATE, filedFrom: "2014" }), { houseParsed: 1, houseEfile: 2, housePct: "50.0", senateParsed: 1, senateEfile: 1, senatePct: "100", needsOcr: 1, efilePct: "66.6" }, pct);
+  const copy = [
+    members, tickers, monthlyFlowPanel(boardRows(), BUILD_DATE), feedHeadHtml({ notes: { scope: "congress-feed" } }),
+    JSON.stringify(items),
+    PAGE_SRC.slice(PAGE_SRC.indexOf("<Base"), PAGE_SRC.indexOf("<script>")),
+  ];
+  for (const html of copy) {
+    for (const { name, re } of BANNED_PATTERNS) assert.ok(!re.test(redactFiledNames(html)), `banned wording "${name}"`);
+  }
+});

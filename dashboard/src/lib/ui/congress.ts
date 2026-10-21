@@ -491,6 +491,91 @@ function monthSummary(m: MonthFlow, c: MonthCompleteness): string {
   );
 }
 
+/** Launch M3b (R11, LD13): a nice member-count ceiling over the largest
+    month and its ticks — 0 to the top in at most four equal steps. */
+export function memberAxisTicks(max: number): { top: number; ticks: number[] } {
+  const m = Math.max(1, max);
+  const steps = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000];
+  const step = steps.find((x) => Math.ceil(m / x) <= 4) ?? Math.ceil(m / 4);
+  const top = Math.ceil(m / step) * step;
+  const ticks: number[] = [];
+  for (let v = 0; v <= top; v += step) ticks.push(v);
+  return { top, ticks };
+}
+
+/** The x position of a month's centre, as a percentage of the plot. */
+function monthX(i: number, n: number): number {
+  return ((i + 0.5) / n) * 100;
+}
+
+/** One month's readout in each measure — the numbers the screen-reader table
+    carries, in one line (R21: a readout per month). The estimate is stated
+    only for a month still filling in, and always as an estimate. */
+function monthReadouts(m: MonthFlow, c: MonthCompleteness, buildDate: string): { members: string; dollars: string } {
+  const open = buildDate < m.end ? " (so far)" : "";
+  const est = c.tone !== null ? ` · ${c.est !== null ? completenessLabel(c.est) : "completeness not estimated"}` : "";
+  const part = (label: string, sum: SumRanges): string => `${label} ${sum.kind === "empty" ? "none" : monthSumWords(sum)}`;
+  return {
+    members:
+      `${m.month}${open} · ${fmtInt(m.buyers)} ${m.buyers === 1 ? "member" : "members"} with a purchase · ` +
+      `${fmtInt(m.sellers)} with a sale${est}`,
+    dollars:
+      `${m.month}${open} · ${part("purchases", m.buy)} · ${part("sales", m.sell)} · net ${netIntervalText(netFlow(m.buy, m.sell))}${est}`,
+  };
+}
+
+/** Launch M3b (R21, LD23): the default Members view — distinct members with a
+    disclosed purchase and with a disclosed sale per trade month, as two lines
+    on a labelled member axis. Months still filling in form the "Filling in"
+    zone, labelled an estimate, and dash both lines. The plot is ONE control
+    (LD13): a Tab stop whose arrow keys step through the months, and a pointer
+    that selects the nearest month; the readout is a polite live region. */
+function membersChartHtml(flow: MonthlyFlowResult, comp: readonly MonthCompleteness[], buildDate: string, scope: string): string {
+  const n = flow.months.length;
+  const { top, ticks } = memberAxisTicks(Math.max(0, ...flow.months.flatMap((m) => [m.buyers, m.sellers])));
+  const firstFill = comp.findIndex((c) => c.tone !== null);
+  const fillFrom = firstFill < 0 ? n : firstFill;
+  const pt = (i: number, v: number): string => `${((i + 0.5) / n * 1000).toFixed(1)},${(1000 - (v / top) * 1000).toFixed(1)}`;
+  const line = (vals: number[], from: number, to: number, cls: string): string =>
+    to - from < 1 && !(to === from && n === 1)
+      ? ""
+      : `<polyline class="mf-line ${cls}" vector-effect="non-scaling-stroke" points="${vals.slice(from, to + 1).map((v, k) => pt(from + k, v)).join(" ")}"></polyline>`;
+  const buyers = flow.months.map((m) => m.buyers);
+  const sellers = flow.months.map((m) => m.sellers);
+  const solidTo = Math.min(n - 1, fillFrom === n ? n - 1 : fillFrom - 1);
+  const dashFrom = Math.max(0, fillFrom - 1);
+  const lines =
+    (solidTo >= 0 ? line(buyers, 0, solidTo, "mf-line-buy") + line(sellers, 0, solidTo, "mf-line-sell") : "") +
+    (fillFrom < n ? line(buyers, dashFrom, n - 1, "mf-line-buy mf-line-est") + line(sellers, dashFrom, n - 1, "mf-line-sell mf-line-est") : "");
+  const yTicks = ticks
+    .map((v) => `<span class="mf-ytick" style="bottom:${((v / top) * 100).toFixed(2)}%">${fmtInt(v)}</span>`)
+    .join("");
+  const xTicks = flow.months
+    .map((m, i) => ({ label: monthTick(m.month), i }))
+    .filter((t) => t.label !== "")
+    .map((t) => `<span class="mf-x" style="left:${monthX(t.i, n).toFixed(2)}%">${esc(t.label)}</span>`)
+    .join("");
+  const zone =
+    fillFrom < n
+      ? `<div class="mf-fill" style="left:${((fillFrom / n) * 100).toFixed(2)}%;width:${(((n - fillFrom) / n) * 100).toFixed(2)}%"><span>Filling in (est.)</span></div>`
+      : "";
+  const last = flow.months[n - 1]!;
+  return (
+    `<div class="mf-measure" data-flow-measure="members">` +
+    `<p class="mf-legend" aria-hidden="true"><span class="mf-key-buy">with a purchase</span><span class="mf-key-sell">with a sale</span></p>` +
+    `<div class="mf-chart"><span class="mf-yt" aria-hidden="true">members</span>` +
+    `<div class="mf-plot mf-hit" tabindex="0" role="group" aria-label="Members with a disclosed purchase and with a disclosed sale per trade month — arrow keys step through the months" aria-describedby="${esc(scope)}-ro-members">` +
+    `<div class="mf-yaxis" aria-hidden="true">${yTicks}</div>` +
+    zone +
+    `<svg viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true" focusable="false">${lines}</svg>` +
+    `<span class="mf-cursor" aria-hidden="true" hidden></span>` +
+    `<div class="mf-xaxis" aria-hidden="true">${xTicks}</div>` +
+    `</div></div>` +
+    `<p class="mf-readout" id="${esc(scope)}-ro-members" role="status" aria-live="polite">${esc(monthReadouts(last, comp[n - 1]!, buildDate).members)}</p>` +
+    `</div>`
+  );
+}
+
 function monthlyFlowVariantHtml(
   variant: "stocks" | "all",
   flow: MonthlyFlowResult,
@@ -502,6 +587,7 @@ function monthlyFlowVariantHtml(
   const axisMax = ribbonAxisMax(flow.months.flatMap((m) => [m.buy, m.sell]));
   const drawn = flow.months.some((m) => m.buy.kind !== "empty" || m.sell.kind !== "empty");
   const toneCls = (c: MonthCompleteness): string => (c.tone === null ? "" : ` mf-${c.tone}`);
+  const scope = `mf-${variant}`;
   const cols = flow.months
     .map(
       (m, i) =>
@@ -515,22 +601,14 @@ function monthlyFlowVariantHtml(
   const labels = flow.months
     .map((m) => `<div class="rb-label">${esc(monthTick(m.month))}</div>`)
     .join("");
-  const breadthMax = Math.max(1, ...flow.months.flatMap((m) => [m.buyers, m.sellers]));
-  const bar = (n: number, cls: string): string =>
-    n === 0 ? "" : `<div class="mf-bbar ${cls}" style="height:${Math.max((n / breadthMax) * 100, 4).toFixed(1)}%"></div>`;
-  const breadth = flow.months
-    .map(
-      (m, i) =>
-        `<div class="mf-bcol${toneCls(comp[i]!)}"><div class="mf-bup">${bar(m.buyers, "rb-buy")}</div>` +
-        `<div class="mf-bdown">${bar(m.sellers, "rb-sell")}</div></div>`,
-    )
-    .join("");
   const first = flow.months[0]!;
   const last = flow.months[flow.months.length - 1]!;
-  const latest = last;
   const openMonth = buildDate < last.end;
 
-  /* Shading labels: one line per shaded month, in the page's own words. */
+  /* Shading labels: one line per shaded month, every "(est.)" kept (copy item
+     congress-11). They and the completeness method below now live in the
+     "still filling in" tip (R21); the honesty classes and the full method
+     wording stay emitted there, where the visible-word budget does not reach. */
   const shaded = flow.months
     .map((m, i) => ({ m, c: comp[i]! }))
     .filter(({ c }) => c.tone !== null)
@@ -545,10 +623,10 @@ function monthlyFlowVariantHtml(
     .join("");
   const shadeHtml = shaded.length
     ? `<ul class="mf-shade-labels" aria-label="Months still filling in">${shadeItems}</ul>`
-    : `<p class="mf-shade-labels">No month in the window is under ${Math.round(COMPLETENESS_SHADE_BELOW * 100)}% filed (est.) or inside the 45-day window.</p>`;
+    : `<span class="mf-shade-labels">No month in the window is under ${Math.round(COMPLETENESS_SHADE_BELOW * 100)}% filed (est.) or inside the 45-day window.</span>`;
 
   const completenessHtml =
-    `<p class="mf-completeness">` +
+    `<span class="mf-completeness">` +
     (cdf.n === 0
       ? `Completeness is not estimated: no row traded ${esc(cdf.sampleFrom)} to ${esc(cdf.sampleTo)} carries a filing lag, so this build has no mature sample to measure. `
       : `Shading estimates how much of each month is filed so far: the share of this build's mature sample — ` +
@@ -556,7 +634,7 @@ function monthlyFlowVariantHtml(
         `filed within the month's age at the build (the build date minus the month's midpoint; for the build's own month, the midpoint of the days elapsed so far). Filed within ${esc(lagCdfPointsText(cdf))}. ` +
         `Trades in that sample that are still unfiled are not observed yet, so the estimate slightly overstates completeness. ` +
         `Shaded: under ${Math.round(COMPLETENESS_SHADE_BELOW * 100)}% filed (est.); darker: the month ended fewer than ${FILING_WINDOW_DAYS} days before the build, inside the 45-day filing window. `) +
-    `<a href="/methodology/#monthly-flow">Method ↗</a></p>`;
+    `<a href="/methodology/#monthly-flow">Method ↗</a></span>`;
 
   const exclusions: string[] = [];
   if (flow.listedStockOnly && flow.notListed > 0) {
@@ -572,9 +650,9 @@ function monthlyFlowVariantHtml(
     exclusions.push(`${fmtInt(flow.undated)} ${flow.undated === 1 ? "row" : "rows"} with no parseable trade date excluded`);
   if (flow.dateAnomalies > 0)
     exclusions.push(`${fmtInt(flow.dateAnomalies)} date-anomaly ${flow.dateAnomalies === 1 ? "row" : "rows"} excluded (${DATE_ANOMALY_NOTE})`);
-  const exclusionsHtml = `<p class="mf-exclusions">${
+  const exclusionsHtml = `<span class="mf-exclusions">${
     exclusions.length ? `${esc(exclusions.join(" · "))}.` : "No row in this window was excluded."
-  }</p>`;
+  }</span>`;
 
   const kinds = new Set(flow.months.flatMap((m) => [m.buy.kind, m.sell.kind]));
   const ticked = flow.months.some((m) => monthlyBarTicked(m.buy, axisMax) || monthlyBarTicked(m.sell, axisMax));
@@ -583,13 +661,13 @@ function monthlyFlowVariantHtml(
     flow.listedStockOnly
       ? `listed stocks: rows whose filed asset type is ST (House Clerk code) or Stock (Senate eFD label) — never inferred from a name`
       : `all asset types`,
-    "purchases above the axis, sales and partial sales below",
+    "Members: distinct members per month with a disclosed purchase or sale — members, not dollars",
+    "Dollars: purchases above the axis, sales and partial sales below",
     drawn ? `y from $0 to ${fmtMoney(axisMax)} · no midpoints — each bar spans the summed disclosed bounds` : "y from $0",
     ticked ? "a thin tick marks a month whose range is too small to draw at this scale — the tick is a marker, not a dollar amount" : "",
     kinds.has("open") ? "a hatched cap means no upper bound is disclosed (an open-ended or unparsed amount) — the bar shows the provable minimum only, and the cap's height is not a dollar amount" : "",
     kinds.has("undisclosed") ? "a hatched stub at the axis means amounts were filed but none parsed — never counted as $0" : "",
     "gaps are gaps — no interpolation",
-    "breadth counts distinct members, not dollars",
     "source: House Clerk + Senate eFD",
   ]
     .filter(Boolean)
@@ -598,8 +676,9 @@ function monthlyFlowVariantHtml(
   const rows = flow.months
     .map((m, i) => {
       const c = comp[i]!;
+      const ro = monthReadouts(m, c, buildDate);
       return (
-        `<tr><th scope="row">${esc(m.month)}</th><td>${esc(monthSumWords(m.buy))}</td><td>${esc(monthSumWords(m.sell))}</td>` +
+        `<tr data-ro-members="${esc(ro.members)}" data-ro-dollars="${esc(ro.dollars)}"><th scope="row">${esc(m.month)}</th><td>${esc(monthSumWords(m.buy))}</td><td>${esc(monthSumWords(m.sell))}</td>` +
         `<td>${esc(netIntervalText(netFlow(m.buy, m.sell)))}</td><td>${fmtInt(m.buyers)}</td><td>${fmtInt(m.sellers)}</td>` +
         `<td>${c.est === null ? "not estimated" : esc(completenessLabel(c.est))}${c.tone === "window" ? " · inside the 45-day window" : ""}</td></tr>`
       );
@@ -615,40 +694,64 @@ function monthlyFlowVariantHtml(
     `<th scope="col">Net (interval)</th><th scope="col">Members with a purchase</th><th scope="col">Members with a sale</th>` +
     `<th scope="col">Estimated completeness</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 
-  return (
-    `<div class="mf-variant" data-flow-variant="${variant}"${hidden ? " hidden" : ""}>` +
-    `<div class="ribbon ribbon-two ribbon-monthly">` +
+  const notes = { scope };
+  /* R21: the method, completeness and exclusion text are tips now — each keeps
+     its honesty class inside the note, and each label stays on the page. */
+  const tips =
+    `<div class="mf-notes">` +
+    noteFromHtml(shadeHtml + " " + completenessHtml, notes, "filling", { trigger: "label", textHtml: "Shaded months are still filling in (est.)" }) +
+    ` · ` +
+    noteFromHtml(exclusionsHtml, notes, "excluded", { trigger: "label", textHtml: "Excluded rows" }) +
+    ` · ` +
+    noteFromHtml(`<span class="rb-caption">${esc(caption)}</span>`, notes, "drawn", { trigger: "label", textHtml: "How it’s drawn" }) +
+    ` · <a href="/methodology/#monthly-flow">Method ↗</a></div>`;
+
+  const dollars =
+    `<div class="mf-measure" data-flow-measure="dollars" hidden>` +
+    `<p class="mf-legend" aria-hidden="true"><span class="mf-key-buy">purchases, above</span><span class="mf-key-sell">sales, below</span></p>` +
+    `<div class="mf-dollars">` +
+    `<div class="mf-dollar-axis" aria-hidden="true"><span>${esc(fmtMoney(axisMax))}</span><span>$0</span><span>${esc(fmtMoney(axisMax))}</span></div>` +
+    `<div class="ribbon ribbon-two ribbon-monthly mf-hit" tabindex="0" role="group" aria-label="Disclosed purchases and sales per trade month — arrow keys step through the months" aria-describedby="${esc(scope)}-ro-dollars">` +
     `<div class="rb-track">${cols}</div>` +
     `<div class="rb-labels" aria-hidden="true">${labels}</div>` +
-    `<div class="mf-breadth" aria-hidden="true">${breadth}</div>` +
-    `<p class="mf-breadth-note">Breadth — members with a disclosed purchase (above) vs with a disclosed sale (below), distinct per month; the tallest bar is ${fmtInt(breadthMax)} ${breadthMax === 1 ? "member" : "members"}. ` +
-    `${esc(latest.month)}${openMonth ? " (so far)" : ""}: ${fmtInt(latest.buyers)} with a purchase, ${fmtInt(latest.sellers)} with a sale.</p>` +
-    shadeHtml +
-    completenessHtml +
-    exclusionsHtml +
-    `<div class="rb-caption">${esc(caption)}</div>` +
+    `</div></div>` +
+    `<p class="mf-readout" id="${esc(scope)}-ro-dollars" role="status" aria-live="polite">${esc(monthReadouts(last, comp[comp.length - 1]!, buildDate).dollars)}</p>` +
+    `</div>`;
+
+  return (
+    `<div class="mf-variant" data-flow-variant="${variant}"${hidden ? " hidden" : ""}>` +
+    membersChartHtml(flow, comp, buildDate, scope) +
+    dollars +
+    tips +
     table +
-    `</div></div>`
+    `</div>`
   );
 }
 
-/** The whole "Monthly flow" panel, both variants, from the build's rows. */
+/** The whole "Monthly flow" panel: Members or Dollars × Stocks or All assets,
+    all four built here from the build's rows and switched with no fetch
+    (launch M3b, R21, LD23). Members on listed stocks is the default. */
 export function monthlyFlowPanel(txns: readonly TxnRow[], buildDate: string, months = MONTHLY_FLOW_MONTHS): string {
   const cdf = lagCdf(txns, buildDate);
   const stocks = monthlyFlow(txns, buildDate, months, { listedStockOnly: true });
   const all = monthlyFlow(txns, buildDate, months);
-  const toggle =
+  const controls =
+    `<div class="mf-controls">` +
+    `<div class="seg" role="group" aria-label="Measure">` +
+    `<button type="button" data-flow-measure-toggle="members" aria-pressed="true">Members</button>` +
+    `<button type="button" data-flow-measure-toggle="dollars" aria-pressed="false">Dollars</button>` +
+    `</div>` +
     `<div class="seg" role="group" aria-label="Asset types drawn">` +
-    `<button type="button" data-flow-toggle="stocks" aria-pressed="true">Listed stocks</button>` +
-    `<button type="button" data-flow-toggle="all" aria-pressed="false">All asset types</button>` +
-    `</div>`;
+    `<button type="button" data-flow-toggle="stocks" aria-pressed="true">Stocks</button>` +
+    `<button type="button" data-flow-toggle="all" aria-pressed="false">All assets</button>` +
+    `</div></div>`;
   return (
     `<section class="panel panel-wide" id="monthly-flow-section" aria-labelledby="monthly-flow-h">` +
     `<div class="panel-head"><h2 class="section-h" id="monthly-flow-h">Monthly flow</h2>` +
-    `<span class="panel-note">disclosed purchases vs sales by trade month · trailing ${months} months · statutory ranges</span>` +
-    toggle +
+    `<span class="panel-note">${months} months · by trade month</span>` +
+    controls +
     `</div>` +
-    `<noscript><p class="caveat-inline">The all-asset-types view needs JavaScript; the listed-stock view below states its exclusions in full.</p></noscript>` +
+    `<noscript><p class="caveat-inline">Dollars and All assets need JavaScript.</p></noscript>` +
     monthlyFlowVariantHtml("stocks", stocks, cdf, buildDate, false) +
     monthlyFlowVariantHtml("all", all, cdf, buildDate, true) +
     `</section>`

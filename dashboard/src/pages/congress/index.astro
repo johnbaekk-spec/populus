@@ -1,8 +1,7 @@
 ---
 import Base from "../../layouts/Base.astro";
-import { getBuildData, coverageSummary, feedPartsPlan } from "../../lib/data";
+import { getBuildData, coverageSummary, feedPartsPlan, pct } from "../../lib/data";
 import {
-  amountText,
   DESIGN_FEED_PAGE_SIZE,
   pageSlice,
   pageCountFor,
@@ -10,11 +9,12 @@ import {
   feedHeadHtml,
   feedItemHtml,
   footnoteBlock,
-  fmtInt,
+  note,
   type RenderCtx,
 } from "../../lib/format";
 import { congressTickersRollup, leadersRollup } from "../../lib/derive";
-import { briefingCards, congressRankingSection, disclosureLedger, markPairPrimary, monthlyFlowPanel, rankingAlternatives, CONGRESS_ROOTS, type BuildStamps } from "../../lib/ui/index.ts";
+import { congressRankingSection, disclosureLedger, markPairPrimary, monthlyFlowPanel, rankingAlternatives, CONGRESS_ROOTS, type BuildStamps } from "../../lib/ui/index.ts";
+import { congressLedgerFigures, congressLedgerItems } from "../../lib/ui/rankings.ts";
 import { serializeInlineJson } from "../../lib/inline-json";
 import { COMPACT_ROWS } from "../../lib/format";
 import { feedItemHasTicker, planTickerOffsets } from "../../lib/feed-parts";
@@ -28,56 +28,31 @@ const partsIndex = feedPartsPlan(build).index;
    default view pages by ticker position; its offsets ride inline beside the
    part index, from the SAME plan, with the whole-set totals I7 states. */
 const tickerOffsets = planTickerOffsets(build.merged, partsIndex);
-const largest = build.txns.reduce<(typeof build.txns)[number] | null>((best, row) =>
-  row.low !== null && (best === null || row.low > best.low!) ? row : best, null);
-const latestLate = build.txns.find(row => row.late === 1);
-/* D2 (DESIGN-POLISH M2, R15): the page head carries the four-figure ledger —
-   TRANSACTIONS, HOUSE PARSE, SENATE PARSE and PAPER — each derived from
-   `coverageSummary` with its denominator in the sub, through the ONE header
-   ledger every page uses. It replaces the one-line coverage strip; every number
-   that strip's note carried is now a figure or a figure's sub, and the full
-   account stays one click away (/methodology/#coverage). "Parse" is a figure
-   NAME only (L15): the notes say in plain words what each figure counts. */
-const coverageLink = `<a href="/methodology/#coverage">Coverage, in full ↗</a>`;
+/* Launch M3b (R18, LD18): the compact ledger — Trades, Last 30 days, Median
+   lag with the share filed late, and E-filings read — every figure computed
+   from the build's rows and coverage (`congressLedgerFigures`), each with its
+   denominators in its note. "E-filings read" is the site's floored `pct` over
+   both chambers' e-filings; the paper count stays visible in its sub. */
+const ledgerFigures = congressLedgerFigures(build.txns, { buildDate: build.generatedAtDate, filedFrom: build.filedFrom });
 const ledgerHtml = disclosureLedger(
-  [
+  congressLedgerItems(
+    ledgerFigures,
     {
-      label: "Transactions",
-      value: fmtInt(build.txnCount),
-      detail: `filed since ${build.filedFrom} · default view`,
-      subKind: "date",
-      noteHtml: `Transactions in the default view: active filings minus the originals an amendment superseded. <a href="/methodology/#defaults">Default view ↗</a>`,
+      ...coverage,
+      efilePct: pct(coverage.houseParsed + coverage.senateParsed, coverage.houseEfile + coverage.senateEfile),
     },
-    {
-      label: "House parse",
-      value: `${coverage.housePct}%`,
-      detail: `${fmtInt(coverage.houseParsed)} of ${fmtInt(coverage.houseEfile)} e-filed`,
-      subKind: "count",
-      noteHtml: `House electronic filings whose transaction rows this build reads: ${fmtInt(coverage.houseParsed)} of ${fmtInt(coverage.houseEfile)}. ${coverageLink}`,
-    },
-    {
-      label: "Senate parse",
-      value: `${coverage.senatePct}%`,
-      detail: `${fmtInt(coverage.senateParsed)} of ${fmtInt(coverage.senateEfile)} e-filed`,
-      subKind: "count",
-      tone: "blue",
-      noteHtml: `Senate electronic filings whose transaction rows this build reads: ${fmtInt(coverage.senateParsed)} of ${fmtInt(coverage.senateEfile)}. ${coverageLink}`,
-    },
-    {
-      label: "Paper",
-      value: fmtInt(coverage.needsOcr),
-      detail: "counted, awaiting OCR",
-      tone: "gold",
-      noteHtml: `Paper reports remain counted in coverage; their transactions are not machine-readable until OCR. ${coverageLink}`,
-    },
-  ],
+    pct,
+  ),
   { scope: "congress-ledger" },
 );
-const briefingHtml = briefingCards([
-  { tag: "Largest disclosed lower bound", title: largest ? `${largest.ticker ?? largest.asset ?? "Undisclosed asset"} · ${amountText(largest)}` : "No comparable amounts disclosed", body: largest ? `${largest.name} · traded ${largest.traded ?? "date not disclosed"} → filed ${largest.filed}. Ranked over this build by disclosed lower bound, not a point estimate.` : "The published records contain no usable lower bound to rank." },
-  { tag: "Late filing", title: latestLate ? `${latestLate.lag ?? "—"} days from trade to filing` : "No late disclosures in this build", body: latestLate ? `${latestLate.name} · traded ${latestLate.traded ?? "—"} → filed ${latestLate.filed}. A filing delay describes the record, not its intent.` : "Computed over the published transaction records; unknown trade dates remain unknown." },
-  { tag: "Known gaps", title: `${fmtInt(coverage.needsOcr)} paper filings need OCR`, body: "Paper reports remain counted in coverage. Amounts are statutory ranges; every transaction retains its receipt and both dates." },
-]);
+/* The page's one "how to read" tip (the mock's H1 tip): the 45-day window,
+   ranges, both dates, late flags, receipts and the owner codes. */
+const readTip = note(
+  "Members disclose trades up to 45 days after they happen, as a dollar range, never an exact amount. Every row keeps both dates, flags late filings and links to its source document. Trades by a spouse (SP), dependent child (DC) or joint account (JT) are filed under the member.",
+  { scope: "congress-head" },
+  "read",
+  { trigger: "mark", textHtml: "ⓘ", name: "How to read this page" },
+);
 
 /* The momentum section's SSR view is AUTHORITATIVE, not a placeholder.
    It is rendered here at the locked defaults — a trailing 12 months on the
@@ -120,7 +95,7 @@ const momentumHtml = congressRankingSection(
   sectionCtx,
   {
     rootId: CONGRESS_ROOTS.momentum,
-    heading: "Tickers · most disclosed",
+    heading: "Tickers",
     sectionId: "momentum-section",
     controls: true,
     compact: COMPACT_ROWS,
@@ -146,7 +121,7 @@ const membersHtml = congressRankingSection(
   {
     rootId: CONGRESS_ROOTS.membersRanked,
     undisclosedRootId: CONGRESS_ROOTS.membersUndisclosed,
-    heading: "Leaders · net disclosed flow",
+    heading: "Members",
     sectionId: "members-section",
     compact: COMPACT_ROWS,
   },
@@ -208,39 +183,32 @@ const description =
     data-range={MOMENTUM_RANGE}
     data-basis={MOMENTUM_BASIS}
   >
-    <!-- page header -->
+    <!-- page header (launch M3b: the kicker is cut, the lede is one line, and
+         the 45-day, ranges, dates and owner-code reading lives in one tip) -->
     <div class="page-head">
       <div class="page-head-copy">
-        <div class="kicker">Public record / Congress · periodic transaction reports</div>
         <h1 class="page-title">Congress</h1>
-        <p class="page-lede">
-          Who disclosed what, in which statutory range, and when it was filed · House Clerk + Senate eFD.
-        </p>
+        <p class="page-lede">Every trade members of Congress disclose, as filed. <Fragment set:html={readTip} /></p>
       </div>
       <Fragment set:html={ledgerHtml} />
     </div>
     <div class="design-provenance">
-      Filed up to 45 days after the trade · amounts are statutory ranges, never point estimates
+      Filed up to 45 days after the trade · amounts are statutory ranges
         <div class="stamp-line" id="congress-stamp">
-          {fmtInt(build.txnCount)} rows · filed since {build.filedFrom} · as of {build.generatedAt}
+          As of {build.generatedAt} · House Clerk + Senate eFD
         </div>
-        <details class="method-links" id="congress-method-links"><summary>Methodology §</summary><div>
-          <a href="/methodology/#defaults">Default view · active filings minus superseded originals ↗</a>
-          <a href="/methodology/#coverage">parse coverage, in full ↗</a>
-          <a href="/methodology/#amount-ranges">why amounts are ranges ↗</a>
-          <a href="/methodology/#filing-lag">the 45-day filing lag ↗</a>
-          <a href="/methodology/#owner-codes">whose trade is it — SP · DC · JT ↗</a>
+        <details class="method-links" id="congress-method-links"><summary>Method</summary><div>
+          <a href="/methodology/#defaults">Amendments ↗</a>
+          <a href="/methodology/#coverage">Coverage ↗</a>
+          <a href="/methodology/#amount-ranges">Ranges ↗</a>
+          <a href="/methodology/#filing-lag">45-day lag ↗</a>
+          <a href="/methodology/#owner-codes">Owner codes ↗</a>
         </div></details>
     </div>
-    <!-- D2: the three context cards, collapsed as ONE line directly under the
-         provenance strip. D1 (L10): data first — band C1 pairs Leaders (1.6fr)
-         with Tickers (1fr) on one 1px seam, then the feed at 50 per page. -->
-    <details class="design-supplement" id="congress-notes"><summary>Notes on this data</summary>
-      <Fragment set:html={briefingHtml} />
-    </details>
-    <!-- SIGNALS-CLARITY M3 (R16): Monthly flow sits immediately before
-         "Leaders · net disclosed flow" (band C1). -->
-    <Fragment set:html={monthlyFlowHtml} />
+    <!-- Launch M3b (R19): the Members and Tickers boards lead the page as two
+         top-10 boards; "Show 50 more" expands each in place. The briefing
+         cards and their "Notes on this data" drawer are retired (R22); Monthly
+         flow closes the page (R21). -->
     <div class="design-rankings" id="congress-leaders-band"><Fragment set:html={markPairPrimary(membersHtml)} /><Fragment set:html={momentumHtml} /></div>
 
     <!-- filter bar. The controls live in their own wrapper so they can become a
@@ -416,6 +384,9 @@ const description =
       <p class="visually-hidden" id="feed-status" role="status" aria-live="polite"></p>
     </div>
     </section>
+
+    <!-- Launch M3b (R21): Monthly flow closes the page. -->
+    <Fragment set:html={monthlyFlowHtml} />
 
     <script is:inline type="application/json" id="feed-parts-index" set:html={partsIndexJson} />
     <script is:inline type="application/json" id="feed-ticker-offsets" set:html={tickerOffsetsJson} />

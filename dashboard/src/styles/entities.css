@@ -1337,14 +1337,8 @@ span.mgr-chip,
 .mf-shade-est .mf-swatch { background: color-mix(in oklab, var(--ink3) 12%, transparent); }
 .ribbon-monthly .mf-window,
 .mf-shade-window .mf-swatch { background: color-mix(in oklab, var(--ink3) 26%, transparent); }
-.mf-breadth { display: flex; gap: 2px; height: 48px; padding: 0 2px; margin-top: 12px; }
-.mf-bcol { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.mf-bup, .mf-bdown { flex: 1; position: relative; }
-.mf-bup { border-bottom: 1px solid var(--rule2); }
-.mf-bbar { position: absolute; left: 50%; transform: translateX(-50%); width: 70%; min-width: 2px; max-width: 18px; opacity: 0.8; }
-.mf-bup .mf-bbar { bottom: 0; }
-.mf-bdown .mf-bbar { top: 0; }
-.mf-breadth-note,
+/* Launch M3b: the breadth strip and its caption are retired — the Members
+   line chart (congress-feed.css) draws the same counts on a labelled axis. */
 .mf-completeness,
 .mf-exclusions {
   font: 400 var(--fs-note)/1.6 var(--mono);

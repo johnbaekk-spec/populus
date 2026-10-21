@@ -85,10 +85,11 @@ export interface CongressSectionsOptions {
   requestRows?: () => void;
 }
 
-/** SIGNALS-CLARITY M3 (R18): the Monthly flow panel's two-state toggle.
-    Both variants are server-rendered; this only flips `hidden` and
-    `aria-pressed`. It reads no rows and fetches nothing (L4), so the panel is
-    complete before — and without — the dataset. Returns whether it bound. */
+/** SIGNALS-CLARITY M3 (R18), launch M3b (R21, LD23): the Monthly flow
+    panel's two toggles — Members or Dollars, Stocks or All assets. All four
+    views are server-rendered; this only flips `hidden` and `aria-pressed`. It
+    reads no rows and fetches nothing (L4), so the panel is complete before —
+    and without — the dataset. Returns whether it bound. */
 export function initMonthlyFlowToggle(): boolean {
   const section = document.getElementById("monthly-flow-section");
   if (!section) return false;
@@ -100,7 +101,62 @@ export function initMonthlyFlowToggle(): boolean {
     for (const b of buttons) b.setAttribute("aria-pressed", String(b.dataset.flowToggle === value));
   };
   for (const b of buttons) b.addEventListener("click", () => show(b.dataset.flowToggle ?? ""));
+  const measureButtons = [...section.querySelectorAll<HTMLElement>("[data-flow-measure-toggle]")];
+  const measures = [...section.querySelectorAll<HTMLElement>(".mf-measure")];
+  const showMeasure = (value: string): void => {
+    for (const m of measures) m.hidden = m.dataset.flowMeasure !== value;
+    for (const b of measureButtons) b.setAttribute("aria-pressed", String(b.dataset.flowMeasureToggle === value));
+  };
+  for (const b of measureButtons) b.addEventListener("click", () => showMeasure(b.dataset.flowMeasureToggle ?? ""));
+  initMonthlyFlowReadouts(section);
   return true;
+}
+
+/** Launch M3b (LD13): each plot is ONE control. Arrow keys (and Home/End) step
+    through the months; a pointer move or tap selects the nearest month. The
+    readout — a polite live region — takes the month's line from the
+    screen-reader table's row (`data-ro-members` / `data-ro-dollars`, written by
+    the server), so the readout repeats the table and nothing is hover-only.
+    Text only: nothing read from the DOM is written back as HTML. */
+export function initMonthlyFlowReadouts(section: HTMLElement): number {
+  let bound = 0;
+  for (const plot of section.querySelectorAll<HTMLElement>(".mf-hit")) {
+    const measure = plot.closest<HTMLElement>(".mf-measure");
+    const variant = plot.closest<HTMLElement>(".mf-variant");
+    const out = measure?.querySelector<HTMLElement>(".mf-readout");
+    const rows = variant ? [...variant.querySelectorAll<HTMLElement>(".mf-table tbody tr")] : [];
+    const key = measure?.dataset.flowMeasure === "dollars" ? "roDollars" : "roMembers";
+    if (!out || rows.length === 0) continue;
+    const cursor = plot.querySelector<HTMLElement>(".mf-cursor");
+    let at = rows.length - 1;
+    const select = (i: number): void => {
+      at = Math.max(0, Math.min(rows.length - 1, i));
+      out.textContent = rows[at]!.dataset[key] ?? "";
+      if (cursor) {
+        cursor.hidden = false;
+        // CSSOM, not a style attribute: allowed under any style-src policy.
+        if (cursor.style) cursor.style.left = `${(((at + 0.5) / rows.length) * 100).toFixed(2)}%`;
+      }
+    };
+    plot.addEventListener("keydown", (ev) => {
+      const e = ev as KeyboardEvent;
+      const next =
+        e.key === "ArrowLeft" ? at - 1 : e.key === "ArrowRight" ? at + 1 : e.key === "Home" ? 0 : e.key === "End" ? rows.length - 1 : null;
+      if (next === null) return;
+      e.preventDefault();
+      select(next);
+    });
+    const fromPointer = (ev: Event): void => {
+      const e = ev as PointerEvent;
+      const r = plot.getBoundingClientRect();
+      if (r.width <= 0) return;
+      select(Math.floor(((e.clientX - r.left) / r.width) * rows.length));
+    };
+    plot.addEventListener("pointermove", fromPointer);
+    plot.addEventListener("click", fromPointer);
+    bound++;
+  }
+  return bound;
 }
 
 export function initCongressSections(options: CongressSectionsOptions = {}): CongressSections {
@@ -509,11 +565,13 @@ export function initCongressSections(options: CongressSectionsOptions = {}): Con
     }
 
     if (windowEl) {
+      // The board's short statement (launch M3b) — the SAME call the server made.
       windowEl.innerHTML = rankingWindowHtml(
         windowStatement(rollup.range, rollup.basis, congressRangeBounds(rollup.range, generatedAtDate)),
         rollup,
         kind,
         sectionId,
+        ctx.referenceRankings ? { range: rollup.range, basis: rollup.basis } : undefined,
       );
     }
   }

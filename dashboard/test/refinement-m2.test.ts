@@ -107,21 +107,28 @@ function paper(over: Partial<PaperRow> = {}): PaperRow {
    on this data" line directly after the provenance strip instead of below the
    feed. Read from the parsed template (the page's own element order), not
    from string offsets. */
+/* REVERSED IN PART by launch M3b (R19, R21, R22; the approved Congress board).
+   The property kept: the landing leads with its data — the Members and Tickers
+   boards paired in ONE band, Members first — before the feed. What changed:
+   the "Notes on this data" drawer and its briefing cards are retired (their
+   facts live in the ledger, the feed and the provenance line), so the band
+   sits directly after the provenance strip; and Monthly flow closes the page,
+   after the feed. */
 function congressCompositionProblems(main: MiniElement): string[] {
   const out: string[] = [];
-  const kids = main.children;
+  const kids = main.children.filter((c) => c.tagName !== "script");
   const at = (pred: (c: MiniElement) => boolean): number => kids.findIndex(pred);
   const head = at((c) => c.classList.contains("page-head"));
   const prov = at((c) => c.classList.contains("design-provenance"));
-  const notes = at((c) => c.id === "congress-notes");
   const band = at((c) => c.id === "congress-leaders-band");
   const feed = at((c) => c.id === "feed-section");
-  if ([head, prov, notes, band, feed].some((i) => i < 0)) return ["a landing part is missing"];
+  const flow = at((c) => c.tagName === "fragment" && c.getAttribute("set:html") === "{monthlyFlowHtml}");
+  if ([head, prov, band, feed, flow].some((i) => i < 0)) return ["a landing part is missing"];
   if (!(head < prov)) out.push("the provenance strip follows the head");
-  if (notes !== prov + 1) out.push("the notes line sits directly after the provenance strip");
-  if (!(band > notes && feed > band)) out.push("the rankings band precedes the feed");
-  const n = kids[notes]!;
-  if (n.tagName !== "details" || n.hasAttribute("open")) out.push("the notes are one closed <details>");
+  if (band !== prov + 1) out.push("the boards band sits directly after the provenance strip");
+  if (!(feed > band)) out.push("the rankings band precedes the feed");
+  if (flow !== kids.length - 1 || !(flow > feed)) out.push("Monthly flow closes the page, after the feed");
+  if (at((c) => c.id === "congress-notes") >= 0) out.push("the retired notes drawer is gone");
   const cells = kids[band]!.children;
   if (!kids[band]!.classList.contains("design-rankings")) out.push("the rankings are one .design-rankings band");
   /* DESIGN-POLISH M2 (CD-1): the Leaders cell is marked the band's primary
@@ -139,14 +146,14 @@ function congressMain(page: string): MiniElement {
   return domOf(text).querySelector("main")!;
 }
 
-test("R11 → D1/D2 (L10): the Congress landing pairs Leaders │ Tickers in ONE band, Leaders first; the notes line follows the provenance strip; the feed comes after", () => {
+test("R11 → D1/D2 (L10) → launch M3b: the Congress landing pairs Members │ Tickers in ONE band, Members first, right after the provenance strip; the feed follows; Monthly flow closes the page", () => {
   const page = readFileSync(path.join(SRC, "pages", "congress", "index.astro"), "utf-8");
   assert.deepEqual(congressCompositionProblems(congressMain(page)), []);
   // the two fragments are the Leaders and Tickers sections, by kind
   assert.match(page, /const membersHtml = congressRankingSection\(\s*"leaders",/);
   assert.match(page, /const momentumHtml = congressRankingSection\(\s*"tickers",/);
-  // the notes line carries the three context cards (folded, not deleted)
-  assert.match(page, /<details class="design-supplement" id="congress-notes"><summary>Notes on this data<\/summary>\s*<Fragment set:html=\{briefingHtml\} \/>/);
+  // launch M3b (R22): the briefing cards and their notes drawer are retired
+  assert.doesNotMatch(page, /briefingCards|briefingHtml|id="congress-notes"/);
   // the four-figure ledger replaced the one-line strip, in the page head
   assert.ok(congressMain(page).querySelector(".page-head")!.querySelectorAll("fragment").some((f) => f.getAttribute("set:html") === "{ledgerHtml}"));
   assert.doesNotMatch(page, /coverage-strip|design-rankings-single/, "no strip, no single-cell rankings band");
@@ -163,10 +170,11 @@ test("R11 → D1/D2 (L10): the Congress landing pairs Leaders │ Tickers in ONE
   );
   assert.notEqual(stacked, page, "control fixture applies");
   assert.ok(congressCompositionProblems(congressMain(stacked)).length > 0, "control: stacked (unpaired) rankings fail");
-  const notesLast = page
-    .replace(/<details class="design-supplement" id="congress-notes">[\s\S]*?<\/details>/, "")
-    .replace("</main>", '<details class="design-supplement" id="congress-notes"><summary>Notes on this data</summary></details></main>');
-  assert.ok(congressCompositionProblems(congressMain(notesLast)).some((p) => /directly after the provenance/.test(p)), "control: notes below the feed fail");
+  const flowFirst = page
+    .replace("<Fragment set:html={monthlyFlowHtml} />", "")
+    .replace('<div class="design-rankings" id="congress-leaders-band">', '<Fragment set:html={monthlyFlowHtml} /><div class="design-rankings" id="congress-leaders-band">');
+  assert.notEqual(flowFirst, page, "control fixture applies");
+  assert.ok(congressCompositionProblems(congressMain(flowFirst)).some((p) => /closes the page|directly after the provenance/.test(p)), "control: Monthly flow before the boards fails");
 });
 
 test("R11/R13: a ranking section shows 10 rows and ships the next 50 hidden for a download-free 'Show 50 more'", () => {
@@ -181,7 +189,7 @@ test("R11/R13: a ranking section shows 10 rows and ships the next 50 hidden for 
     ctx,
     { rootId: CONGRESS_ROOTS.membersRanked, undisclosedRootId: CONGRESS_ROOTS.membersUndisclosed, heading: "Leaders", sectionId: "members-section", compact: COMPACT_ROWS },
   );
-  const tbody = html.slice(html.indexOf(`<tbody id="${CONGRESS_ROOTS.membersRanked}">`), html.indexOf("</tbody>"));
+  const tbody = html.slice(html.indexOf(`<tbody id="${CONGRESS_ROOTS.membersRanked}" role="rowgroup">`), html.indexOf("</tbody>"));
   const visible = (tbody.match(/<tr(?! hidden)\b/g) ?? []).length;
   const hidden = (tbody.match(/<tr hidden data-compact-hidden/g) ?? []).length;
   assert.equal(visible, COMPACT_ROWS, "ten rows visible");
