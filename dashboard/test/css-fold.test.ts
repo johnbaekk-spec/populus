@@ -448,7 +448,9 @@ test("signals-v4 T1.2: at ≤720px an open note is a bottom sheet — fixed, ins
   assert.equal(sheet.length, 1, "one screen-only sheet block");
   const rules = rulesOf(sheet[0]!.body);
   const open = rules.find((r) => r.selector === ".note-pop:popover-open")!;
-  for (const decl of [/position: fixed/, /inset: auto 10px 10px 10px/, /width: auto/, /max-width: none/, /max-height: 70vh/, /overflow: auto/, /translate: none/]) assert.match(open.decls, decl);
+  /* launch M1c (LD10): the 10px sheet inset grows to clear the device's safe
+     areas — the property (a fixed sheet inset by its gutters) is unchanged */
+  for (const decl of [/position: fixed/, /inset: auto max\(10px, env\(safe-area-inset-right\)\) max\(10px, env\(safe-area-inset-bottom\)\) max\(10px, env\(safe-area-inset-left\)\)/, /width: auto/, /max-width: none/, /max-height: 70vh/, /overflow: auto/, /translate: none/]) assert.match(open.decls, decl);
   assert.match(rules.find((r) => r.selector === ".note-pop::backdrop")!.decls, /background: rgb\(0 0 0 \/ 55%\)/, "the scrim");
   for (const r of rules) for (const bad of PROHIBITED) assert.ok(!bad.test(r.decls), `${r.selector} never hides a panel`);
   assert.deepEqual(foldViolations(css), [], "the fold sweep (which covers this block) is clean");

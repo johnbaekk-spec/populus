@@ -217,8 +217,10 @@
    the table reaches the band's edges: row rules, hover and the row edge run the
    full band width while the first cell's text sits on the gutter. */
 :is(.design-page, .entity-page) .table-scroll {
-  --gutter-l: var(--gutter);
-  --gutter-r: var(--gutter);
+  /* launch M1c (LD10): the band's safe gutters (the root pair, restated here
+     because `.table-scroll` redefines the pair for its own cells) */
+  --gutter-l: max(var(--gutter), env(safe-area-inset-left));
+  --gutter-r: max(var(--gutter), env(safe-area-inset-right));
   margin-left: calc(-1 * var(--gutter-l));
   margin-right: calc(-1 * var(--gutter-r));
 }
@@ -551,8 +553,8 @@ tr[data-edge="late"] > td.c-kind.neutral { --kind-color: var(--kind-exch-text); 
    edge sits on the band edge and its text on the gutter — the same geometry
    as the ledger tables' first cell. */
 .reference-feed :is(.reference-row, .reference-paper) > td:first-child {
-  margin-left: calc(-1 * var(--gutter));
-  padding-left: var(--gutter);
+  margin-left: calc(-1 * var(--gutter-l));
+  padding-left: var(--gutter-l);
 }
 .reference-feed tr.reference-row[data-edge] > td:first-child {
   box-shadow: inset 3px 0 0 var(--row-edge, transparent);
@@ -1128,8 +1130,8 @@ span.mgr-chip,
 /* ---------- ≤1080px: the feed's two-line rows (moved here unchanged, with the
    reference rows' alignment and wrap rules that media.css used to give them) ---------- */
 @media (max-width: 1080px) {
-  .reference-feed .reference-row { display: grid; grid-template-columns: 70px minmax(0,1fr) 100px; gap: 8px 12px; padding: 12px var(--gutter); min-height: 0; height: auto; position: relative; }
-  .reference-feed .reference-paper { grid-template-columns: 70px minmax(0,1fr) 100px; gap: 8px 12px; padding: 12px var(--gutter); min-height: 0; }
+  .reference-feed .reference-row { display: grid; grid-template-columns: 70px minmax(0,1fr) 100px; gap: 8px 12px; padding: 12px var(--gutter-r) 12px var(--gutter-l); min-height: 0; height: auto; position: relative; }
+  .reference-feed .reference-paper { grid-template-columns: 70px minmax(0,1fr) 100px; gap: 8px 12px; padding: 12px var(--gutter-r) 12px var(--gutter-l); min-height: 0; }
   /* The range line keeps the height of a flag chip, so rows with and without
      flags fold to the same height. */
   .reference-feed .reference-row > .cell-range { min-height: 17px; }
@@ -1152,14 +1154,14 @@ span.mgr-chip,
      and as #feed-section does at ≥1081px: the rows carry the gutter, so a feed
      left inside the band's content box put its text on a DOUBLE gutter
      (review C-11). The box keeps its top and bottom rules. */
-  #congress-feed { margin-left: calc(-1 * var(--gutter)); margin-right: calc(-1 * var(--gutter)); border-left: 0; border-right: 0; }
+  #congress-feed { margin-left: calc(-1 * var(--gutter-l)); margin-right: calc(-1 * var(--gutter-r)); border-left: 0; border-right: 0; }
   /* The column head is folded away visually, never removed: its labels and
      notes (the column definitions) stay in the accessibility tree (review
      C-12; css-fold's honesty sweep lists `.reference-head`). */
   .reference-feed .reference-head { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
   /* …and a keyboard user who tabs into its sort buttons or notes SEES where
      focus is: the head unfolds as a wrapped line of labels while it holds it. */
-  .reference-feed .reference-head:focus-within { position: static; width: auto; height: auto; margin: 0; padding: 8px var(--gutter); overflow: visible; clip: auto; clip-path: none; white-space: normal; display: flex; flex-wrap: wrap; gap: 6px 14px; }
+  .reference-feed .reference-head:focus-within { position: static; width: auto; height: auto; margin: 0; padding: 8px var(--gutter-r) 8px var(--gutter-l); overflow: visible; clip: auto; clip-path: none; white-space: normal; display: flex; flex-wrap: wrap; gap: 6px 14px; }
   .reference-feed .cell-traded .filed { display: inline; }
   .reference-feed .cell-member .aff { white-space: nowrap; }
   .reference-feed .reference-row .flag { max-width: 100%; }
@@ -1175,7 +1177,7 @@ span.mgr-chip,
    band width with its text on the gutter, and the count and pager share the
    foot row. */
 @media (min-width: 1081px) {
-  #feed-section { display: grid; grid-template-columns: minmax(0,1fr) auto; margin-left: calc(-1 * var(--gutter)); margin-right: calc(-1 * var(--gutter)); border-top: 0; }
+  #feed-section { display: grid; grid-template-columns: minmax(0,1fr) auto; margin-left: calc(-1 * var(--gutter-l)); margin-right: calc(-1 * var(--gutter-r)); border-top: 0; }
   #feed-section > .panel-head { grid-row: 1; grid-column: 1; margin: 0; padding: 12px 0 12px var(--gutter); justify-content: flex-start; border: 0; }
   #feed-section .filterbar, #congress-feed { display: contents; }
   #feed-section .filter-controls { grid-column: 2; grid-row: 1; display: flex; align-items: center; padding-right: var(--gutter); gap: 8px; }
@@ -1203,8 +1205,8 @@ span.mgr-chip,
   .reference-feed .reference-paper {
     grid-template-columns: 58px minmax(150px,1.2fr) 70px minmax(100px,1fr) 100px 200px 140px 60px;
     column-gap: 12px;
-    padding-left: var(--gutter);
-    padding-right: var(--gutter);
+    padding-left: var(--gutter-l);
+    padding-right: var(--gutter-r);
   }
   /* 30px rows; a row whose flags wrap grows rather than overlapping the next. */
   .reference-feed :is(.reference-row, .reference-paper) { min-height: max(30px, var(--hit-min)); margin: 0; }
@@ -1355,8 +1357,36 @@ span.mgr-chip,
     border-right: 0;
     background: none;
   }
+  /* Whole-row taps (launch M1c, LD7, R7): the row's MAIN link — the member,
+     else the filer, position or issuer, else the ticker — stretches over the
+     card through its ::after, BENEATH the row's other links, buttons and
+     summaries, which sit above it; so a tap anywhere else on the card opens
+     the row, and a receipt, a tip or a chip is still its own target. */
+  table[data-card] > tbody > tr > :is(.c-member, .c-filer, .c-pos, .c-issuer) a:first-of-type,
+  table[data-card] > tbody > tr:not(:has(> :is(.c-member, .c-filer, .c-pos, .c-issuer) a)) > .c-ticker a:first-of-type,
+  .reference-feed .reference-row > .cell-member a:first-of-type {
+    position: static;
+  }
+  table[data-card] > tbody > tr > :is(.c-member, .c-filer, .c-pos, .c-issuer) a:first-of-type::before,
+  table[data-card] > tbody > tr:not(:has(> :is(.c-member, .c-filer, .c-pos, .c-issuer) a)) > .c-ticker a:first-of-type::before,
+  .reference-feed .reference-row > .cell-member a:first-of-type::before {
+    content: none;
+  }
+  table[data-card] > tbody > tr > :is(.c-member, .c-filer, .c-pos, .c-issuer) a:first-of-type::after,
+  table[data-card] > tbody > tr:not(:has(> :is(.c-member, .c-filer, .c-pos, .c-issuer) a)) > .c-ticker a:first-of-type::after,
+  .reference-feed .reference-row > .cell-member a:first-of-type::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+  }
+  table[data-card] > tbody > tr :is(a, button, summary, [tabindex]):not(:is(.c-member, .c-filer, .c-pos, .c-issuer) a:first-of-type),
+  .reference-feed .reference-row :is(a, button, summary, [tabindex]):not(.cell-member a:first-of-type) {
+    position: relative;
+    z-index: 2;
+  }
   .reference-feed .cell-member { white-space: normal; }
-  .design-band > *, .design-rankings > * { padding-left: var(--gutter); padding-right: var(--gutter); }
+  .design-band > *, .design-rankings > * { padding-left: var(--gutter-l); padding-right: var(--gutter-r); }
 }
 /* ================================================================ ledger:end */
 

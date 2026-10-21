@@ -61,6 +61,17 @@
 
   /* spacing */
   --gutter: 32px;       /* band gutter (16px at ≤720px) */
+  /* launch M1c (LD10, R13): the SAFE side gutters. A landscape iPhone (over
+     720px wide) has 47–59px insets; `.shell` and every full-bleed band pad
+     (and pull out) by these, so no row text sits under the notch or the
+     rounded corners, at any width. `.table-scroll` redefines the pair locally
+     for its own cells' flush/band geometry. */
+  --gutter-l: max(var(--gutter), env(safe-area-inset-left));
+  --gutter-r: max(var(--gutter), env(safe-area-inset-right));
+  /* launch M1c (LD8): the sticky masthead's height — 54px at ≤720px, where the
+     masthead sticks; 0 above, where it does not. Sticky tab bars sit below it
+     and in-page anchors land below it (`scroll-padding-top`). */
+  --masthead-h: 0px;
   --col-half: 6px;      /* half the 12px gap between adjacent cell contents */
   --gap-list: 14px;     /* rule book and bar-list rows */
   --num-lead: 16px;     /* lead before a numeric/date column (10px compact) */
@@ -161,7 +172,7 @@
    720px fold take the 16px gutter and the smaller display sizes; a coarse
    pointer (or the fold) takes the 44px hit square and the 44px ledger row. */
 @media (max-width:720px) {
-  :root { --gutter: 16px; --fs-display: 22px; --fs-hero: 28px; }
+  :root { --gutter: 16px; --fs-display: 22px; --fs-hero: 28px; --masthead-h: 54px; }
   /* launch M1b (LD12, R6): the phone type ramp, as token VALUES. No visible
      text under 11px at the fold: labels and badges 11, data 12–13, names and
      prose 14–15. Every value is at or above its desktop value, so no text
@@ -190,6 +201,8 @@
 
 html {
   height: 100%;
+  /* a hash target and revealTarget land below the sticky masthead (LD8) */
+  scroll-padding-top: var(--masthead-h);
 }
 
 body {
@@ -252,7 +265,7 @@ button {
 .shell {
   max-width: 1360px;
   margin: 0 auto;
-  padding-left: 40px;
-  padding-right: 40px;
+  padding-left: var(--gutter-l);
+  padding-right: var(--gutter-r);
 }
 

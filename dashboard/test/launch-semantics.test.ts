@@ -291,7 +291,7 @@ test("R40: a client repaint carries the roles the server page carries, labels re
 
 test("R40: Base.astro renders the page body through withTableRoles, once, and no bare slot remains", () => {
   const base = src("layouts/Base.astro");
-  assert.match(base, /import \{ withTableRoles \} from "\.\.\/lib\/format";/);
+  assert.match(base, /import \{ [^}]*\bwithTableRoles\b[^}]* \} from "\.\.\/lib\/format";/);
   assert.match(base, /const pageBody = withTableRoles\(await Astro\.slots\.render\("default"\)\);/);
   assert.match(base, /<Fragment set:html=\{pageBody\} \/>/);
   assert.doesNotMatch(base, /<slot\s*\/>/, "a bare slot would let a page body skip the roles");

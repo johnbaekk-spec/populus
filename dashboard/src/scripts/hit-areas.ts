@@ -21,8 +21,14 @@
    alone cannot draw (they only cut the centred square), so such a trigger
    also gets its own, wider `--hit-min`, read only by its `::before`. */
 
-const PSEUDO = ".note-btn, .th-sort";
-const CONTROLS =
+/* launch M1c (LD7, R7): under a coarse pointer or at the ≤720px fold, links
+   carry the hit square too (layout.css) — every link not set inline in
+   running prose — so their squares join the midpoint split. */
+const LINKS = "a[href]:not(:is(p, li, dd, .note-pop, .footer-notice) a)";
+const HIT_QUERY = "(any-pointer: coarse), (max-width: 720px)";
+const linksTakeSquares = (): boolean => typeof matchMedia === "function" && matchMedia(HIT_QUERY).matches;
+const BASE_PSEUDO = ".note-btn, .th-sort";
+const BASE_CONTROLS =
   ".note-btn, .th-sort, .seg > button, .chips > button, .mgr-chips > button, .pager-btn, .compact-toggle";
 
 interface Rect {
@@ -199,6 +205,9 @@ export function clipHitAreas(): void {
   const boxes: Box[] = [];
   const cache = new Map<Element, boolean>();
   const views = new Map<HTMLElement, Rect>();
+  const withLinks = linksTakeSquares();
+  const PSEUDO = withLinks ? `${BASE_PSEUDO}, ${LINKS}` : BASE_PSEUDO;
+  const CONTROLS = withLinks ? `${BASE_CONTROLS}, ${LINKS}` : BASE_CONTROLS;
   for (const el of Array.from(document.querySelectorAll<HTMLElement>(CONTROLS))) {
     const r = el.getBoundingClientRect();
     // not a target: unrendered, visually hidden (1px clip), invisible, or inside

@@ -46,6 +46,9 @@ const description =
   </main>
   <script>
     import { initEntityPage } from "../../../scripts/entity-client";
+    import { initNotes } from "../../../scripts/notes";
     initEntityPage();
+    // launch M1c (R12): tips open as bottom sheets at ≤720px here too
+    initNotes();
   </script>
 </Base>

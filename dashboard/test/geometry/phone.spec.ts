@@ -39,26 +39,27 @@ const IPHONE_UA =
 const THEME = (process.env.POPULUS_THEME ?? "dark").trim() === "light" ? "light" : "dark";
 
 /** R10's allowlist: tab bars, chip and tool rows, swipe strips. */
-export const SCROLLER_ALLOW: readonly string[] = [".sig-tabs-scroll", ".tk-tabs", ".si-pb-chips", ".ov-tools", "[data-scroll-region]"];
-/** The swipe strips among them (LD11: x mandatory snap). */
-export const SWIPE_STRIPS: readonly string[] = [".pb-list", "[data-swipe]"];
+export const SCROLLER_ALLOW: readonly string[] = [".sig-tabs-scroll", ".tk-tabs", ".si-pb-chips", ".ov-tools", ".mv-chips", ".si-cards", "[data-scroll-region]"];
+/** The swipe strips among them (LD11: x mandatory snap): the signal cards
+    (home and Signals), the playbook list, and any strip a renderer marks. */
+export const SWIPE_STRIPS: readonly string[] = [".pb-list", ".si-cards", "[data-swipe]"];
 
 const ARG: PhoneAuditArg = { honesty: HONESTY_SELECTORS, scrollerAllow: SCROLLER_ALLOW, swipe: SWIPE_STRIPS, minTap: 44, minFont: 11 };
 
-/** M1a: MEASURE MODE — every predicate runs and is recorded; none gates yet
-    (T1.14 flips them in M1c). */
+/** T1.14 (M1c): the phone predicates GATE (M1a measured them only). */
 const GATED = {
-  sideways: false, // R4
-  honesty: false, // R5 (R2 on cards)
-  text: false, // R6
-  taps: false, // R7
-  covered: false, // R7
-  scrollers: false, // R10
-  gutters: false, // R13
-  roles: false, // R40
+  sideways: true, // R4
+  honesty: true, // R5 (R2 on cards)
+  text: true, // R6
+  taps: true, // R7
+  covered: true, // R7
+  scrollers: true, // R10
+  gutters: true, // R13
+  roles: true, // R40
 } as const;
-/** LD31: the routes whose ≤3,000-element budget is gated (none in M1a). */
-const DOM_GATED = new Set<string>([]);
+/** LD31: the routes whose ≤3,000-element budget M1c gates; every other route
+    is measured and reported until the milestone that owns it. */
+const DOM_GATED = new Set(["filer", "congress-data", "not-found"]);
 const DOM_BUDGET = 3000;
 
 interface View {

@@ -90,6 +90,36 @@ function select(set: TabSet, i: number): void {
     const forId = el.getAttribute("data-tab-for");
     if (forId !== null && ids.has(forId)) setHidden(el, forId !== selected);
   }
+  keepTabInView(set.tabs[i]);
+}
+
+interface ScrollBox {
+  parentElement: ScrollBox | null;
+  scrollWidth?: number;
+  clientWidth?: number;
+  scrollLeft?: number;
+  getBoundingClientRect?: () => { left: number; right: number };
+}
+
+/** launch M1c (R9): the selected tab stays inside its sideways scroller — the
+    tab bar scrolls at ≤720px — on load and on every selection, WITHOUT moving
+    the page vertically: only the scroller's own `scrollLeft` changes (never
+    `scrollIntoView`, which also scrolls the page). A no-op where nothing
+    scrolls sideways, and in a DOM without layout. */
+export function keepTabInView(tab: Element | undefined): void {
+  const t = tab as unknown as ScrollBox | undefined;
+  if (!t || typeof t.getBoundingClientRect !== "function") return;
+  for (let p = t.parentElement; p; p = p.parentElement) {
+    if (typeof p.getBoundingClientRect !== "function" || (p.scrollWidth ?? 0) <= (p.clientWidth ?? 0) + 1) continue;
+    const ox = typeof getComputedStyle === "function" ? getComputedStyle(p as unknown as Element).overflowX : "auto";
+    if (ox !== "auto" && ox !== "scroll") continue;
+    const pr = p.getBoundingClientRect();
+    const tr = t.getBoundingClientRect();
+    const pad = 8;
+    if (tr.left < pr.left) p.scrollLeft = (p.scrollLeft ?? 0) - (pr.left - tr.left + pad);
+    else if (tr.right > pr.right) p.scrollLeft = (p.scrollLeft ?? 0) + (tr.right - pr.right + pad);
+    return;
+  }
 }
 
 /** The id a hash names, or null for an empty hash. */

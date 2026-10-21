@@ -213,3 +213,113 @@ test("R6 (LD12): --fs-input is 16px wherever the hit square is 44px, the name si
   assert.ok(readers.length >= 2);
   for (const s of readers) assert.match(s, /input|select|textarea|filter-select|site-search/, `${s} reads --fs-input but is not a field`);
 });
+
+/* --------------------------------------- R13 / LD10: the device's edges */
+
+const BASE_SRC = readFileSync(path.resolve(import.meta.dirname, "..", "src", "layouts", "Base.astro"), "utf-8");
+
+test("R13: the viewport meta carries viewport-fit=cover", () => {
+  assert.match(BASE_SRC, /<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" \/>/);
+});
+
+/** Side paddings of `.shell` and the full-bleed bands that are not the safe
+    tokens, at `vp` (the effective declaration). */
+function rawSidePadding(css: string, vp: { width: number; coarse?: boolean }): string[] {
+  const rules = parseRules(css);
+  const out: string[] = [];
+  const targets: { name: string; chain: El[] }[] = [
+    { name: ".shell", chain: [{ tag: "html" }, { tag: "body" }, { tag: "main", classes: ["shell", "page"] }] },
+    { name: ".design-band > *", chain: [{ tag: "html" }, { tag: "body" }, { tag: "main", classes: ["shell", "page", "design-page"] }, { tag: "section", classes: ["design-band"] }, { tag: "div", classes: ["panel"] }] },
+    { name: ".design-rankings > *", chain: [{ tag: "html" }, { tag: "body" }, { tag: "main", classes: ["shell", "page", "design-page"] }, { tag: "div", classes: ["design-rankings"] }, { tag: "section" }] },
+  ];
+  for (const t of targets) {
+    for (const [side, token] of [["padding-left", "--gutter-l"], ["padding-right", "--gutter-r"]] as const) {
+      const w = winning(rules, t.chain, side, vp, { padding: (v: string) => sideOf(v, side) });
+      if (!w || !w.value.includes(`var(${token})`)) out.push(`${t.name} ${side}: ${w?.value ?? "(none)"} from "${w?.selector ?? "-"}"`);
+    }
+  }
+  return out;
+}
+function sideOf(v: string, side: "padding-left" | "padding-right"): string {
+  const parts = v.trim().split(/\s+(?![^(]*\))/);
+  const [t, r = t, , l = r] = parts;
+  return side === "padding-left" ? l! : r!;
+}
+
+test("R13 (LD10): .shell and the full-bleed bands pad their sides with the safe tokens at every width", () => {
+  for (const vp of [{ width: 360 }, { width: 390 }, { width: 430 }, { width: 900, coarse: true }, DESKTOP]) {
+    assert.deepEqual(rawSidePadding(CSS, vp), [], `at ${vp.width}px`);
+  }
+  const rules = parseRules(CSS);
+  assert.equal(rootToken(rules, "--gutter-l", PHONE), "max(var(--gutter), env(safe-area-inset-left))");
+  assert.equal(rootToken(rules, "--gutter-r", DESKTOP), "max(var(--gutter), env(safe-area-inset-right))");
+  // control: a raw 16px shell padding re-planted at the fold is caught
+  const planted = `${CSS}\n@media (max-width: 720px) { .shell { padding-left: 16px; } }`;
+  assert.ok(rawSidePadding(planted, PHONE).some((p) => p.startsWith(".shell padding-left: 16px")));
+});
+
+test("R13 (LD10): the sticky header, the drawer, the search panel, the note sheet and the footer clear the top or bottom inset", () => {
+  const rules = parseRules(CSS);
+  const at = (chain: El[], prop: string, sh: Record<string, (v: string) => string | null> = {}): string => winning(rules, chain, prop, PHONE, sh)?.value ?? "";
+  const root: El[] = [{ tag: "html" }, { tag: "body" }];
+  assert.match(at([...root, { tag: "header", classes: ["masthead"] }], "padding-top"), /env\(safe-area-inset-top\)/);
+  assert.match(at([...root, { tag: "header", classes: ["masthead"] }, { tag: "div", classes: ["shell", "masthead-inner"] }, { tag: "div" }, { tag: "nav", classes: ["site-nav", "open"], id: "site-nav" }], "padding", {}), /env\(safe-area-inset-bottom\)/);
+  assert.match(at([...root, { tag: "div", classes: ["search-panel"], id: "search-panel" }], "padding-bottom"), /env\(safe-area-inset-bottom\)/);
+  assert.match(at([...root, { tag: "footer", classes: ["site-footer"] }], "padding-bottom"), /env\(safe-area-inset-bottom\)/);
+  assert.ok(rules.some((r) => r.selectors === ".note-pop:popover-open" && /env\(safe-area-inset-bottom\)/.test(r.decls)), "the note sheet");
+});
+
+/* ------------------------------------------ R8 / LD8: the slim sticky header */
+
+test("R8 (LD8): at ≤720px the masthead sticks at top 0, 54px tall; tab bars sit below it; anchors land below it", () => {
+  const rules = parseRules(CSS);
+  const mh: El[] = [{ tag: "html" }, { tag: "body" }, { tag: "header", classes: ["masthead"] }];
+  assert.equal(winning(rules, mh, "position", PHONE)?.value, "sticky");
+  assert.equal(winning(rules, mh, "top", PHONE)?.value, "0");
+  assert.notEqual(winning(rules, mh, "position", DESKTOP)?.value, "sticky", "above the fold the masthead does not stick");
+  assert.equal(rootToken(rules, "--masthead-h", PHONE), "54px");
+  assert.equal(rootToken(rules, "--masthead-h", DESKTOP), "0px");
+  for (const cls of ["sig-tabs-scroll", "tk-tabs"]) {
+    assert.equal(winning(rules, [{ tag: "html" }, { tag: "body" }, { tag: "div", classes: [cls] }], "top", PHONE)?.value, "var(--masthead-h)", `.${cls} sticks below the header`);
+  }
+  assert.equal(winning(rules, [{ tag: "html" }], "scroll-padding-top", PHONE)?.value, "var(--masthead-h)");
+});
+
+test("R8 (LD8, D2): the drawer is #site-nav with each section's count as a sibling span, computed from the build; no account control", () => {
+  const nav = BASE_SRC.slice(BASE_SRC.indexOf('<nav class="site-nav"'), BASE_SRC.indexOf("</nav>", BASE_SRC.indexOf('<nav class="site-nav"')));
+  assert.equal((nav.match(/<a\b/g) ?? []).length, 3, "the nav stays exactly three links");
+  assert.equal((nav.match(/class="nav-count"/g) ?? []).length, 3, "one count per section, outside its link");
+  assert.match(BASE_SRC, /congress: `\$\{fmtInt\(build\.txnCount\)\} trades`/, "Congress counts the build's transactions");
+  assert.match(BASE_SRC, /const instFilers = build\.inst\.present \? build\.inst\.filers\.length : 0;/, "Institutional counts the 13F filers on record");
+  assert.match(BASE_SRC, /\$\{fmtInt\(instFilers\)\} 13F filers/);
+  assert.match(BASE_SRC, /signalArtifact\.signals\.filter\(\(s\) => s\.status === "active"\)\.length/, "Signals counts the active hits");
+  assert.match(BASE_SRC, /\$\{signalArtifact\.coverageFrom\} → \$\{signalArtifact\.coverageTo\}/, "…and states their window");
+  assert.doesNotMatch(BASE_SRC, /sign[ -]?in|sign[ -]?up|log[ -]?in/i, "no account control (D2)");
+  // the counts and the sheet hint show only in the phone drawer and sheet
+  const rules = parseRules(CSS);
+  const count: El[] = [{ tag: "html" }, { tag: "body" }, { tag: "nav", classes: ["site-nav"], id: "site-nav" }, { tag: "span", classes: ["nav-count"] }];
+  assert.equal(winning(rules, count, "display", DESKTOP)?.value, "none");
+  const open: El[] = [{ tag: "html" }, { tag: "body" }, { tag: "nav", classes: ["site-nav", "open"], id: "site-nav" }, { tag: "span", classes: ["nav-count"] }];
+  assert.equal(winning(rules, open, "display", PHONE)?.value, "block");
+});
+
+test("R9: at ≤720px filter groups wrap (no sideways strip) and a search box takes its own row", () => {
+  const rules = parseRules(CSS);
+  const fc: El[] = [{ tag: "html" }, { tag: "body" }, { tag: "div", classes: ["filterbar"] }, { tag: "div", classes: ["filter-controls"] }];
+  assert.equal(winning(rules, fc, "flex-wrap", PHONE)?.value, "wrap");
+  assert.notEqual(winning(rules, fc, "overflow-x", PHONE, OVERFLOW_X)?.value, "auto");
+  const q: El[] = [...fc, { tag: "input", classes: ["filter-select", "filter-text"], attrs: { type: "search" } }];
+  assert.match(winning(rules, q, "flex", PHONE)?.value ?? "", /100%/);
+});
+
+test("R7 (LD7): links take the hit square under the hit query; a card's main link stretches beneath the row's other targets", () => {
+  const rules = parseRules(CSS);
+  const linkRules = rules.filter((r) => r.media.some((m) => /any-pointer: coarse/.test(m)) && /a\[href\]/.test(r.selectors) && /::before/.test(r.selectors));
+  assert.ok(linkRules.some((r) => /var\(--hit-min\)/.test(r.decls) && /--hit-x-l/.test(r.decls)), "the link square, clipped at the midpoint");
+  const main = rules.find((r) => /c-member, \.c-filer, \.c-pos, \.c-issuer\) a:first-of-type::after/.test(r.selectors));
+  assert.ok(main && /inset:\s*0/.test(main.decls) && /z-index:\s*1/.test(main.decls), "the main link's stretched ::after");
+  const others = rules.find((r) => /tr :is\(a, button, summary, \[tabindex\]\)/.test(r.selectors));
+  assert.ok(others && /z-index:\s*2/.test(others.decls), "the row's other targets sit above it");
+  const hit = readFileSync(path.resolve(import.meta.dirname, "..", "src", "scripts", "hit-areas.ts"), "utf-8");
+  assert.match(hit, /const LINKS = "a\[href\]:not\(:is\(p, li, dd, \.note-pop, \.footer-notice\) a\)";/);
+});

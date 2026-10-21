@@ -299,7 +299,7 @@ tbody[data-collapsed="true"] tr[data-compact-extra] {
 @media screen and (max-width: 720px) {
   .note-pop:popover-open {
     position: fixed;
-    inset: auto 10px 10px 10px;
+    inset: auto max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); /* launch M1c (LD10) */
     width: auto;
     max-width: none;
     max-height: 70vh;
@@ -443,7 +443,7 @@ tbody[data-collapsed="true"] tr[data-compact-extra] {
 /* Claude Design four-screen system. Reference: docs/design/reference/*.dc.html.
    Existing table markup, controls, notes and mobile honesty folds are retained. */
 body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: antialiased; }
-.shell { max-width: 1440px; width: 100%; padding-left: 32px; padding-right: 32px; }
+.shell { max-width: 1440px; width: 100%; padding-left: var(--gutter-l); padding-right: var(--gutter-r); } /* launch M1c (LD10): the safe gutters */
 .masthead-inner { min-height: 52px; gap: 16px; }
 .masthead-left { gap: 24px; }
 .brand-name { font: 700 var(--fs-brand)/1 var(--sans); letter-spacing: .22em; text-transform: uppercase; }
@@ -535,7 +535,7 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
   .design-ledger { flex-basis: 100%; justify-content: flex-start; }
 }
 @media (max-width: 720px) {
-  .shell { padding-left: 16px; padding-right: 16px; }
+  .shell { padding-left: var(--gutter-l); padding-right: var(--gutter-r); }
   .page { padding-top: 20px; }
   .brand-name { font-size: var(--fs-small); }
   .masthead-left { gap: 16px; }
@@ -587,9 +587,9 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 /* Reference canvas geometry: adjoining bands share one-pixel seams. */
 .design-page, .entity-page { --design-gutter:32px; }
 .page-title, .entity-title { font-size:var(--fs-display); line-height:1.1; }
-.design-page > .design-briefing, .entity-page > .design-briefing { margin-left:calc(-1 * var(--design-gutter)); margin-right:calc(-1 * var(--design-gutter)); margin-bottom:0; }
-.design-band { display:grid; gap:0; margin:0 calc(-1 * var(--design-gutter)); border-bottom:1px solid var(--rule); }
-.design-band > * { min-width:0; padding:10px var(--gutter) 14px; }
+.design-page > .design-briefing, .entity-page > .design-briefing { margin-left:calc(-1 * var(--gutter-l)); margin-right:calc(-1 * var(--gutter-r)); margin-bottom:0; } /* launch M1c (LD10): full-bleed bands pull out and pad back by the safe gutters */
+.design-band { display:grid; gap:0; margin:0 calc(-1 * var(--gutter-r)) 0 calc(-1 * var(--gutter-l)); border-bottom:1px solid var(--rule); }
+.design-band > * { min-width:0; padding:10px var(--gutter-r) 14px var(--gutter-l); }
 /* launch M4b: the member page's Filing history │ Signals pair and its
    net-flow band are retired (Signals joined the side column, the history
    stands alone), so their 28px inner-gutter rules went with them. */
@@ -618,13 +618,13 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 .design-supplement .entity-grid { margin:0; }
 .design-activity .inst-data-note { font-size:var(--fs-meta); }
 .design-rankings { gap:0; margin:0 -32px; border-bottom:1px solid var(--rule); }
-.design-rankings > * { padding:10px var(--gutter) 16px; margin:0; border:0; }
+.design-rankings > * { padding:10px var(--gutter-r) 16px var(--gutter-l); margin:0; border:0; }
 .design-rankings > * + * { border-left:1px solid var(--rule); }
 /* The ≤1080px two-line feed block moved into the ledger region (entities.css)
    together with the ≤720px fold, so the two keep their own order (A-4). */
 @media(max-width:720px) {
  .design-page, .entity-page { --design-gutter:16px; }
- .design-band > *, .design-rankings > * { padding:10px 16px 16px; }
+ .design-band > *, .design-rankings > * { padding:10px var(--gutter-r) 16px var(--gutter-l); } /* launch M1c (LD10): the safe gutters */
  .design-story { padding:16px; }
  .design-rankings { margin-left:-16px; margin-right:-16px; }
  .design-unavailable .etable { min-width:480px; }
@@ -1039,7 +1039,7 @@ details.si-tier > summary > .si-tier-h { display: inline; }
 /* LD8: the tab strip. The sticky box that scrolls sideways is the ROLE-LESS
    wrapper (a named region only while it overflows); the tablist inside it
    keeps its role at every width and never wraps. */
-.sig-tabs-scroll { position: sticky; top: 0; z-index: 5; margin: 18px 0 0; background: var(--paper); overflow-x: auto; overflow-y: hidden; }
+.sig-tabs-scroll { position: sticky; top: var(--masthead-h); z-index: 5; margin: 18px 0 0; background: var(--paper); overflow-x: auto; overflow-y: hidden; }
 .sig-tabs-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .sig-tabs { position: static; flex-wrap: nowrap; margin: 0; min-width: max-content; }
 .sig-panel { padding-top: 16px; }
@@ -1292,7 +1292,8 @@ details.si-tier > summary > .si-tier-h { display: inline; }
   .ov-iss, .ov-who, .ov-mw { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
   .ov-det { grid-template-columns: minmax(0,1fr); padding: 4px 2px 14px; }
   .pb-nav { flex-basis: 100%; max-width: none; }
-  .pb-list { flex-direction: row; overflow-x: auto; gap: 8px; border-top: 0; padding-bottom: 4px; }
+  .pb-list { flex-direction: row; overflow-x: auto; gap: 8px; border-top: 0; padding-bottom: 4px; scroll-snap-type: x mandatory; } /* launch M1c (LD11): a swipe strip snaps */
+  .pb-list > * { scroll-snap-align: start; flex: 0 0 88%; } /* the next item peeks (about 12%) */
   /* square-cornered chips: a rounded corner would fall outside the hit area G12 measures */
   .pbi { flex: 0 0 auto; border: 1px solid var(--rule2); border-radius: 3px; padding: 8px 12px; }
   .pbi[aria-current="true"] { box-shadow: none; border-color: var(--amber); }
@@ -1356,7 +1357,7 @@ details.si-tier > summary > .si-tier-h { display: inline; }
    is opaque and above the tables' sticky columns, and every anchor under it
    keeps clear of it (`scroll-margin-top`), so a deep link never lands under
    the bar. The tabs wrap rather than scroll on a narrow screen. */
-.tk-tabs { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: stretch; margin: 18px 0 0; background: var(--paper); border-bottom: 1px solid var(--rule2); }
+.tk-tabs { position: sticky; top: var(--masthead-h); z-index: 5; display: flex; flex-wrap: wrap; align-items: stretch; margin: 18px 0 0; background: var(--paper); border-bottom: 1px solid var(--rule2); }
 .tk-tab { display: inline-flex; align-items: center; gap: 6px; min-height: var(--hit-min); padding: 10px 20px; font: 500 var(--fs-name)/1.2 var(--sans); color: var(--ink2); text-decoration: none; white-space: nowrap; border-bottom: 2px solid transparent; margin-bottom: -1px; }
 .tk-tab:hover { color: var(--ink); }
 .tk-tab[aria-selected="true"] { font-weight: 600; color: var(--ink); border-bottom-color: var(--accent); }

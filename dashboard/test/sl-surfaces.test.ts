@@ -818,6 +818,12 @@ test("SL-R28: every surface that passes a note scope calls initNotes(), and Base
     "../src/pages/congress/members/[bioguide].astro",
     "../src/pages/institutional/filers/[cik].astro",
     "../src/pages/institutional/tickers/[t]/holders.astro",
+    /* launch M1c (R12, T1.12): the four note-bearing pages that never bound
+       the tips — so their notes never became bottom sheets on a phone */
+    "../src/pages/tickers/[ticker].astro",
+    "../src/pages/congress/tickers/[ticker].astro",
+    "../src/pages/e/index.astro",
+    "../src/pages/methodology/index.astro",
   ];
   for (const f of surfaces) {
     const src = readFileSync(new URL(f, import.meta.url), "utf8");

@@ -71,6 +71,12 @@
 .site-nav .nav-soon {
   color: var(--ink3);
 }
+/* launch M1c (LD8): each section's count, a sibling of its link, shows only
+   in the phone drawer (media.css); the search sheet's hint likewise. */
+.site-nav .nav-count,
+.site-search .search-sheet-hint {
+  display: none;
+}
 .masthead-right {
   display: flex;
   align-items: center;
@@ -231,3 +237,30 @@
   color: var(--ink3);
 }
 
+
+/* launch M1c (LD10, R13): the footer clears the home indicator. Its side
+   gutters are the shell's safe gutters; its bottom pad grows by the inset. */
+.site-footer {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* launch M1c (LD7, R7): under a coarse pointer or at the ≤720px fold a LINK
+   reaches the --hit-min square too (not one set inline in running prose — a
+   paragraph, a list item, a definition, a tip, the footer notice), through
+   the same layout-neutral ::before the note and sort triggers use: the square
+   is max(box, --hit-min) on each axis, and where two targets' squares meet,
+   each stops at the midpoint of the gap between their boxes
+   (scripts/hit-areas.ts). The link's own box and its row never grow. */
+@media (any-pointer: coarse), (max-width: 720px) {
+  a[href]:not(:is(p, li, dd, .note-pop, .footer-notice) a) {
+    position: relative;
+  }
+  a[href]:not(:is(p, li, dd, .note-pop, .footer-notice) a)::before {
+    content: "";
+    position: absolute;
+    left: max(min(0px, calc(50% - var(--hit-min) / 2)), calc(-1 * var(--hit-x-l, 999px)));
+    right: max(min(0px, calc(50% - var(--hit-min) / 2)), calc(-1 * var(--hit-x-r, 999px)));
+    top: max(min(0px, calc(50% - var(--hit-min) / 2)), calc(-1 * var(--hit-x-t, 999px)));
+    bottom: max(min(0px, calc(50% - var(--hit-min) / 2)), calc(-1 * var(--hit-x-b, 999px)));
+  }
+}
