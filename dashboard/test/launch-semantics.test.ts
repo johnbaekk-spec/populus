@@ -169,6 +169,15 @@ test("R40: a nested table is scoped on its own; comments, scripts and styles pas
   assert.equal(withTableRoles(`<p>no table here</p>`), `<p>no table here</p>`);
 });
 
+test("R40 (launch review m2): a table tag written inside another tag's quoted attribute value is text, not markup — passed through byte for byte, while the real table beside it takes its roles", () => {
+  const attrs = `<span title="a <td> b" data-x='<tr class="q">'>s</span><abbr title="<table>">t</abbr>`;
+  const out = withTableRoles(`${attrs}<table><tbody><tr><td>1</td></tr></tbody></table>`);
+  assert.ok(out.startsWith(attrs), `the attribute values are untouched: ${out.slice(0, 120)}`);
+  /* control: the same scan does rewrite the table tags outside an attribute */
+  assert.ok(out.endsWith(`<table role="table" data-card="generic"><tbody role="rowgroup"><tr role="row"><td role="cell">1</td></tr></tbody></table>`), out);
+  assert.equal(withTableRoles(out), out, "idempotent");
+});
+
 test("R40: a fragment of rows is a body; labels come from the table it is painted into", () => {
   assert.equal(withTableRoles(`<tr><td>1</td><th>2</th></tr>`), `<tr role="row"><td role="cell">1</td><th role="rowheader">2</th></tr>`);
   assert.equal(

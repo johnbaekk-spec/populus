@@ -2806,9 +2806,12 @@ export interface TableRoleOpts {
 }
 
 /* Comments and raw-text elements are passed through untouched; the attribute
-   group honours quoted values, so a `>` inside one cannot end the tag. */
+   group honours quoted values, so a `>` inside one cannot end the tag. Every
+   OTHER start tag is consumed whole and passed through too (launch review m2):
+   otherwise the scan, stopping at every `<`, would find a `<td>` written inside
+   another tag's quoted attribute value and rewrite it there. */
 const TABLE_MARKUP_TOKEN =
-  /<!--[\s\S]*?-->|<(script|style|textarea)\b[^>]*>[\s\S]*?<\/\1\s*>|<(\/?)(table|thead|tbody|tfoot|tr|th|td)\b((?:[^>"']|"[^"]*"|'[^']*')*)>/gi;
+  /<!--[\s\S]*?-->|<(script|style|textarea)\b[^>]*>[\s\S]*?<\/\1\s*>|<(\/?)(table|thead|tbody|tfoot|tr|th|td)\b((?:[^>"']|"[^"]*"|'[^']*')*)>|<[a-z][\w:-]*(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
 
 function attrValue(attrs: string, name: string): string | null {
   const m = new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>\`]+))`, "i").exec(attrs);
@@ -2858,7 +2861,7 @@ export function withTableRoles(html: string, opts: TableRoleOpts = {}): string {
     return `<${tag}${body}${extra}${selfClose ? " /" : ""}>`;
   };
   return html.replace(TABLE_MARKUP_TOKEN, (whole, _raw: string | undefined, close: string | undefined, name: string | undefined, attrs: string | undefined) => {
-    if (name === undefined) return whole; // a comment or a raw-text element
+    if (name === undefined) return whole; // a comment, a raw-text element or another start tag
     const tag = name.toLowerCase();
     const a = attrs ?? "";
     const scope = stack[stack.length - 1] ?? fragment;
