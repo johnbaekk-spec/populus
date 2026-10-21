@@ -230,12 +230,6 @@ function congressAbsenceCellHtml(a: CongressAbsence, scope: "side" | "name"): st
   return `<span aria-hidden="true">—</span><span class="visually-hidden">${esc(congressAbsenceText(a, scope))}</span>`;
 }
 
-/** The Congress column's cell for one side: "▲3" with its words for
-    assistive technology, or "—" with the reason (`congressAbsence`). */
-function congressCellHtml(q: CongressQuarter | null, ticker: string | null, side: QuarterSide): string {
-  return congressCellFrom(congressCellOf(q, ticker, side));
-}
-
 /** The Congress cell of one side as data (launch M7a, LD26): the counted
     members, or the absence's words — what `congressCellFrom` renders, so a
     held row rendered on the client from its island entry is the server's

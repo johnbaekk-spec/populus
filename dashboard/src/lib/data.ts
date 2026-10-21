@@ -551,13 +551,6 @@ export function sectorResolver(build: BuildData): ((ticker: string) => import(".
   };
 }
 
-/** Modules present in this build's manifest — drives S1 surfaces and the S7
-    suppression rule. Derived from the manifest, never assumed. */
-export function moduleAvailability(build: BuildData): { congress: boolean; inst: boolean } {
-  const modules = build.manifest?.modules ?? {};
-  return { congress: "congress" in modules, inst: "inst" in modules };
-}
-
 /* ---------- source resolution ---------- */
 
 // astro build/dev always runs with cwd = dashboard/ (module paths get

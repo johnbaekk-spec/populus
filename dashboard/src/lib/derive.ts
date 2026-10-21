@@ -1864,13 +1864,6 @@ export function affTextOf(m: Pick<MemberEntity, "party" | "state" | "district" |
   return `${p}–${m.state}`;
 }
 
-/** "D–CA-11" long form: "Democrat — California 11th" is not derivable from
-    the members table codes without a state-name table; the compact affiliation
-    is the honest, source-backed form used everywhere. */
-export function partyLabel(party: string): string {
-  return party === "D" ? "Democrat" : party === "R" ? "Republican" : party === "I" ? "Independent" : "";
-}
-
 export function escAttr(s: string): string {
   return esc(s);
 }
