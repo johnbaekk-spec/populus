@@ -950,9 +950,11 @@ export function truncationNoticeHtml(t: ActivityTruncation | null, shards: numbe
   return terminusRow({ author: "populus", html: `<span data-boundary-key="${esc(k.position_key)}">${html}</span>` });
 }
 
-/** The activity list's bound (Architecture H, H-1): what the rows ARE, chosen
-    by the same `notable` value that chose them, then what the build
-    publishes. The file path lives on /methodology/#activity-files. */
+/** The activity list's bound (Architecture H, H-1): over the first file's
+    rows, what the rows ARE, then what the build publishes; over notable rows
+    (chosen by the same `notable` value that chose them) what the build
+    publishes only — what those rows are is the head's tip (launch copy
+    items inst-06/inst-07). The file path lives on /methodology/#activity-files. */
 export function activityBoundHtml(o: {
   notable: boolean;
   emitted: number;
@@ -973,7 +975,11 @@ export function activityBoundHtml(o: {
       o.emitted === o.total
         ? `This build publishes all ${fmtInt(o.total)} of its changes, ${ranked}, as ${files}.`
         : `This build publishes the first ${fmtInt(o.emitted)} of its ${fmtInt(o.total)} changes, ${ranked}, as ${files}.`;
-    return `These rows are notable managers' new, added, trimmed and exited positions, ${NOTABLE_FEED_CAP_TEXT}, newest filing first, then largest change; each manager's full list is on its filer page. ${publishes} ${open}`;
+    /* launch copy item inst-07 (adapted): what the rows are — the kinds, the
+       cap, the order, the filer-page pointer — is the head's tip now
+       (`activityFeedHtml`); the publication bound stays whole, every number
+       kept (activity.test.ts), and so does the truncation notice */
+    return `${publishes} ${open}`;
   }
   /* the first file's rows are the head of the size order */
   return (
@@ -1028,9 +1034,11 @@ const ACTIVITY_COLS: readonly (readonly [string, string, string])[] = [
 const ACTIVITY_COL_CLASSES = ["c-issuer c-flex", "c-filer c-secondary", "c-kind", "c-num", "c-num", "c-num", "c-num", "c-flags"] as const;
 /* The reference columns. "Wt" is REMOVED (DESIGN-POLISH M2, R12): position
    weight is not in this activity list, so the column was empty by
-   construction; the table foot names it (ACTIVITY_REMOVED_REASON). */
+   construction. Launch copy item inst-04 (activity half): the table foot no
+   longer names it — a column removed BY DESIGN gets no foot line (the
+   filer-06 precedent, design-layout.test.ts); a column the DATA removes
+   still states why (the directory's Top-5, column-presence.test.ts R2-6). */
 const ACTIVITY_REFERENCE_CLASSES = ["c-kind", "c-issuer c-flex", "c-filer c-secondary", "c-num", "c-num", "c-src"] as const;
-const ACTIVITY_REMOVED_REASON = "Not shown: position weight — it is not in this activity list.";
 
 /** Mark → column, read off the emitter. */
 const ACTIVITY_COL_FN: Record<string, string | undefined> = {
@@ -1157,7 +1165,20 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
   return (
     `<section class="panel panel-wide" aria-label="Cross-filer activity">` +
     `<div class="panel-head"><h2 class="section-h">${opts.reference ? "Recent activity" : "Largest reported quarter-over-quarter changes, by issuer"}</h2>` +
-    `<span class="panel-note">${notable ? `notable managers · ${NOTABLE_FEED_CAP_TEXT} · newest filing first, then largest change` : "ordered by absolute reported change · undisclosed deltas last"}</span></div>` +
+    /* launch copy items inst-06 and inst-07 (adapted): over notable rows the
+       meta is four words, and what the rows ARE — the four kinds, the per-
+       manager cap, the order and the filer-page pointer, the first sentence
+       the bound used to repeat — is the meta's tip, once */
+    (notable
+      ? `<span class="panel-note">Notable managers · newest first</span>` +
+        note(
+          `New, added, trimmed and exited positions only, ${NOTABLE_FEED_CAP_TEXT}, newest filing first, then largest change; each manager's full list is on its filer page.`,
+          { scope: "inst-activity" },
+          "order",
+          { trigger: "mark", name: "About this list" },
+        )
+      : `<span class="panel-note">ordered by absolute reported change · undisclosed deltas last</span>`) +
+    `</div>` +
     universalFlagNote(statedActivity) +
     `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedActivity.join(","))}">` +
     /* Architecture H (V1 NEW-3): the caption is chosen by the same `notable`
@@ -1185,7 +1206,11 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
        key, so the keys are supplied here rather than invented at render time. */
     `<thead><tr>` +
     (opts.reference ? [
-      ["kind", "Kind", "Share change as classified from the filings; absence is not a sale record."],
+      /* launch copy item inst-08: the caveat line under the table merged
+         here — a change is between two quarter-end snapshots, not a record
+         of transactions; "not current holdings" is the 13F box's summary,
+         directly below */
+      ["kind", "Kind", "Share change between two quarter-end snapshots, as classified from the filings — not a record of transactions; absence is not a sale record."],
       ["issuer", "Name", "Issuer as filed, with the position identity key."],
       ["filer", "Filer", "Reporting manager."],
       ["value", "Δ value", "Signed change in reported value between the two quarters; an undisclosed side is stated, never zero."],
@@ -1205,7 +1230,6 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
     // no sort or expansion could be scoped to it and no root-integrity test
     // could enforce single ownership.
     `<tbody id="inst-activity-tbody"${collapsed ? ' data-collapsed="true"' : ""}>${body}</tbody></table></div>` +
-    (opts.reference ? `<p class="table-foot-reason">${esc(ACTIVITY_REMOVED_REASON)}</p>` : "") +
 
     /* This states BOTH bounds, because there are two and the
        reader is inside the tighter one. The compact slice is a render bound
@@ -1250,9 +1274,6 @@ export function activityFeedHtml(feed: ActivityFeed, opts: ActivityFeedOptions =
       }),
     }) +
     truncationNoticeHtml(feed.pagination.truncation, feed.pagination.limits.shardLimit) +
-    `<div class="caveat-line">Quarter-over-quarter comparisons are between two quarter-end` +
-    ` snapshots of what was reported — not a record of transactions, and not a claim about what` +
-    ` any manager holds now.</div>` +
     `</section>`
   );
 }

@@ -381,11 +381,24 @@ function notableFeed(): { feed: ActivityFeed; ciks: Set<string> } {
   return { feed: { present: true, reason: null, filings: FILINGS_ACT, pagination: paginateActivity(records, FILINGS_ACT), records } as ActivityFeed, ciks };
 }
 
-test("T3.8 (H-1, V1 NEW-2, V1 NEW-3): over notable rows the bound, the caption and the count all say newest-first", () => {
+test("T3.8 (H-1, V1 NEW-2, V1 NEW-3): over notable rows the head, the caption and the count all say newest-first", () => {
   const { feed, ciks } = notableFeed();
   const html = activityFeedHtml(feed, { reference: true, notableCiks: ciks });
   const extra = html.slice(html.indexOf('<span class="compact-bound-extra">'));
-  assert.match(extra, /^<span class="compact-bound-extra"> These rows are notable managers' new, added, trimmed and exited positions, at most two per manager, newest filing first, then largest change; each manager's full list is on its filer page\. This build publishes all 14 of its changes, ranked by size of change with undisclosed values last, as 1 file of at most 2,000 changes or 2,097,152 bytes each\. <a href="[^"]+">Open the first file ↗<\/a>/);
+  /* launch copy items inst-06/inst-07 (reversal record: launch-copy ledger):
+     what the notable rows ARE — the four kinds, the per-manager cap, newest
+     filing first, the filer-page pointer — moved from the bound's first
+     sentence to the head meta's tip, said once; the bound keeps the
+     publication bound whole, every number, and the no-JavaScript link. */
+  assert.match(extra, /^<span class="compact-bound-extra"> This build publishes all 14 of its changes, ranked by size of change with undisclosed values last, as 1 file of at most 2,000 changes or 2,097,152 bytes each\. <a href="[^"]+">Open the first file ↗<\/a>/);
+  const head = html.slice(0, html.indexOf("</div>"));
+  assert.match(head, /<span class="panel-note">Notable managers · newest first<\/span>/, "the head meta, four words");
+  assert.match(
+    head.replace(/&#39;/g, "'"),
+    /<span class="note-pop"[^>]*>New, added, trimmed and exited positions only, at most two per manager, newest filing first, then largest change; each manager's full list is on its filer page\.<\/span>/,
+    "the meta's tip says what the rows are, once",
+  );
+  assert.doesNotMatch(html, /These rows are notable managers/, "the bound no longer repeats it");
   assert.match(html, /<caption class="visually-hidden">Quarter-over-quarter position changes by notable managers, at most two per manager, newest filing first, then largest change<\/caption>/);
   assert.match(html, /1–10 of the 14 newest changes by notable managers shown here/);
   // controls: the old sentences over these rows are false and absent

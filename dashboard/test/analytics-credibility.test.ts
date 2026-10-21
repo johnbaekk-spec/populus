@@ -195,8 +195,11 @@ test("T4.2 (R27): at most two rows per filer across the WHOLE list; the count is
   const tbody = /<tbody id="inst-activity-tbody"[^>]*>([\s\S]*?)<\/tbody>/.exec(html)![1]!;
   assert.equal((tbody.match(/<tr/g) ?? []).length, 5);
   assert.match(html, /data-compact-total="5"/, "the count's total is the capped list's length");
-  assert.match(html, /at most two per manager/, "the band states the cap");
-  assert.match(html, /each manager's full list is on its filer page/);
+  /* launch copy item inst-06: the cap and the filer-page pointer are the head
+     meta's tip (the caption keeps the cap too) */
+  const head = html.slice(0, html.indexOf("</div>")).replace(/&#39;/g, "'");
+  assert.match(head, /at most two per manager/, "the band states the cap");
+  assert.match(head, /each manager's full list is on its filer page/);
 
   // control: a cap applied only to the first ten rows gives the wrong total
   const uncapped = [...RECORDS].sort((a, b) => (a.filing_keys[0]! - b.filing_keys[0]!) || (b.delta_value_usd! - a.delta_value_usd!));
