@@ -519,15 +519,6 @@ export function bandGeometry(r: Pick<TxnRow, "low" | "high">): BandGeom {
 
 /* ---------- row field presentation ---------- */
 
-/** A note key that is INJECTIVE over tickers (CD3-4 (a), M3 review): `slug`
-    folds every non-alphanumeric run to "-", so "BRK.B" and "BRK-B" would
-    share an id; each punctuation character is spelled as its code point
-    instead ("BRK.B" → "brk_1a_b" → id "n-mf-brk-1a-b"). A plain ticker is its
-    own key ("AAPL" → "n-mf-aapl"). */
-export function tickerNoteKey(ticker: string): string {
-  return ticker.replace(/[^A-Za-z0-9]/g, (ch) => `_${ch.codePointAt(0)!.toString(36)}_`);
-}
-
 /** No-ticker cell (B-7/F-6): the 16.1% of rows without a ticker used to show a
     bare "—" — but the filing names the asset. Render the asset name AS FILED
     (with its verbatim source asset-type value, when stated) instead of

@@ -50,13 +50,13 @@ import {
   sortHolderRows,
   sumDisclosedValue,
   surfaceHtml,
-  unqualifiedAllClaims,
   type FilerHoldingRow,
   type FilerSurfacePayload,
   type FilingDict,
   type HoldersSurfacePayload,
   type IssuerHolderRow,
 } from "../src/lib/holdings.ts";
+import { unqualifiedAllClaims } from "./lib/all-claims.ts";
 import {
   INSTITUTIONAL_DATA_NOTE_CLAUSES,
   institutionalDataNoteHtml,

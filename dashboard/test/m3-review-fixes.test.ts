@@ -19,7 +19,6 @@ import {
   assetNameCell,
   displayAsset,
   feedHeadHtml,
-  tickerNoteKey,
   txnRowHtml,
   type RenderCtx,
   type TxnRow,
@@ -213,9 +212,11 @@ test("CD3-4 (b)/(c): the asset rule is stated ONCE on the column; a mechanical-o
   assert.doesNotMatch(unknown + assetLineHtml(txn({ asset: "Apple Inc. (AAPl) [ST]" }), { notes: { scope: "t" } }), /\(House Clerk code list\)/);
 });
 
-test("CD3-4 (a): the net-flow notes are keyed on the ticker, injectively, and every id on a member page is unique", () => {
-  assert.equal(tickerNoteKey("AAPL"), "AAPL");
-  assert.notEqual(tickerNoteKey("BRK.B"), tickerNoteKey("BRK-B"), "slug would fold both to brk-b");
+test("CD3-4 (a): every id on a member page is unique — tickers a slug would fold together (BRK.B, BRK-B, BRK/B) included", () => {
+  /* launch final pass: `tickerNoteKey` (the injective note key of the
+     retired net-flow Issuer column) had no caller left outside this test, so
+     it is retired; the property it served — no two ids on a member page
+     collide, whatever the tickers' punctuation — is asserted here directly. */
   const tickers = ["BRK.B", "BRK-B", "BRK/B", "NFLX", "AAPL"];
   const m = {
     bioguide: "T000001", name: "Fixture Member", party: "R", state: "OK", district: null, chamber: "house", servingSince: "1999", filingCount: 1,
@@ -232,8 +233,11 @@ test("CD3-4 (a): the net-flow notes are keyed on the ticker, injectively, and ev
   assert.ok(ids.length > tickers.length, "the fixture renders the active page's ids");
   assert.equal(new Set(ids).size, ids.length, `duplicate ids: ${ids.filter((id, i) => ids.indexOf(id) !== i).join(", ")}`);
   assert.ok(!ids.some((id) => /^n-member-flow-asset-/.test(id)), "the 75-character txn-keyed net-flow id is gone");
-  // control: the slug of the plain ticker would collide
+  // control: the slug of the plain ticker would collide, so the fixture tests what it claims to
   assert.equal("BRK.B".toLowerCase().replace(/[^a-z0-9]+/g, "-"), "BRK-B".toLowerCase().replace(/[^a-z0-9]+/g, "-"));
+  // control: the uniqueness check sees a planted duplicate
+  const planted = [...ids, ids[0]!];
+  assert.notEqual(new Set(planted).size, planted.length, "a repeated id is caught");
 });
 
 /* ===================================================== K-4 … K-10 */

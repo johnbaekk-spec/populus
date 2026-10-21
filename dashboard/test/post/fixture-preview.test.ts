@@ -243,7 +243,7 @@ test("POST-BUILD: no §1.1 banned wording anywhere in the rendered institutional
 });
 
 test("POST-BUILD: no unqualified 'all' claim on the rendered holders surface (R12)", async () => {
-  const { unqualifiedAllClaims } = await import("../../src/lib/holdings.ts");
+  const { unqualifiedAllClaims } = await import("../lib/all-claims.ts");
   const html = readFileSync(
     path.join(DIST_FIXTURE, "institutional", "tickers", "AAPL", "holders", "index.html"),
     "utf-8",
