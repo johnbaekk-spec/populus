@@ -439,7 +439,9 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
         loadingEl?.setAttribute("hidden", "");
         const items = tickerPageSliceFrom(lists.flat(), holding[0]?.ticker_before ?? 0, state.page, PAGE_SIZE);
         const ctx: RenderCtx = {};
-        bodyEl!.innerHTML = items.map((it) => feedItemHtml(it, ctx)).join("\n");
+        /* launch integration: the ticker view's page is a table sink too
+           (M1's R40 contract), so its rows land with their roles */
+        bodyEl!.innerHTML = rolesFor(bodyEl, items.map((it) => feedItemHtml(it, ctx)).join("\n"));
         announceRerender();
         setCounts(
           feedCountText({

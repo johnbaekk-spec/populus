@@ -268,15 +268,21 @@ test("R40: a client repaint carries the roles the server page carries, labels re
      its body is repainted through the sink; the repaint must equal what the
      layout's function makes of the same rows rendered inside the table. */
   const rows = txns();
-  const table = entityTxnTable(rows, { kind: "member", caption: "Transactions", page: 1, ctx: {} });
-  assert.ok(table.includes("<tbody data-entity-rows></tbody>"), "the server body is the pager's empty mount");
+  /* launch integration: M4b (R25) pages the member table 25 rows and its
+     renderer states its own roles, so page 1 of this fixture is no longer the
+     pager's empty mount. The mount is emptied here instead; the property — a
+     repaint into the live table equals the layout's markup for the same rows —
+     is unchanged. */
+  const full = entityTxnTable(rows, { kind: "member", caption: "Transactions", page: 0, ctx: {} });
+  const table = full.replace(/(<tbody data-entity-rows[^>]*>)[\s\S]*?(<\/tbody>)/, "$1$2");
+  assert.ok(/<tbody data-entity-rows[^>]*><\/tbody>/.test(table) && table !== full, "the mount is the pager's empty body");
   const host = parse(withTableRoles(table));
   const tbody = [...walk(host)].find((e) => e.tagName === "tbody" && e.hasAttribute("data-entity-rows"))!;
   const labels = headLabels(tbody);
   assert.ok(labels && labels.filter(Boolean).length >= 6, "the live head names its columns");
   const rowsHtml = entityTxnRowsHtml(rows, "member", {});
   const repaint = rolesFor(tbody, rowsHtml);
-  const asServer = withTableRoles(table.replace("<tbody data-entity-rows></tbody>", `<tbody data-entity-rows>${rowsHtml}</tbody>`));
+  const asServer = withTableRoles(table.replace(/(<tbody data-entity-rows[^>]*>)(<\/tbody>)/, (_m, open: string, close: string) => `${open}${rowsHtml}${close}`));
   const serverBody = /<tbody data-entity-rows role="rowgroup">([\s\S]*?)<\/tbody>/.exec(asServer)![1]!;
   assert.equal(repaint, serverBody, "the repaint equals the layout's markup for the same rows, roles and labels included");
   assert.match(repaint, /<td class="c-amount c-num" role="cell" data-label="Range">/);
