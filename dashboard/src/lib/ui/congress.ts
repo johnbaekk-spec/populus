@@ -674,6 +674,10 @@ function monthlyFlowVariantHtml(
       ? `listed stocks: rows whose filed asset type is ST (House Clerk code) or Stock (Senate eFD label) — never inferred from a name`
       : `all asset types`,
     "Members: distinct members per month with a disclosed purchase or sale — members, not dollars",
+    /* launch review H3: an unjoined filer is counted by its printed name */
+    flow.unjoined > 0
+      ? `${fmtInt(flow.unjoined)} ${flow.unjoined === 1 ? "filer" : "filers"} with no matched member record ${flow.unjoined === 1 ? "is" : "are"} counted in Members by the name as filed`
+      : "",
     "Dollars: purchases above the axis, sales and partial sales below",
     drawn ? `y from $0 to ${fmtMoney(axisMax)} · no midpoints — each bar spans the summed disclosed bounds` : "y from $0",
     ticked ? "a thin tick marks a month whose range is too small to draw at this scale — the tick is a marker, not a dollar amount" : "",

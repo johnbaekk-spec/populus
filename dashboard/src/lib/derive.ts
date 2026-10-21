@@ -625,6 +625,9 @@ export interface MonthlyFlowResult {
   /** the part of `notListed` that is untyped: the filing states no asset type */
   untyped: number;
   listedStockOnly: boolean;
+  /** launch review H3: distinct drawn filers no member record joins — each
+      counted in the breadth by the name as filed, which the caption states */
+  unjoined: number;
 }
 
 function monthKeyOf(date: string): string {
@@ -716,6 +719,7 @@ export function monthlyFlow(
     notListed,
     untyped,
     listedStockOnly,
+    unjoined: new Set([...byMonth.values()].flatMap((b) => [...b.buyers, ...b.sellers]).filter((k) => k.startsWith("raw:"))).size,
   };
 }
 

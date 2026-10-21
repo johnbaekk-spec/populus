@@ -519,3 +519,21 @@ test("R17 (amended): the caption and /methodology state the midpoint rule in pla
   assert.match(src, /a month that has ended is aged from the middle of the calendar month/);
   assert.match(src, /The build's own month is still in progress, so it is aged from the middle of the days elapsed so far — the 1st through the build date/);
 });
+
+/* Launch review H3: Members counts an unjoined filer by its printed name — the caption says so, with the count. */
+test("H3: the Members breadth states how many filers no member record joins (counted by the name as filed); a fully joined window states nothing", () => {
+  const rows = [
+    txn({ txnId: "j", traded: "2026-07-10" }),
+    txn({ txnId: "u1", traded: "2026-07-11", bioguide: null, name: "Unmatched Filer" }),
+    txn({ txnId: "u2", traded: "2026-06-11", bioguide: null, name: "Unmatched Filer", side: "sale" }),
+    txn({ txnId: "u3", traded: "2026-06-12", bioguide: null, name: "Another Filer" }),
+  ];
+  const f = monthlyFlow(rows, BUILD, 36);
+  assert.equal(f.unjoined, 2, "two distinct printed names");
+  const html = monthlyFlowPanel(rows, BUILD);
+  assert.match(html, /2 filers with no matched member record are counted in Members by the name as filed/);
+  // re-planted control: every row joined → no clause
+  const joined = monthlyFlowPanel(rows.map((r) => ({ ...r, bioguide: "A000001" })), BUILD);
+  assert.doesNotMatch(joined, /no matched member record/);
+  assert.equal(monthlyFlow(rows.map((r) => ({ ...r, bioguide: "A000001" })), BUILD, 36).unjoined, 0);
+});
