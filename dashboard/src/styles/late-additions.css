@@ -617,7 +617,7 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 .design-supplement > summary { cursor:pointer; padding:10px 0; color:var(--ink3); }
 .design-supplement .entity-grid { margin:0; }
 .design-activity .inst-data-note { font-size:var(--fs-meta); }
-.design-rankings { gap:0; margin:0 -32px; border-bottom:1px solid var(--rule); }
+.design-rankings { gap:0; margin:0 calc(-1 * var(--gutter-r)) 0 calc(-1 * var(--gutter-l)); border-bottom:1px solid var(--rule); } /* pulled out by the shell's own gutters (launch review m3) */
 .design-rankings > * { padding:10px var(--gutter-r) 16px var(--gutter-l); margin:0; border:0; }
 .design-rankings > * + * { border-left:1px solid var(--rule); }
 /* The ≤1080px two-line feed block moved into the ledger region (entities.css)
@@ -626,7 +626,6 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
  .design-page, .entity-page { --design-gutter:16px; }
  .design-band > *, .design-rankings > * { padding:10px var(--gutter-r) 16px var(--gutter-l); } /* launch M1c (LD10): the safe gutters */
  .design-story { padding:16px; }
- .design-rankings { margin-left:-16px; margin-right:-16px; }
  .design-provenance { padding:6px 0 14px; }
 }
 .design-provenance { display:flex; flex-wrap:wrap; gap:8px 20px; }
@@ -1299,7 +1298,7 @@ details.si-tier > summary > .si-tier-h { display: inline; }
   .pb-list { flex-direction: row; overflow-x: auto; gap: 8px; border-top: 0; padding-bottom: 4px; scroll-snap-type: x mandatory; } /* launch M1c (LD11): a swipe strip snaps */
   .pb-list > * { scroll-snap-align: start; flex: 0 0 88%; } /* the next item peeks (about 12%) */
   /* square-cornered chips: a rounded corner would fall outside the hit area G12 measures */
-  .pbi { flex: 0 0 auto; border: 1px solid var(--rule2); border-radius: 3px; padding: 8px 12px; }
+  .pbi { border: 1px solid var(--rule2); border-radius: 3px; padding: 8px 12px; } /* its 88% comes from .pb-list > *, so the next item peeks (launch review m4) */
   .pbi[aria-current="true"] { box-shadow: none; border-color: var(--amber); }
   .pbi-n { white-space: nowrap; }
   .ev { grid-template-columns: minmax(0,1fr) auto; grid-template-areas: "d src" "c c" "f f"; }

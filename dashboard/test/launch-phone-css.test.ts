@@ -258,6 +258,49 @@ test("R13 (LD10): .shell and the full-bleed bands pad their sides with the safe 
   assert.ok(rawSidePadding(planted, PHONE).some((p) => p.startsWith(".shell padding-left: 16px")));
 });
 
+/** How `.design-rankings` pulls out of the shell, side by side, at `vp`. */
+function rankingsPull(css: string, vp: { width: number; coarse?: boolean }): { left: string; right: string } {
+  const rules = parseRules(css);
+  const chain: El[] = [{ tag: "html" }, { tag: "body" }, { tag: "main", classes: ["shell", "page", "design-page"] }, { tag: "div", classes: ["design-rankings"], id: "congress-leaders-band" }];
+  /* the shorthand's words, split at depth 0 (a calc() holds spaces and nested parentheses) */
+  const words = (v: string): string[] => {
+    const out: string[] = [];
+    let depth = 0;
+    let cur = "";
+    for (const ch of v.trim()) {
+      if (ch === "(") depth += 1;
+      if (ch === ")") depth -= 1;
+      if (/\s/.test(ch) && depth === 0) {
+        if (cur) out.push(cur);
+        cur = "";
+      } else cur += ch;
+    }
+    if (cur) out.push(cur);
+    return out;
+  };
+  const side = (prop: "margin-left" | "margin-right"): string =>
+    winning(rules, chain, prop, vp, { margin: (v: string) => { const [t, r = t, , l = r] = words(v); return prop === "margin-left" ? l! : r!; } })?.value ?? "";
+  return { left: side("margin-left"), right: side("margin-right") };
+}
+
+test("m3 (launch review): the /congress/ boards pull out of the shell by the shell's own safe gutters at every width, so a landscape inset cannot misalign them; a re-planted raw -16px fails", () => {
+  for (const vp of [PHONE, { width: 360 }, { width: 900, coarse: true }, DESKTOP]) {
+    assert.deepEqual(rankingsPull(CSS, vp), { left: "calc(-1 * var(--gutter-l))", right: "calc(-1 * var(--gutter-r))" }, `at ${vp.width}px`);
+  }
+  const planted = `${CSS}\n@media (max-width: 720px) { .design-rankings { margin-left: -16px; margin-right: -16px; } }`;
+  assert.deepEqual(rankingsPull(planted, PHONE), { left: "-16px", right: "-16px" }, "control: the old raw pull-out is read");
+});
+
+test("m4 (launch review): at ≤720px each playbook in the strip takes 88% of it, so the next one peeks; the chip's own flex no longer overrides it; a re-planted auto width fails", () => {
+  const basis = (css: string): string => {
+    const rules = parseRules(css);
+    const chain: El[] = [{ tag: "html" }, { tag: "body" }, { tag: "nav", classes: ["pb-nav"] }, { tag: "div", classes: ["pb-list"] }, { tag: "a", classes: ["pbi"], attrs: { href: "#pb-leader" } }];
+    return winning(rules, chain, "flex", PHONE)?.value ?? "";
+  };
+  assert.equal(basis(CSS), "0 0 88%");
+  assert.equal(basis(`${CSS}\n@media (max-width: 720px) { .pbi { flex: 0 0 auto; } }`), "0 0 auto", "control: the chip's old auto width is read");
+});
+
 test("R13 (LD10): the sticky header, the drawer, the search panel, the note sheet and the footer clear the top or bottom inset", () => {
   const rules = parseRules(CSS);
   const at = (chain: El[], prop: string, sh: Record<string, (v: string) => string | null> = {}): string => winning(rules, chain, prop, PHONE, sh)?.value ?? "";
