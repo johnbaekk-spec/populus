@@ -1348,6 +1348,12 @@ details.si-tier > summary > .si-tier-h { display: inline; }
 .tl-axis { display: flex; justify-content: space-between; padding: 6px 0 0; font: 500 var(--fs-label)/1 var(--mono); color: var(--ink3); }
 .design-members-active .c-amber, .c-amber { color: var(--amber); }
 .agree-unavailable .design-diverging { opacity: .35; }
+/* launch integration (F1 ticker-13 + M1c R7): the "not computed" value's ⓘ
+   sits on the row's right edge, and its layout-neutral 44px hit square
+   reached half a pixel past a phone's viewport, scrolling the ticker page
+   sideways (R4). The block clips its own horizontal overflow; the mark and
+   its square inside the block are unchanged. */
+.design-agree { overflow-x: clip; }
 @media (max-width: 1080px) {
   .design-ticker-time, .design-ticker-holders { grid-template-columns: minmax(0,1fr); }
 }
