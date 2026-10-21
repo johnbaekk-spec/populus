@@ -191,3 +191,10 @@ The phone harness measures each Signals tab's hash load at 360, 390 and 430 and 
 | Integrated tree, production data | not measured yet: the owner-tier run on the integrated tree records it |
 
 Every other LD31 route gates at 3,000 from this tree on. That includes /congress/, whose board slimming lands separately: until it does, /congress/ fails the gate, which is the honest state (T0: 5,341).
+
+## Speed-mode deviations
+
+The owner authorized autonomous overnight completion on 2026-10-21. The coordinator recorded these departures from the plan's letter. Each one keeps the plan's property.
+
+- **Word gates where a decision keeps words (SC5, LD3).** Where an owner decision or an honesty pin keeps words the copy audit proposed to cut, that page's word gate is the audit's `words_visible_after`, plus the retained words (counted and itemized), plus 10%. This was the coordinator's decision during the M7b integration. It is measured on the served HTML of the real build.
+  - **Active member page: gate 233, measured 232.** The retained-words rule applies because D7 keeps the 13F footer sentence verbatim. The gate-fix round brought the page from 260 to 232 words: the sector gap's two causes moved into a tip, and an empty quarter's readout now says "none disclosed" once. No caveat was dropped.

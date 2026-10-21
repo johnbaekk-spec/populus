@@ -222,27 +222,28 @@ test("SL-R24/T12 / L9: the holders page's note anchors hit-test to --hit-min at 
    from M2 it runs here too). */
 /* launch D4 (design-principles §5 reversal record): at ≤720px every table is a
    CARD — its head folded, each row a wrapping line of cells. The checks that
-   measure a table's column layout (G1 head/cell edges, G6 numeric columns, G8
-   the single-line row height, G10 column edges, headFont the head's type) have
-   no columns to measure there: G1 and G6 already EXCLUDE card tables (they
-   measured nothing on the holders page at 390) and G8 read a two-line card as
-   a "single-line row" 75px tall. They run at 1440; at the phone widths the
-   holders page is measured by the phone audit (phone.spec.ts, view `holders`
-   at 360/390/430: R4 sideways, R5 honesty, R6 text, R7 taps, R40 roles). */
-const TABLE_LAYOUT_ONLY = [1440];
+   measure a table's column layout (G1, G6, G8, G10, headFont) measure the
+   card's FORM of the same property there (geometry.ts, read off the cascade,
+   as ledger.spec.ts runs them at 390 since the launch gate fix round): a
+   numeric cell prints its own column's label (G1), no column is empty in
+   every card (G6), no card sits under the hit square (G8), the card keeps its
+   one gap, its insets and its kind edge (G10), and the printed labels read
+   the label type (headFont). So the holders page is held to them at 390 as
+   well as at 1440 — never skipped at the phone width (launch integration;
+   the phone audit, phone.spec.ts view `holders`, adds R4–R7 and R40). */
 const HOLDERS_CHECKS: { id: CheckId; fn: PredicateName; arg?: unknown; widths?: number[] }[] = [
-  { id: "G1", fn: "g1", widths: TABLE_LAYOUT_ONLY },
+  { id: "G1", fn: "g1" },
   { id: "G2", fn: "g2", arg: { exempt: [...g2Exemptions()] } },
   { id: "G3", fn: "g3", widths: [1440] },
   { id: "G4", fn: "g4" },
   { id: "G5", fn: "g5" },
-  { id: "G6", fn: "g6", widths: TABLE_LAYOUT_ONLY },
+  { id: "G6", fn: "g6" },
   { id: "G7", fn: "g7" },
-  { id: "G8", fn: "g8", widths: TABLE_LAYOUT_ONLY },
-  { id: "G10", fn: "g10", widths: TABLE_LAYOUT_ONLY },
+  { id: "G8", fn: "g8" },
+  { id: "G10", fn: "g10" },
   { id: "G11", fn: "g11" },
   { id: "G11b", fn: "g11b" },
-  { id: "headFont", fn: "headFont", widths: TABLE_LAYOUT_ONLY },
+  { id: "headFont", fn: "headFont" },
   { id: "oneFlex", fn: "oneFlex" },
 ];
 
