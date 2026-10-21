@@ -215,7 +215,9 @@ test("R21 note: truncated + ZERO exclusions still renders the truncation clause"
   // reader's words (pre-launch defects, 2026-10-20: "(iss:396)" read as noise);
   // the value and manager count name the cut — test/prelaunch-defects.test.ts.
   assert.match(html, /data-boundary-key="entity:x"/, "the exact boundary is recorded");
-  assert.doesNotMatch(html.replace(/<[^>]*>/g, ""), /entity:x/, "and not in the visible sentence");
+  let text = html;
+  for (let prev = ""; prev !== text; ) { prev = text; text = text.replace(/<[^>]*>/g, ""); }
+  assert.doesNotMatch(text, /entity:x/, "and not in the visible sentence");
   assert.doesNotMatch(html, /could not be attributed/);
 });
 
