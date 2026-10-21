@@ -519,6 +519,18 @@ const MOCKUP_LITERALS = [
   "0000950123-25-001799",
   "61% of expected",
   "93.1%",
+  /* launch M2 (R3): the launch mock's distinctive names and figures, from
+     build 20261020.2 — every home number and name is computed from the build
+     it renders, so none of these may sit in a renderer or a page. */
+  "Jim Jordan",
+  "Tommy Tuberville",
+  "Berkshire Hathaway",
+  "Bloom Energy",
+  "72,409",
+  "59,844",
+  "9,451",
+  "95.4%",
+  "12:07 UTC",
 ];
 
 function sourceFiles(dir: string, exts: string[]): string[] {

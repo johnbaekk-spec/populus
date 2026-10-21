@@ -6,7 +6,7 @@
    search matches, and build-derived starters. */
 
 import { esc } from "../lib/format.ts";
-import { searchQuery, searchIndexValid, type SearchIndex, type SearchHit } from "../lib/derive.ts";
+import { searchQuery, searchIndexValid, searchStarters, type SearchIndex, type SearchHit } from "../lib/derive.ts";
 
 export const SEARCH_INDEX_PATH = "/search/index.v1.json";
 
@@ -55,8 +55,8 @@ export function renderResults(hits: SearchHit[], active: number): string {
 export function renderPreQuery(index: SearchIndex | null): string {
   const starters: string[] = [];
   if (index) {
-    const topTickers = [...index.tickers].sort((a, b) => b[2] - a[2]).slice(0, 2);
-    const topMembers = [...index.members].sort((a, b) => b[3] - a[3]).slice(0, 2);
+    /* launch M2 (LD17): the ranking the home's "Try" chips share */
+    const { tickers: topTickers, members: topMembers } = searchStarters(index);
     for (const [t] of topTickers) {
       starters.push(`<a class="quick-link" href="/tickers/${esc(encodeURIComponent(t))}/">${esc(t)}</a>`);
     }
@@ -77,6 +77,52 @@ export function renderPreQuery(index: SearchIndex | null): string {
   );
 }
 
+/* ---------- the hero's search launcher (launch M2, LD17, DV14) ---------- */
+
+/** The narrow surface `launchSearch` touches, declared structurally so the
+    rule runs under `node --test` as well as on real elements. */
+export interface SearchLaunchTargets {
+  /** the ONE masthead combobox, `#site-search` */
+  input: { focus(): void; getClientRects(): { length: number } } | null;
+  /** its box, `#site-search-box` (the phone sheet while it carries `.open`) */
+  box: { classList: { contains(token: string): boolean } } | null;
+  /** the masthead's own search toggle, `.search-toggle` */
+  toggle: { click(): void } | null;
+}
+
+/** What a launcher press does: focus the one masthead combobox. Where the
+    masthead folds its search behind the toggle (phones: the box renders
+    nothing until it is open), the press goes through that toggle, which
+    opens the sheet and focuses the input itself — the same path as the
+    masthead's own button, so the launcher is never a second search. Returns
+    what it did, for the tests. */
+export function launchSearch(t: SearchLaunchTargets): "focused" | "opened" | "none" {
+  if (!t.input) return "none";
+  const folded = t.input.getClientRects().length === 0 && !!t.box && !t.box.classList.contains("open");
+  if (folded && t.toggle) {
+    t.toggle.click();
+    return "opened";
+  }
+  t.input.focus();
+  return "focused";
+}
+
+/** Every `[data-search-launcher]` (the home hero's field-styled link to
+    `#site-search`) runs `launchSearch` instead of following its fragment.
+    Without JavaScript the link still lands on the masthead search. */
+export function initSearchLaunchers(doc: Document = document): void {
+  for (const el of Array.from(doc.querySelectorAll<HTMLElement>("[data-search-launcher]"))) {
+    el.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      launchSearch({
+        input: doc.getElementById("site-search") as HTMLInputElement | null,
+        box: doc.getElementById("site-search-box"),
+        toggle: doc.querySelector<HTMLButtonElement>(".search-toggle"),
+      });
+    });
+  }
+}
+
 /* ---------- the browser wiring ---------- */
 
 export function initSearch(): void {
@@ -84,6 +130,8 @@ export function initSearch(): void {
   const panel = document.getElementById("search-panel");
   const list = document.getElementById("search-panel-list");
   if (!input || !panel || !list) return;
+  // launch M2 (LD17): the home hero's launcher focuses this same combobox
+  initSearchLaunchers();
 
   let index: SearchIndex | null = null;
   let loadPromise: Promise<void> | null = null;
@@ -187,11 +235,12 @@ export function initSearch(): void {
     input.focus();
   });
 
-  // Click outside closes; click on a result navigates naturally (anchor).
+  // Click outside closes; click on a result navigates naturally (anchor). A
+  // launcher press is not "outside": it is what just opened the panel.
   document.addEventListener("click", (ev) => {
     if (panel.hidden) return;
     const target = ev.target as Element;
-    if (target.closest("#site-search-box")) return;
+    if (target.closest("#site-search-box, [data-search-launcher]")) return;
     close();
   });
 }

@@ -669,37 +669,43 @@ test("R15: changesTableHtml with fewer rows than the compact slice renders no di
 });
 
 /* ======================================================================
-   R18 — home
+   R18 — home (amended by launch M2, Home A, owner decision D1)
+
+   The property kept: one claim of twelve words or fewer, live tables whose
+   rows come from the build, the range caveat on the amount column, and the
+   philosophy relocated to /methodology/#principles, not cut. The mechanism
+   replaced (R14): the three tiles (5 / 5 / 3 rows, the Signals tile among
+   them) became "Latest from Congress" and "Notable managers" at six rows
+   each beside the triage's lead cards; the hero's claim and lede render
+   through `homeHeroCopyHtml`. test/launch-home.test.ts pins the new layout,
+   its figures and its copy; this test keeps R18's own properties.
    ====================================================================== */
 
-import { HOME_CLAIM, HOME_TILE_ROWS, congressTileHtml, movesTileHtml, signalsTileHtml } from "../src/lib/ui/home.ts";
-import type { Signal } from "../src/lib/signals.ts";
+import { HOME_CLAIM, HOME_TILE_ROWS, congressTileHtml, movesTileHtml, homeHeroCopyHtml } from "../src/lib/ui/home.ts";
 
-test("R18: the masthead claim is twelve words or fewer and the three tiles carry 5 / 5 / 3 rows", () => {
+test("R18 (launch M2): the claim is twelve words or fewer; Latest from Congress and Notable managers carry six rows each", () => {
   assert.ok(HOME_CLAIM.split(/\s+/).length <= 12, HOME_CLAIM);
+  assert.deepEqual(HOME_TILE_ROWS, { congress: 6, moves: 6 });
   const ctx: RenderCtx = {};
   const rows = Array.from({ length: 9 }, (_, i) => txn({ txnId: `t${i}`, name: `Member ${i}` }));
   const congress = congressTileHtml(rows, ctx);
   assert.equal(bodyRows(congress).length, HOME_TILE_ROWS.congress);
   assert.deepEqual(
     domOf(congress).querySelectorAll("thead th").map((th) => [visibleText(th).trim(), th.getAttribute("class")]),
-    [["Member", "c-member c-flex"], ["Ticker", "c-ticker"], ["Side", "c-kind"], ["Amount", "c-num"], ["Filed", "c-num"]],
+    [["Side", "c-kind"], ["Member", "c-member c-flex"], ["Ticker", "c-ticker"], ["Range", "c-num"], ["Filed", "c-filed c-num"]],
   );
-  // DESIGN-POLISH M1 (R6): the first amount is its own note's label trigger.
-  const firstAmount = bodyRows(congress)[0]!.children[3]!;
-  assert.ok(firstAmount.querySelector(".note-btn.note-label"), "the range caveat hangs off the first amount");
+  // DESIGN-POLISH M1 (R6) → copy item home-03: the range caveat is the Range header's own note
+  const rangeHead = domOf(congress).querySelectorAll("thead th")[3]!;
+  assert.ok(rangeHead.querySelector(".note-btn.note-label"), "the range caveat hangs off the Range header");
   const moves = Array.from({ length: 8 }, (_, i) => ({ cik: `${i}`, manager: `M${i}`, principal: null, type: "hedge_fund" as const, issuer: `I${i}`, ticker: null, ticker_verified: null, kind: "new" as const, delta_shares: 1, curr_value: 1, delta_value: 1, filed: "2026-05-15", doc: null, key: `k${i}`, ikey: null }));
   const movesHtml = movesTileHtml(moves, "2026-03-31", (cik) => `/f/${cik}`);
   assert.equal(bodyRows(movesHtml).length, HOME_TILE_ROWS.moves);
-  // SIGNALS-CLARITY M2 (R12): the tile shows listed stocks by default, so these hits are filed as stock
-  const sig = (i: number): Signal => ({ id: `s${i}`, kind: "s1-large", rule: "r", thresholdVersion: "1", entities: { bioguide: "A000001", memberName: "A", ticker: `T${i}` }, magnitude: { low: 1, high: 2 }, receipts: [], occurrence: { tradeDate: null, filedDate: "2026-08-01" }, sourceAvailableAt: "", computedAt: "", firstSeenBuild: "b", lastSeenBuild: "b", status: "active", cohort: "senate", asset: `Issuer ${i}`, assetType: "Stock", side: "purchase", owner: "self", listedStock: true });
-  const signals = signalsTileHtml([sig(1), sig(2), sig(3), sig(4)], ctx, () => "LARGE");
-  assert.equal(bodyRows(signals).length, HOME_TILE_ROWS.signals);
-  assert.ok(bodyRows(signals)[0]!.children[0]!.querySelector("a.mono-ticker"), "ticker first");
+  const hero = homeHeroCopyHtml([]);
+  assert.match(hero, new RegExp(`<h1 class="hero-title" id="home-claim">${HOME_CLAIM.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}</h1>`));
+  assert.match(hero, /\/methodology\/#principles/, "the philosophy is relocated, not cut");
   const page = readFileSync(path.join(SRC, "pages", "index.astro"), "utf-8");
-  assert.match(page, /\{HOME_CLAIM\}/);
-  assert.match(page, /\/methodology\/#principles/, "the philosophy is relocated, not cut");
-  assert.doesNotMatch(page, /returned to the people/, "…and its full text left the home page");
+  assert.match(page, /homeHeroCopyHtml\(/, "the page renders the claim through the hero renderer");
+  assert.doesNotMatch(page + hero, /returned to the people/, "…and its full text left the home page");
   const methodology = readFileSync(path.join(SRC, "pages", "methodology", "index.astro"), "utf-8");
   assert.match(methodology, /id="principles"/);
   assert.match(methodology, /returned to the people/);

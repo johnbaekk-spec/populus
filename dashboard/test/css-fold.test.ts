@@ -21,7 +21,6 @@ import {
   s7Banner,
   tickerInstSectionHtml,
   specimenCard,
-  moduleCard,
   holdersTableHtml,
   changesTableHtml,
   flowRibbon,
@@ -38,7 +37,7 @@ import {
   signalsBody,
   signalsInstitutionalHtml,
 } from "../src/lib/ui/index.ts";
-import { fixtureInstitutional, fixtureTxns } from "./lib/inst-signals-fixture.ts";
+import { fixtureInstitutional, fixtureMoves, fixtureTxns } from "./lib/inst-signals-fixture.ts";
 import { fixtureOverlap } from "./lib/overlap-fixture.ts";
 import { buildOverlap } from "../src/lib/ui/signals-overlap.ts";
 import { playbookTriggers } from "../src/lib/playbooks.ts";
@@ -50,6 +49,17 @@ import { memberSignalsPanel, ruleBookHtml, lagBandHtml, signalsRankingHtml, comm
 import { buildTriage, type TriageResult } from "../src/lib/signal-triage.ts";
 import type { SignalArtifact } from "../src/lib/signals.ts";
 import { loadTriageFixture } from "./lib/triage-fixture.ts";
+import {
+  congressTileHtml,
+  homeFigures,
+  homeHeroCopyHtml,
+  homeLeadHtml,
+  homeLedgerHtml,
+  homeSectionsHtml,
+  homeTrustHtml,
+  homeTryChips,
+  movesTileHtml,
+} from "../src/lib/ui/home.ts";
 
 let goldenCache: { artifact: SignalArtifact; triage: TriageResult } | null = null;
 /** The golden public-row fixture's triage (signals-v3 M2), built once. */
@@ -1059,8 +1069,25 @@ function renderCorpus(): string {
     s4Error("timeout", "/x.json", "d", true),
     s7Banner(window),
     specimenCard({ ...t, low: 1001, high: 15000 }, CTX),
-    moduleCard("M", "/m/", "d", { live: true, statLines: ["x"] }),
-    moduleCard("P", null, "d", { live: false, statLines: ["x"] }),
+    /* launch M2 (Home A): the hero's copy and chips, the four-figure ledger,
+       and the body — the triage's lead cards, both tables and the trust
+       strip (the Modules grid's `moduleCard` is retired, below) */
+    homeHeroCopyHtml(homeTryChips({ v: 1, tickers: [["WMB", "", 2]], members: [["T000001", "M", "R–OK", 3]], filers: [] }, { name: "F", href: "/f/" }, CTX)),
+    homeLedgerHtml(
+      homeFigures({
+        txns: [t], paper: [], members: [{}], filedFrom: "2026", stats: {},
+        coverage: { housePct: "93.9", senatePct: "100", needsOcr: 0 },
+        inst: { present: true, filers: 3, closedQuarter: "2026-03-31", filingsThrough: "2026-05-15" },
+        signals: { active: 2, retentionDays: 90, coverageFrom: "2026-04-25", coverageTo: "2026-07-24" },
+        triage: { stands: 1, ranked: 4 }, generatedAtDate: "2026-07-24",
+      }),
+    ),
+    homeSectionsHtml({
+      lead: homeLeadHtml(goldenTriage().triage, CTX, 90),
+      congress: congressTileHtml([t], CTX),
+      moves: movesTileHtml(fixtureMoves(12), "2026-03-31", (cik) => `/f/${cik}`, { filingsThrough: "2026-05-15" }),
+      trust: homeTrustHtml({}),
+    }),
     flowRibbon(quarterlyFlow([t], "2026-07-24", 4), { twoSided: true, sourceLine: "s" }),
     entityTxnTable([t], { kind: "member", caption: "c", page: 0, ctx: CTX }),
     entityTxnTable([{ ...t, bioguide: null, party: "" }], {
@@ -1187,7 +1214,7 @@ const NEW_RENDERER_CLASSES = [
   "absent-block", "absent-h", "s1-block", "s1-mark", "s1-h", "s1-detail",
   "s2-block", "s4-shell", "s4-error", "s4-actions", "s7-banner", "s7-chip", "s7-copy",
   "cta", "plain-link", "specimen", "spec-head", "spec-dates", "spec-scale",
-  "mod-card", "badge-live", "badge-planned",
+  "badge-planned",
   "search-group-h", "search-opt", "opt-label", "opt-sub", "search-empty",
   "quick-links", "quick-link", "s6-block", "s6-h", "s6-body",
   "footnotes-stacked", "footnote-line", "fn-ref", "flag-raw",
@@ -1263,6 +1290,15 @@ const NEW_RENDERER_CLASSES = [
   "pb-arts", "pb-main", "pb-h", "pb-name", "pb-meta", "pb-p", "pb-verdict", "pb-sec", "pb-k", "pb-row", "pb-row-open", "pb-line", "pb-needs",
   "pb-ev", "ev", "ev-d", "ev-supports", "ev-against", "ev-indirect", "ev-c", "ev-src", "ev-v", "ev-f",
   "mv-ov-link",
+  /* launch M2 (Home A, R14–R17): the hero's launcher and its parts, the "Try"
+     strip, its group, label and chips; the ledger's 2×2 card; a band head's
+     right-hand link; a lead card's asset as filed; the two tables' pair and
+     each table's section, the 13F note; the trust strip and its parts. */
+  "home-search", "home-search-g", "home-search-t", "home-search-kbd",
+  "home-try-strip", "home-try", "home-try-k", "home-chip",
+  "home-ledger", "home-sec-link", "si-card-iss",
+  "home-lead", "home-pair", "home-tile", "home-13f-note",
+  "home-trust", "home-trust-k", "home-trust-v", "home-trust-s",
 ];
 
 /* DESIGN-POLISH M2: classes a renderer emits as HOOKS — a root the period
@@ -1298,6 +1334,8 @@ const NEW_HOOK_CLASSES = [
      colour is its `pb-st-*` modifier); a filter chip (a `.chips` item); the
      "All n" link (a `.pb-line`'s); a tier's no-match line (a `.section-note`) */
   "sig-ov", "sig-pb", "ov-rels", "ov-list", "ov-side", "ov-bound", "pb-count", "pbi-src", "pb-st", "si-pb-pick", "pb-all", "si-pb-none",
+  /* launch M2: a home lead card (laid out by `.si-card`, the Signals tab's) */
+  "home-card",
 ];
 
 /* Classes a milestone RETIRED: neither styled nor emitted — by a renderer OR
@@ -1361,10 +1399,17 @@ const RETIRED_CLASSES = [
      provenance chips' tip) — all moved to /signals/#institutional or left. */
   "design-notable-moves", "design-consensus", "design-newpositions", "design-consensus-band", "design-institutional-band",
   "design-weight-bar", "inst-watermark-foot", "inst-method-foot",
+  /* launch M2 (R14, Home A): the Modules grid — its head, grid, card and the
+     card's parts, its LIVE badge — the three-tile row and its one-column
+     hero, and the old hero's call-to-action row and buttons. */
+  "modules-head", "mod-grid", "mod-card", "mod-card-planned", "mod-head", "mod-name", "mod-desc", "mod-stats",
+  "badge-live", "home-tiles", "hero-claim", "hero-ctas", "hero-sub", "cta-primary", "cta-plain",
 ];
 
 const ASTRO_ONLY_CLASSES = [
-  "hero", "hero-title", "hero-lede", "hero-ctas", "mod-grid", "modules-head", "commitments",
+  "hero", "hero-title", "hero-lede", "commitments",
+  /* launch M2: the home's hero copy column and its page wrapper */
+  "home-hero-copy", "home-page",
   "metho-title", "metho-lede", "toc", "metho-section", "standing-caveat",
   "metho-tiles", "mtile", "mtile-sub", "metho-grid", "source-list", "source-row",
   "gaps-block", "pub-grid", "pub-card", "verify-line", "module-shell",

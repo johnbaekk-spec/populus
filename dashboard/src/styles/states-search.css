@@ -64,16 +64,6 @@
   cursor: pointer;
   min-height: 44px;
 }
-.cta-primary {
-  background: var(--ink);
-  color: var(--paper);
-  border: none;
-  padding: 12px 24px;
-}
-.cta-plain {
-  font: 500 var(--fs-body) var(--sans);
-  align-self: center;
-}
 .plain-link {
   font: 500 var(--fs-name) var(--sans);
   padding: 9px 4px;

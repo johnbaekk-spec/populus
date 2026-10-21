@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { signalsBody, triageRowHtml, lagBandHtml, groupHits, hitMatches, hitsView, hitsHiddenText, signalSentence, memberSignalsPanel, signalsTileHtml, hitsBodyHtml, sortHits, type HitFilter } from "../src/lib/ui/index.ts";
+import { signalsBody, triageRowHtml, lagBandHtml, groupHits, hitMatches, hitsView, hitsHiddenText, signalSentence, memberSignalsPanel, hitsBodyHtml, sortHits, type HitFilter } from "../src/lib/ui/index.ts";
 import { COMMITTEE_CAVEAT, DEFAULT_HIT_FILTER, leadCardsHtml, memberLastName, SIGNAL_HITS_COMPACT_ROWS, SIGNAL_HITS_DOM_ROWS, SIGNAL_HITS_PAGE_SIZE, triageRowId } from "../src/lib/ui/signals.ts";
 import type { Signal, SignalArtifact } from "../src/lib/signals.ts";
 import type { TxnRow } from "../src/lib/format.ts";
@@ -820,13 +820,15 @@ test("R10 / T9: the WHAT sentence — owner, verb, asset, chip; S-3 names its me
   }
 });
 
-test("R10 / T9: the home tile and member panel keep their sentence; the island repaints only through the server's renderer", () => {
+/* launch M2 (Home A, D1, R14): the home's Signals tile is gone — the home
+   shows the triage's three lead cards instead, through the Signals tab's own
+   card renderer (test/launch-home.test.ts) — so this test keeps the member
+   panel's sentence and the island's single renderer, and drops the tile's. */
+test("R10 / T9: the member panel keeps its sentence; the island repaints only through the server's renderer", () => {
   const art: SignalArtifact = { ...ART, signals: [other({ entities: { bioguide: "A000001", memberName: "Test <Member>", ticker: null } }), sig({ kind: "s2-first" })] };
   const client = readFileSync(path.resolve(import.meta.dirname, "..", "src", "scripts", "signals-client.ts"), "utf-8");
   assert.match(client, /\bhitsBodyHtml\(/, "the island repaints through the server's row renderer");
   assert.doesNotMatch(client, /signalSentence/, "the island composes no sentence of its own");
-  const tile = signalsTileHtml(art.signals, CTX, () => "LARGE");
-  assert.match(ownText(domOf(tile).querySelector("tbody td.c-flex")!), /Purchase of ABC Holdings Inc/);
   const panel = memberSignalsPanel(art, "A000001", CTX);
   const whats = domOf(panel).querySelectorAll("tbody td.si-what").map((td) => ownText(td).trim());
   assert.ok(whats.includes("Spouse: Purchase of Not Fade Away LLC · Other"), whats.join(" | "));
@@ -897,11 +899,11 @@ test("R13 / T2.7: family × stocks — the hidden count is the total minus shown
   assert.deepEqual(Object.keys(DEFAULT_HIT_FILTER).sort(), ["family", "stocksOnly"], "no kind, no watched-only field");
 });
 
-test("R12: the home tile takes the same default and states its hidden count", () => {
-  const tile = signalsTileHtml([other(), sig({ kind: "s1-large" }), other()], CTX, () => "LARGE");
-  assert.equal(domOf(tile).querySelectorAll("tbody tr").length, 1);
-  assert.match(tile, /<span class="si-hidden-count">2 hits on other asset types hidden<\/span>/);
-});
+/* launch M2 (Home A, D1, R14): "R12: the home tile takes the same default
+   and states its hidden count" left with the Signals tile. The home's cards
+   are listed-stock lines of the triage by construction (their tip says so),
+   and the ledger's Signals figure counts every active hit; the hidden-count
+   property stays pinned on /signals/ by "R12 / T11" above. */
 
 test("R14: the lag distribution renders on Methodology through lagBandHtml — identical (member, lag) rows group and the 45-day line is marked", () => {
   const row = { name: "Bulk Filer", bioguide: "B1", party: "D", traded: "2026-01-01", filed: "2026-05-01", lag: 120, late: 1 } as Pick<TxnRow, "name" | "bioguide" | "party" | "traded" | "filed" | "lag" | "late">;

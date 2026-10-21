@@ -20,7 +20,6 @@ import {
   s7Banner,
   specimenCard,
   pickSpecimen,
-  moduleCard,
   holdersTableHtml,
   changesTableHtml,
   qoqChipHtml,
@@ -469,21 +468,11 @@ test("pickSpecimen + specimenCard: a real closed-range row, both dates, receipt"
   assert.equal(pickSpecimen([txn({ low: null, high: null, traded: null })]), null);
 });
 
-test("moduleCard: live cards link, planned cards do not; stats are caller-derived", () => {
-  const live = moduleCard("Congress", "/congress/", "desc", {
-    live: true,
-    statLines: ["3,911 rows · updated 2026-07-24"],
-  });
-  assert.ok(live.startsWith("<a"));
-  assert.ok(live.includes("LIVE"));
-  assert.ok(live.includes("3,911 rows"));
-  const planned = moduleCard("Financials", null, "desc", {
-    live: false,
-    statLines: ["gates published before data"],
-  });
-  assert.ok(planned.startsWith("<div"));
-  assert.ok(planned.includes("PLANNED"));
-});
+/* launch M2 (Home A, D1): `moduleCard` left with the home's Modules grid
+   (R14), and its test with it. The property it pinned — every home figure is
+   caller-derived from the build, never a literal — is pinned more sharply by
+   test/launch-home.test.ts, which recomputes each ledger figure independently
+   from fixture build data (R15). */
 
 /* ---------- XSS ---------- */
 

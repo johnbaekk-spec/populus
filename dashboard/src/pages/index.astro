@@ -1,78 +1,80 @@
 ---
-// Home (R18): one masthead claim (≤12 words) + search, three LIVE tiles —
-// latest Congress disclosures, notable-manager moves this quarter (R14 data),
-// top signals (ticker first) — then the module nav cards. The explainer card
-// and the philosophy paragraph are relocated, not cut: one sentence stays
-// here, the rest lives at /methodology/#principles, and the range caveat rides
-// as a ⓘ on the first amount.
+// Home A, "Signals first" (launch M2; owner decision D1; R14–R17, LD14–LD17):
+// the hero — the claim, a launcher into the ONE masthead search, and "Try"
+// chips ranked from the build — beside the four-figure ledger; then "What
+// stands out" (the triage's three lead cards, each opening its row on
+// /signals/), "Latest from Congress" and "Notable managers" side by side, and
+// the trust strip. The Modules grid is gone, and there is no sign-up band
+// (D2). Every figure and name is computed from the build here and rendered by
+// lib/ui/home.ts; the philosophy stays one link away at
+// /methodology/#principles.
 import Base from "../layouts/Base.astro";
 import Mark from "../components/Mark.astro";
-import { getBuildData, moduleAvailability, coverageSummary, getSignalArtifact, notableMovesFor, notableMovesPeriods, filerTier } from "../lib/data";
-import { fmtInt, type RenderCtx } from "../lib/format";
-import { moduleCard, congressTileHtml, movesTileHtml, signalsTileHtml, sortHits, signalKindShort, HOME_CLAIM } from "../lib/ui/index.ts";
+import { getBuildData, coverageSummary, getSignalArtifact, getTriage, notableMovesFor, notableMovesPeriods, filerTier } from "../lib/data";
+import { closedPeriods, corpusAsOf } from "../lib/inst-adds";
+import { concentrationPeriods } from "../lib/inst-analytics";
+import { searchIndexValid } from "../lib/derive";
+import { type RenderCtx } from "../lib/format";
+import {
+  HOME_KICKER,
+  homeTryChips,
+  largestNotableFiler,
+  homeHeroCopyHtml,
+  homeFigures,
+  homeLedgerHtml,
+  homeLeadHtml,
+  congressTileHtml,
+  movesTileHtml,
+  homeTrustHtml,
+  homeSectionsHtml,
+} from "../lib/ui/index.ts";
 import { filerHref } from "../lib/holdings";
 
 const build = getBuildData();
-const avail = moduleAvailability(build);
+const ctx: RenderCtx = { cutMembers: build.cutMembers, cutTickers: build.cutTickers };
 const cov = coverageSummary(build.stats);
-const ssrCtx: RenderCtx = { cutMembers: build.cutMembers, cutTickers: build.cutTickers };
+const artifact = getSignalArtifact();
+const triage = getTriage();
+const active = artifact.signals.filter((s) => s.status === "active");
 
-const congressTile = congressTileHtml(build.txns, ssrCtx);
+/* 13F: the newest quarter closed for filing (judged against the corpus, R4)
+   for the ledger and the "Try" filer; the quarter the moves band offers for
+   "Notable managers" (the newest closed quarter that carries moves). */
+const inst = build.inst;
+const closedQuarter = inst.present
+  ? (closedPeriods(concentrationPeriods(inst), corpusAsOf(build.generatedAtDate, inst.watermarks.latest_filed_date), 1)[0] ?? null)
+  : null;
+const filingsThrough = inst.present ? inst.watermarks.latest_filed_date : null;
 const period = notableMovesPeriods(build)[0] ?? null;
 const moves = period === null ? [] : notableMovesFor(build, period);
-const movesTile = movesTileHtml(moves, period, (cik) => filerHref(cik, filerTier(build, cik)));
-const artifact = getSignalArtifact();
-const active = sortHits(artifact.signals.filter((s) => s.status === "active"));
-const signalsTile = signalsTileHtml(active, ssrCtx, signalKindShort);
 
-const congressCard = moduleCard(
-  "Congress",
-  "/congress/",
-  "House + Senate periodic transaction reports. Ranges, dual dates, receipts.",
-  {
-    live: avail.congress,
-    statLines: [
-      `${fmtInt(build.txnCount)} rows · updated ${build.generatedAtDate}`,
-      `${cov.housePct}% House e-file parse · ${cov.senatePct}% Senate`,
-    ],
-  },
-);
-const instStats = build.inst.present
-  ? {
-      live: true,
-      statLines: [
-        `${fmtInt(build.inst.filers.length)} filers on record`,
-        `latest closed quarter ${period ?? "—"}`,
-      ],
-    }
-  : {
-      live: false,
-      statLines: ["not in this build — absence is stated, not simulated"],
-    };
-const instCard = moduleCard(
-  "Institutional",
-  "/institutional/",
-  "13F holdings: filers, who holds a ticker, quarter-over-quarter moves, concentration.",
-  instStats,
-);
-const signalsCard = moduleCard(
-  "Signals",
-  "/signals/",
-  "Rule-based, receipted, no price data: unusual for the filer, novel for the record, or late.",
-  { live: true, statLines: [`${fmtInt(active.length)} hits · window ${artifact.coverageFrom} → ${artifact.coverageTo}`] },
-);
-const finCard = moduleCard(
-  "Financials",
-  null,
-  "As-reported company financials from EDGAR XBRL, curated universe, vintage-aware.",
-  { live: false, statLines: ["gates published before data"] },
-);
-const macroCard = moduleCard(
-  "Macro",
-  null,
-  "Curve, inflation, labor, positioning — revision-aware series with vintage semantics.",
-  { live: false, statLines: ["gates published before data"] },
-);
+/* LD17: the chips rank the search index the masthead search ships */
+const parsedIndex: unknown = JSON.parse(build.searchIndexJson);
+const searchIndex = searchIndexValid(parsedIndex) ? parsedIndex : null;
+const filer = largestNotableFiler(inst, closedQuarter);
+const chips = homeTryChips(searchIndex, filer ? { name: filer.name, href: filerHref(filer.cik, filerTier(build, filer.cik)) } : null, ctx);
+
+const figures = homeFigures({
+  txns: build.txns,
+  paper: build.paper,
+  members: build.members,
+  filedFrom: build.filedFrom,
+  stats: build.stats,
+  coverage: cov,
+  inst: inst.present ? { present: true, filers: inst.filers.length, closedQuarter, filingsThrough } : { present: false },
+  signals: { active: active.length, retentionDays: artifact.retentionDays, coverageFrom: artifact.coverageFrom, coverageTo: artifact.coverageTo },
+  triage: { stands: triage.counts.stands, ranked: triage.rows.length },
+  generatedAtDate: build.generatedAtDate,
+});
+
+const heroCopy = homeHeroCopyHtml(chips);
+const ledger = homeLedgerHtml(figures);
+const sections = homeSectionsHtml({
+  lead: homeLeadHtml(triage, ctx, artifact.retentionDays),
+  congress: congressTileHtml(build.txns, ctx),
+  moves: movesTileHtml(moves, period, (cik) => filerHref(cik, filerTier(build, cik)), { filingsThrough, instPresent: inst.present }),
+  trust: homeTrustHtml(build.stats),
+});
 
 const description =
   "Who's trading, from the filings themselves: congressional trades and institutional holdings from " +
@@ -81,43 +83,21 @@ const description =
 
 <Base title="Public Filings — who's trading, from the filings" description={description} active="home" searchEmphasis={true}>
   <main>
-    <div class="hero-band">
-      <div class="shell hero hero-claim">
-        <div class="hero-copy">
+    <section class="hero-band" aria-labelledby="home-claim">
+      <div class="shell hero">
+        <div class="home-hero-copy">
           <div class="hero-kicker">
             <Mark class="hero-mark" />
-            <span class="hero-kicker-text">The open financial-data commons</span>
+            <span class="hero-kicker-text">{HOME_KICKER}</span>
           </div>
-          <h1 class="hero-title" id="home-claim">{HOME_CLAIM}</h1>
-          <p class="hero-lede">
-            Congressional trades and 13F holdings from primary government sources, with their receipts — free, and honest about its gaps. <a href="/methodology/#principles">Principles ↗</a>
-          </p>
-          <div class="hero-ctas">
-            <a class="cta cta-primary" href="#site-search">Search members, tickers, managers ⌕</a>
-            <a class="cta-plain" href="/methodology/">Methodology ↗</a>
-          </div>
+          <Fragment set:html={heroCopy} />
         </div>
+        <Fragment set:html={ledger} />
       </div>
-    </div>
+    </section>
 
-    <div class="shell page">
-      <div class="home-tiles" id="home-tiles">
-        <Fragment set:html={congressTile} />
-        <Fragment set:html={movesTile} />
-        <Fragment set:html={signalsTile} />
-      </div>
-
-      <div class="modules-head">
-        <h2 class="section-h2">Modules</h2>
-        <div class="mono-note">freshness and coverage regenerate from stats.json on every build</div>
-      </div>
-      <div class="mod-grid">
-        <Fragment set:html={congressCard} />
-        <Fragment set:html={instCard} />
-        <Fragment set:html={signalsCard} />
-        <Fragment set:html={finCard} />
-        <Fragment set:html={macroCard} />
-      </div>
+    <div class="shell page home-page">
+      <Fragment set:html={sections} />
     </div>
   </main>
 

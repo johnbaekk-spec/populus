@@ -1781,6 +1781,20 @@ export function searchQuery(index: SearchIndex, q: string, limit = 8): SearchHit
   return hits;
 }
 
+/** The most active tickers and members of the index, by its own row counts
+    (ties keep the index's order). ONE ranking, two callers: the search
+    panel's pre-query starters and the home's "Try" chips (launch M2, LD17),
+    so the chips are never literals and never a second ranking. */
+export function searchStarters(
+  index: SearchIndex,
+  n = 2,
+): { tickers: SearchIndex["tickers"]; members: SearchIndex["members"] } {
+  return {
+    tickers: [...index.tickers].sort((a, b) => b[2] - a[2]).slice(0, n),
+    members: [...index.members].sort((a, b) => b[3] - a[3]).slice(0, n),
+  };
+}
+
 /* ---------- budget walk (ARCHITECTURE §9.10/§12.1) ---------- */
 
 /** Headroom under the §9.10 ≤8,500 module-1 page cap (owner decision

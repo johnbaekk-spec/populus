@@ -429,9 +429,13 @@ test("POST-BUILD R15/R16/R18: filer 1067983 leads with identity → stats → ch
   assert.doesNotMatch(member, /Holdings from annual disclosure<\/h2>|Institutional overlap<\/h2>/);
   const home = readFileSync(path.join(DIST, "index.html"), "utf-8");
   assert.match(home, /id="home-claim"/);
-  for (const id of ["home-congress", "home-moves", "home-signals"]) assert.match(home, new RegExp(`id="${id}"`));
-  // signals-v4 R17: the moves tile's "all moves" link follows the moves to /signals/#institutional
-  assert.match(home, /<a class="section-link" href="\/signals\/#institutional">all moves ↗<\/a>/);
+  /* launch M2 (Home A, D1): the Signals tile became the triage's lead cards
+     (#home-lead) and the trust strip joined (#home-trust); the two tables keep
+     their ids. */
+  for (const id of ["home-lead", "home-congress", "home-moves", "home-trust"]) assert.match(home, new RegExp(`id="${id}"`));
+  assert.doesNotMatch(home, /id="home-signals"/);
+  // signals-v4 R17: the moves table's link follows the moves to /signals/#institutional
+  assert.match(home, /<a class="section-link" href="\/signals\/#institutional">All moves →<\/a>/);
   assert.doesNotMatch(home, /returned to the people/);
   const methodology = readFileSync(path.join(DIST, "methodology", "index.html"), "utf-8");
   for (const anchor of ["principles", "published-dataset", "ranges", "13f-method", "position-grain", "ticker-mapping", "site-weight", "coverage"]) {

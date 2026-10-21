@@ -1378,11 +1378,8 @@ details.si-tier > summary > .si-tier-h { display: inline; }
    "Notes on this data" line directly under the provenance strip. */
 #congress-notes .design-briefing { margin-top:12px; }
 
-/* R18: home — one claim, three live tiles. */
-.hero-claim { grid-template-columns: minmax(0,1fr); }
-.home-tiles { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 24px; margin: 24px 0 32px; }
-.home-tiles > .home-tile { min-width: 0; margin: 0; }
-@media (max-width: 1080px) { .home-tiles { grid-template-columns: minmax(0,1fr); } }
+/* R18's home (one claim, three tiles) is replaced by Home A (launch M2): its
+   rules live in content.css's home region. */
 .metho-section#principles .commitments { margin-top: 18px; }
 
 /* R19: the overlap band — two halves, then the merged timeline. */
