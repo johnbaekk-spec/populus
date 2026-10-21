@@ -1351,9 +1351,37 @@ span.mgr-chip,
   }
   /* the decorative size band: the range text beside it stays */
   table[data-card]:not([data-card="feed"]) .band { display: none; }
-  /* no sticky identity column on a card */
+  /* ...and a cell that shows nothing — the one that held only that band (a
+     row with no flags), or an empty one (a holder with no flags) — leaves the
+     card's line: kept in the accessibility tree like any visually hidden
+     text, but no longer an empty flex item that doubled the gap beside it,
+     or started a line 12px in (24px for 12, the gate's card G10 on 75e9920) */
+  table[data-card]:not([data-card="feed"]) > tbody > tr > td:empty,
+  table[data-card]:not([data-card="feed"]) > tbody > tr > td.c-bar:not(:has(.flag)):has(> .band) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  /* a board's buy │ sell bar keeps its own width on a card: the board zeroes
+     it to flex inside its column, and a card has no column, so it drew
+     nothing and its split was lost on a phone */
+  .design-rankings table[data-card]:not([data-card="feed"]) .design-diverging { min-width: 90px; }
+  /* a mark takes its own advance on a card: there is no column slot for it to
+     hang in, and at a line's end a hanging mark (the receipt's ⓘ) reached past
+     the card's right inset, its hit square 14px past the viewport, so the
+     page scrolled sideways (gate on 75e9920: /institutional/ Recent activity,
+     404px at 390) */
+  table[data-card]:not([data-card="feed"]) > tbody > tr > td :is(.hang, .note:has(> .note-mark)) { width: auto; }
+  /* no sticky identity column on a card — and none of its stacking: a card
+     cell is a flex item, so the sticky column's z-index 2 still made it a
+     stacking layer over the cell before it, covering that cell's tip square
+     (the filer's ticker tips, gate G12 on 75e9920) */
   .etable[data-card]:is([data-sticky-first], [data-sticky-issuer]) > * > tr > :is(:first-child, .c-pos) {
     position: static;
+    z-index: auto;
     border-right: 0;
     background: none;
   }
