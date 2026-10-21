@@ -107,12 +107,13 @@ test("holders pages exist ONLY for mapped, entity-keyed issuers", () => {
 test("the unified AAPL page's institutional section binds the same data", () => {
   const page = path.join(DIST_FIXTURE, "tickers", "AAPL", "index.html");
   const html = readFileSync(page, "utf-8");
-  assert.ok(html.includes("Institutional holders"));
+  // launch M7b (ticker-09): the tab's section head reads "13F holders", the link "All holders ↗"
+  assert.ok(html.includes("13F holders"));
   assert.ok(html.includes("BERKSHIRE HATHAWAY INC"));
-  assert.ok(html.includes("full holders view ↗"));
+  assert.ok(html.includes("All holders ↗"));
   // signals-v3 M3 (R21): the holders sit in the Institutional tab panel
   const panel = html.indexOf('role="tabpanel" id="institutional"');
-  assert.ok(panel >= 0 && panel < html.indexOf("BERKSHIRE HATHAWAY INC") && panel < html.indexOf("full holders view ↗"), "inside the Institutional tab");
+  assert.ok(panel >= 0 && panel < html.indexOf("BERKSHIRE HATHAWAY INC") && panel < html.indexOf("All holders ↗"), "inside the Institutional tab");
 });
 
 test("/institutional landing lists the fixture filers when the module is present", () => {

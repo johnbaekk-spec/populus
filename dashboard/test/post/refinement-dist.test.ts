@@ -320,7 +320,8 @@ test("POST-BUILD R14 → signals-v4 R17: every notable-moves shard is ≤ 1 MiB;
   }
   const pointer = landing.indexOf('<p class="inst-moved">');
   assert.ok(pointer > 0, "the one-line pointer");
-  assert.match(landing.slice(pointer, pointer + 400), /<a href="\/signals\/#institutional">Open →<\/a>/);
+  // launch M7b (copy item inst-02): "Moves and Consensus are on Signals →"
+  assert.match(landing.slice(pointer, pointer + 400), /<a href="\/signals\/#institutional">Signals →<\/a>/);
   const signals = readFileSync(path.join(DIST, "signals", "index.html"), "utf-8");
   for (const id of ["named-moves", "consensus", "new-position-leaders"]) assert.match(signals, new RegExp(`id="${id}"`), `/signals/ renders #${id}`);
   if (!existsSync(dir)) {
