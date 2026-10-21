@@ -1378,9 +1378,6 @@ details.si-tier > summary > .si-tier-h { display: inline; }
    "Notes on this data" line directly under the provenance strip. */
 #congress-notes .design-briefing { margin-top:12px; }
 
-.planned-line { margin: 12px 0 0; font: 400 var(--fs-note)/1.6 var(--sans); color: var(--ink3); }
-.planned-line .badge-planned { margin-right: 6px; }
-
 /* R18: home — one claim, three live tiles. */
 .hero-claim { grid-template-columns: minmax(0,1fr); }
 .home-tiles { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 24px; margin: 24px 0 32px; }

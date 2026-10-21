@@ -396,7 +396,7 @@ test("POST-BUILD R20: /institutional/tickers/NVDA/holders/ exists with ≥10 hol
   }
 });
 
-test("POST-BUILD R15/R16/R18: filer 1067983 leads with identity → stats → changes; a member page carries one Planned line; the home has the claim and three tiles", () => {
+test("POST-BUILD R15/R16/R18: filer 1067983 leads with identity → stats → changes; a member page carries no Planned line; the home has the claim and three tiles", () => {
   const filer = path.join(DIST, "institutional", "filers", "1067983", "index.html");
   if (existsSync(filer)) {
     const html = readFileSync(filer, "utf-8");
@@ -413,7 +413,9 @@ test("POST-BUILD R15/R16/R18: filer 1067983 leads with identity → stats → ch
   const first = readdirSync(members).find((d) => existsSync(path.join(members, d, "index.html")));
   assert.ok(first, "a member page exists");
   const member = readFileSync(path.join(members, first!, "index.html"), "utf-8");
-  assert.equal((member.match(/class="planned-line"/g) ?? []).length, 1);
+  // launch M4b member-18: the member page's PLANNED strip is gone (and with
+  // filer-06, plannedLine() itself: css-fold RETIRED_CLASSES)
+  assert.equal((member.match(/class="planned-line"/g) ?? []).length, 0);
   assert.doesNotMatch(member, /Holdings from annual disclosure<\/h2>|Institutional overlap<\/h2>/);
   const home = readFileSync(path.join(DIST, "index.html"), "utf-8");
   assert.match(home, /id="home-claim"/);

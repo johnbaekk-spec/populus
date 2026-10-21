@@ -214,14 +214,6 @@
   color: var(--ink2);
   white-space: nowrap;
 }
-.paper-note {
-  font: 400 var(--fs-small) var(--sans);
-  color: var(--ink3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 /* footnote + table footer */
 .feed-footnote {
   padding: 9px 16px;

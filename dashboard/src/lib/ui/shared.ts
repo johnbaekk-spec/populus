@@ -282,13 +282,6 @@ export function unavailableDesignPanel(title: string, _context: string, _columns
   return `<p class="design-unavailable-line ${esc(cls)}"><strong>${esc(title)}</strong> — not available in this build. ${esc(reason)}</p>`;
 }
 
-/** R24: the ONE "Planned:" line a page carries in place of empty panels — a
-    frame with nothing but a paragraph in it is removed, and what it would have
-    held is named here once. */
-export function plannedLine(items: readonly string[]): string {
-  return `<p class="planned-line"><span class="badge-planned">PLANNED</span> ${items.map((i) => esc(i)).join(" · ")}</p>`;
-}
-
 /** The opening tag of a cell's ROOT element, or null when the cell does not
     start with one. A band cell is exactly one element: each top-level element
     of a grid band is its own grid cell. */

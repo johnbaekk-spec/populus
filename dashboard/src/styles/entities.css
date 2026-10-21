@@ -1273,8 +1273,6 @@ span.mgr-chip,
   flex: 0.7;
   position: relative;
 }
-.rb-split { display: flex; gap: 3px; }
-.rb-half { flex: 1; position: relative; }
 .rb-bar {
   position: absolute;
   left: 50%;
@@ -1283,7 +1281,6 @@ span.mgr-chip,
   border: 1px solid var(--rule2);
   box-sizing: border-box;
 }
-.rb-half .rb-bar { width: 14px; }
 .rb-buy { background: var(--buy); opacity: 0.8; }
 .rb-sell { background: var(--sell); opacity: 0.8; }
 .rb-down .rb-bar { top: 0; bottom: auto; }

@@ -1313,6 +1313,19 @@ const RETIRED_CLASSES = [
      and the history stands alone, so their band classes and CSS left with
      them (design-pair had no other caller). */
   "design-pair", "design-member-history-band", "design-member-band",
+  /* launch integration (M4b member-18 + M6 filer-06): the member page's
+     PLANNED strip and the filer page's roadmap line were plannedLine()'s only
+     two callers, so the function and its `.planned-line` rules left with
+     them. `.badge-planned` stays: the Methodology module headings, the
+     overlap band and the WITHHELD marker still emit it. */
+  "planned-line",
+  /* launch integration (M4b, R24/LD25): the two-sided ribbon draws one bar
+     per side on one axis, so the old split column (`rb-split` with its two
+     `rb-half` cells) has no emitter and its rules left. (`.paper-note` also
+     lost its only emitter to member-17 and its rules left, but it stays an
+     honesty selector rather than a retired class: the paper fact is the
+     block's section note now, and the sweep keeps guarding the class.) */
+  "rb-split", "rb-half",
   "explainer", "explainer-h", "design-rankings-single", "coverage-strip",
   "design-triptych", "design-triptych-single", "design-activity-band",
   "nav-shell", "footer-block", "footer-build",

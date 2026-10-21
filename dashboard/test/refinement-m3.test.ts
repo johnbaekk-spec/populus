@@ -8,7 +8,7 @@ import path from "node:path";
 import { cardFoot, thLabelHtml, thHtml, HEADER_ABBREVIATIONS, identityChipHtml } from "../src/lib/format.ts";
 import { baseStylesheet } from "./lib/styles.ts";
 import { DESIGN_INST_INDEX_HEADS } from "../src/lib/inst-index.ts";
-import { unavailableDesignPanel, plannedLine } from "../src/lib/ui/shared.ts";
+import { unavailableDesignPanel } from "../src/lib/ui/shared.ts";
 import { instStamp, instFiledNote, INST_STAMP_CAVEAT } from "../src/lib/ui/institutional.ts";
 import { RULE3_PATTERNS, visibleText } from "./lib/banned-scan.ts";
 
@@ -110,7 +110,11 @@ test("R24: an unavailable surface is one line — no frame, no empty table — a
   const html = unavailableDesignPanel("Crowding", "PCT-RANK", ["Measure", "Percentile"], "No holder rows for the selected period.");
   assert.ok(!html.includes("<table") && !html.includes("<section"), "no frame");
   assert.ok(html.includes("No holder rows for the selected period."), "the reason is kept");
-  assert.match(plannedLine(["a", "b"]), /PLANNED<\/span> a · b/);
+  /* launch integration: the "Planned:" line this test also pinned is retired —
+     M4b (member-18) and M6 (filer-06) removed its only two callers. The pages'
+     own pins say no strip renders (design-layout member-18, refinement-m2
+     filer-06), and css-fold RETIRED_CLASSES keeps `.planned-line` from being
+     styled or emitted again. */
 });
 
 test("R24: the filer directory drops the Turnover and Congress overlap columns", () => {

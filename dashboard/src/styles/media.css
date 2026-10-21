@@ -68,9 +68,6 @@
     flex-wrap: wrap;
     white-space: normal;
   }
-  .paper-note {
-    white-space: normal;
-  }
 }
 
 @media (max-width: 720px) {
@@ -341,7 +338,6 @@
 
   .rb-track { gap: 8px; }
   .rb-bar { width: 12px; }
-  .rb-half .rb-bar { width: 10px; }
 
   .search-panel {
     position: fixed;
