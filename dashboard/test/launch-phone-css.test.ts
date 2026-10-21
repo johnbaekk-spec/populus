@@ -324,6 +324,29 @@ test("R7 (LD7): links take the hit square under the hit query; a card's main lin
   assert.match(hit, /const LINKS = "a\[href\]:not\(:is\(p, li, dd, \.note-pop, \.footer-notice\) a\)";/);
 });
 
+/** What positions the signal card's open link and the 13F receipt, at `vp`. */
+function linkPositions(css: string, vp: { width: number; coarse?: boolean }): { open: string; receipt: string } {
+  const rules = parseRules(css);
+  const at = (chain: El[]): string => winning(rules, chain, "position", vp)?.value ?? "";
+  const root: El[] = [{ tag: "html" }, { tag: "body" }, { tag: "main", classes: ["page", "design-page"] }];
+  return {
+    open: at([...root, { tag: "article", classes: ["si-card"] }, { tag: "a", classes: ["si-card-open"], attrs: { href: "#si-row-x" } }]),
+    receipt: at([...root, { tag: "article", classes: ["mv-item"] }, { tag: "a", classes: ["mv-src"], attrs: { href: "https://www.sec.gov/x" } }]),
+  };
+}
+
+test("M1 (launch review): the link hit rule weighs nothing, so the signal card's open link stays static (its ::after spans the card) and the 13F receipt stays absolute — on phones and on every touch screen; the old weight fails", () => {
+  const rules = parseRules(CSS);
+  const linkRule = rules.find((r) => r.media.some((m) => /any-pointer: coarse/.test(m)) && /a\[href\]/.test(r.selectors) && /position:\s*relative/.test(r.decls));
+  assert.ok(linkRule, "the hit rule positions links");
+  assert.deepEqual(selectorSpec(linkRule!.selectors), [0, 0, 0], "it weighs nothing (:where)");
+  for (const vp of [PHONE, { width: 360 }, { width: 1440, coarse: true }]) {
+    assert.deepEqual(linkPositions(CSS, vp), { open: "static", receipt: "absolute" }, `at ${vp.width}px${"coarse" in vp ? " coarse" : ""}`);
+  }
+  const planted = `${CSS}\n@media (any-pointer: coarse), (max-width: 720px) { a[href]:not(:is(p, li, dd, .note-pop, .footer-notice) a) { position: relative; } }`;
+  assert.deepEqual(linkPositions(planted, PHONE), { open: "relative", receipt: "relative" }, "control: the rule at its old (0,2,2) weight takes both");
+});
+
 /* ----------------------------- R10 (launch integration): scroll regions, global */
 
 import { renderParitySurfaces } from "./lib/ui-parity-surfaces.ts";

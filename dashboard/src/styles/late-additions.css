@@ -789,6 +789,7 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 .si-card-context { font: 400 var(--fs-note)/1.5 var(--sans); color: var(--ink3); margin: 8px 0 0; }
 /* signals-v4 LD5: the card's "open the row" link stretches over the card,
    UNDER the card's own links and notes, which sit above it. */
+.si-card-open { position: static; } /* its ::after spans the card (.si-card), not the link (launch review M1) */
 .si-card-open::after { content: ""; position: absolute; inset: 0; }
 .si-card-open:focus-visible::after { outline: 2px solid var(--accent); outline-offset: -2px; }
 .si-card :is(a:not(.si-card-open), .note, .cell-src) { position: relative; z-index: 1; }
