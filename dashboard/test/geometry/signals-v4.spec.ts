@@ -951,6 +951,12 @@ function movesFit(page: Page): Promise<MovesFit> {
     const type = document.querySelector('#named-moves button[data-mv-type][aria-pressed="true"]')?.getAttribute("data-mv-type") ?? null;
     const matches = all.filter((r) => (kind === null || r.dataset.kind === kind) && (type === null || r.dataset.type === type));
     const shown = matches.filter((r) => !r.hidden).length;
+    /* launch M7a (D5, LD26/LD27): rows past the first view wait in the
+       held-rows island (lib/held-rows.ts) until a view draws them, so the
+       matching count is the DOM's plus the island rows not yet drawn */
+    const isl = document.querySelector<HTMLScriptElement>('script[type="application/json"][data-held-for="mv-list"]');
+    const pending = isl ? ((JSON.parse(isl.textContent ?? "{}").rows ?? []) as { kind?: string; type?: string }[]).slice(Number(isl.getAttribute("data-held-drawn") ?? 0) || 0) : [];
+    const pendingMatching = pending.filter((r) => (kind === null || r.kind === kind) && (type === null || r.type === type)).length;
     const next = matches[shown] ?? null;
     let nextEnd: number | null = null;
     if (next) {
@@ -959,7 +965,7 @@ function movesFit(page: Page): Promise<MovesFit> {
       next.hidden = true;
     }
     const vis = matches.filter((r) => !r.hidden).slice(0, 8).map((r) => r.getBoundingClientRect().height).sort((a, b) => a - b);
-    return { refEnd: cb(ref), colEnd: cb(col), shown, matching: matches.length, nextEnd, rowH: vis[Math.floor(vis.length / 2)] ?? 0, extra: section.getAttribute("data-mv-shown") };
+    return { refEnd: cb(ref), colEnd: cb(col), shown, matching: matches.length + pendingMatching, nextEnd, rowH: vis[Math.floor(vis.length / 2)] ?? 0, extra: section.getAttribute("data-mv-shown") };
   });
 }
 
@@ -1048,11 +1054,15 @@ test("T2.4 (R11, R14, LD8) @1440: a Consensus row and a lead card each list ever
     const s = await page.evaluate((k) => {
       const rows = Array.from(document.querySelectorAll<HTMLElement>("#mv-list > article.mv-item"));
       const on = rows.filter((r) => r.dataset.ikey === k);
-      return { visibleOff: rows.filter((r) => !r.hidden && r.dataset.ikey !== k).length, held: on.length, shown: on.filter((r) => !r.hidden).length, range: document.getElementById("mv-range")!.textContent, pressed: document.querySelector(`button.cs-pick[data-mv-name="${k}"]`)!.getAttribute("aria-pressed") };
+      /* launch M7a (D5): the name's rows the island still holds count too —
+         the complete count is the DOM's plus the island's undrawn rows */
+      const isl = document.querySelector<HTMLScriptElement>('script[type="application/json"][data-held-for="mv-list"]');
+      const pending = isl ? ((JSON.parse(isl.textContent ?? "{}").rows ?? []) as { ikey?: string }[]).slice(Number(isl.getAttribute("data-held-drawn") ?? 0) || 0) : [];
+      return { visibleOff: rows.filter((r) => !r.hidden && r.dataset.ikey !== k).length, held: on.length + pending.filter((r) => r.ikey === k).length, shown: on.filter((r) => !r.hidden).length, range: document.getElementById("mv-range")!.textContent, pressed: document.querySelector(`button.cs-pick[data-mv-name="${k}"]`)!.getAttribute("aria-pressed") };
     }, key);
     expect(s.visibleOff, "only the name's moves show").toBe(0);
     expect(s.pressed).toBe("true");
-    expect(s.range, "the count is the DOM's complete count for the name").toMatch(new RegExp(`^1–${s.shown} of ${s.held} moves$`));
+    expect(s.range, "the count is the page's complete count for the name (DOM + island)").toMatch(new RegExp(`^1–${s.shown} of ${s.held} moves$`));
     await page.locator("#mv-name-pill").click();
     await expect(page.locator("#mv-name-row")).toBeHidden();
     await page.locator('#inst-lead-cards [data-card="new"] a.si-card-open').click({ force: true });
@@ -1319,7 +1329,7 @@ import { overlapLedgerHtml } from "../../src/lib/ui/signals-overlap.ts";
 import { fixtureOverlap } from "../lib/overlap-fixture.ts";
 import { loadTriageFixture } from "../lib/triage-fixture.ts";
 import { buildTriage } from "../../src/lib/signal-triage.ts";
-import { playbookTriggers } from "../../src/lib/playbooks.ts";
+import { playbookTriggers, PLAYBOOK_TRIGGER_ROWS } from "../../src/lib/playbooks.ts";
 
 function m3Splice(html: string): string {
   const ov = /(<section class="tk-panel sig-panel" role="tabpanel" id="overlap" aria-labelledby="tab-overlap">)([\s\S]*?)(<\/section><section class="tk-panel sig-panel" role="tabpanel" id="playbooks")/;
@@ -1357,11 +1367,16 @@ async function openM3(browser: Browser, testInfo: TestInfo, width: number, hash:
 }
 
 /** Each Congress line under `root`: owner, range, both dates and receipt, CSS-visible and inside the viewport's width. */
-function lineFieldProblems(page: Page, root: string): Promise<{ n: number; out: string[] }> {
-  return page.evaluate((sel) => {
+/** Every Congress line under `root` keeps its owner, range, both dates and
+    receipt on screen. A line is a `.cl-line` (Overlap's opened rows), or —
+    launch M5 (R28: "Triggers now" is a table, one row per triggered row's
+    lead line, its dates and receipt in their own columns) — the table row a
+    caller names with `line`. */
+function lineFieldProblems(page: Page, root: string, line = ".cl-line"): Promise<{ n: number; out: string[] }> {
+  return page.evaluate(([sel, lineSel]) => {
     const vis = (e: Element | null): boolean => !!e && e.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) && e.getBoundingClientRect().width > 0;
     const inView = (e: Element): boolean => { const r = e.getBoundingClientRect(); return r.left >= -0.5 && r.right <= innerWidth + 0.5; };
-    const ls = Array.from(document.querySelectorAll(`${sel} .cl-line`)).filter((l) => (l as HTMLElement).checkVisibility());
+    const ls = Array.from(document.querySelectorAll(`${sel} ${lineSel}`)).filter((l) => (l as HTMLElement).checkVisibility());
     const out: string[] = [];
     ls.forEach((li, i) => {
       for (const f of [".owner-note", ".cl-amt", ".si-row-traded time", ".si-row-filed time", ".si-row-src a"]) {
@@ -1370,7 +1385,7 @@ function lineFieldProblems(page: Page, root: string): Promise<{ n: number; out: 
       }
     });
     return { n: ls.length, out };
-  }, root);
+  }, [root, line] as const);
 }
 
 for (const width of PHONES) {
@@ -1431,8 +1446,17 @@ for (const width of PHONES) {
       expect(list.role, "the overflowing strip is a named region").toBe("region");
       expect(await hitMisses(page, "#pb-section .pb-list > a.pbi", 8)).toEqual([]);
       expect(await page.evaluate(() => Array.from(document.querySelectorAll("article.pb-main")).filter((a) => a.checkVisibility()).map((a) => a.id))).toEqual(["pb-leader"]);
-      const lines = await lineFieldProblems(page, "#pb-leader .pb-row");
-      expect(lines.n, "five Triggers now rows").toBe(5);
+      /* launch M5 (R28): "Triggers now" is a table of the triggered rows'
+         LEAD lines, at most PLAYBOOK_TRIGGER_ROWS, with an "All N rows" link
+         when more trigger it. The count is the build's (20261019.2 triggers
+         one row here; the old five counted every Congress line of the
+         triggered rows), so it is read against the page's own statement,
+         never a fixed number. */
+      const lines = await lineFieldProblems(page, "#pb-leader", "tr.pb-row");
+      const more = await page.evaluate(() => document.querySelector("#pb-leader a.pb-all") !== null);
+      expect(lines.n, "Triggers now lists rows").toBeGreaterThan(0);
+      if (more) expect(lines.n, "a capped Triggers now shows the cap").toBe(PLAYBOOK_TRIGGER_ROWS);
+      else expect(lines.n).toBeLessThanOrEqual(PLAYBOOK_TRIGGER_ROWS);
       expect(lines.out).toEqual([]);
       const status = await page.evaluate(() => { const s = document.querySelector<HTMLElement>("#pb-leader .pb-st")!; return s.checkVisibility() && s.getBoundingClientRect().right <= innerWidth + 0.5; });
       expect(status, "its status on screen").toBe(true);
