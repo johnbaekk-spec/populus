@@ -140,6 +140,14 @@ test("L9: the sort button hit-tests to --hit-min in a real layout, without infla
   for (const w of [390, 1440]) {
     await page.setViewportSize({ width: w, height: 900 });
     await openRoute(page);
+    /* launch D4 (phone cards, entities.css "the head: folded, never removed;
+       unfolded while it holds focus"): at 390 the head is folded through the
+       clip pattern until it holds focus, so the sort button is hit-tested the
+       way a phone reader reaches it — focused, its head unfolded. */
+    if (w <= 720) {
+      await page.locator("th[data-sort] .th-sort").first().focus();
+      expect(await page.evaluate(() => document.activeElement?.matches("th[data-sort] .th-sort") ?? false), "the folded head's sort button takes focus").toBe(true);
+    }
     expect(await hitMisses(page, 'th[data-sort] .th-sort'), `at ${w}px`).toEqual([]);
   }
 });
@@ -212,19 +220,29 @@ test("SL-R24/T12 / L9: the holders page's note anchors hit-test to --hit-min at 
    required to measure something and to find nothing — a check still pending
    in the milestone map is left out by `isPending` (M1 left G6 out that way;
    from M2 it runs here too). */
+/* launch D4 (design-principles §5 reversal record): at ≤720px every table is a
+   CARD — its head folded, each row a wrapping line of cells. The checks that
+   measure a table's column layout (G1 head/cell edges, G6 numeric columns, G8
+   the single-line row height, G10 column edges, headFont the head's type) have
+   no columns to measure there: G1 and G6 already EXCLUDE card tables (they
+   measured nothing on the holders page at 390) and G8 read a two-line card as
+   a "single-line row" 75px tall. They run at 1440; at the phone widths the
+   holders page is measured by the phone audit (phone.spec.ts, view `holders`
+   at 360/390/430: R4 sideways, R5 honesty, R6 text, R7 taps, R40 roles). */
+const TABLE_LAYOUT_ONLY = [1440];
 const HOLDERS_CHECKS: { id: CheckId; fn: PredicateName; arg?: unknown; widths?: number[] }[] = [
-  { id: "G1", fn: "g1" },
+  { id: "G1", fn: "g1", widths: TABLE_LAYOUT_ONLY },
   { id: "G2", fn: "g2", arg: { exempt: [...g2Exemptions()] } },
   { id: "G3", fn: "g3", widths: [1440] },
   { id: "G4", fn: "g4" },
   { id: "G5", fn: "g5" },
-  { id: "G6", fn: "g6" },
+  { id: "G6", fn: "g6", widths: TABLE_LAYOUT_ONLY },
   { id: "G7", fn: "g7" },
-  { id: "G8", fn: "g8" },
-  { id: "G10", fn: "g10" },
+  { id: "G8", fn: "g8", widths: TABLE_LAYOUT_ONLY },
+  { id: "G10", fn: "g10", widths: TABLE_LAYOUT_ONLY },
   { id: "G11", fn: "g11" },
   { id: "G11b", fn: "g11b" },
-  { id: "headFont", fn: "headFont" },
+  { id: "headFont", fn: "headFont", widths: TABLE_LAYOUT_ONLY },
   { id: "oneFlex", fn: "oneFlex" },
 ];
 
