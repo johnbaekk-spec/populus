@@ -160,11 +160,19 @@ function customProps(body: string): Map<string, string> {
   return out;
 }
 
-test("T1.1: fourteen --fs-* tokens, none under the 9.5px floor at any width", () => {
+/* launch M1b (LD12) reversal record. Property kept: one closed, token-only
+   type scale with a floor. Mechanism replaced: fourteen tokens → fifteen — the
+   fifteenth, --fs-input, exists for one platform constraint (iOS zooms the page
+   when a field under 16px takes focus) and is read by inputs only. Sharper
+   tests: launch-phone-css.test.ts (every field reads it, nothing else does, it
+   is 16px under the hit-square query at any width, and the ≤720px ramp floors
+   at 11px with no value below its desktop value) and G4's width-aware floor. */
+test("T1.1: fifteen --fs-* tokens (fourteen plus --fs-input), none under the 9.5px floor at any width", () => {
   const foundation = readFileSync(path.join(STYLES, "foundation.css"), "utf-8");
   const dark = customProps(block(foundation, ':root, [data-theme="dark"]'));
   const fs = [...dark.entries()].filter(([k]) => k.startsWith("--fs-"));
-  assert.equal(fs.length, 14, fs.map(([k]) => k).join(" "));
+  assert.equal(fs.length, 15, fs.map(([k]) => k).join(" "));
+  assert.ok(dark.has("--fs-input"), "the fifteenth token is --fs-input");
   const floorViolations = (css: string): string[] =>
     [...stripComments(css).matchAll(/(--fs-[\w-]+)\s*:\s*([\d.]+)px/g)]
       .filter((m) => Number(m[2]) < 9.5)

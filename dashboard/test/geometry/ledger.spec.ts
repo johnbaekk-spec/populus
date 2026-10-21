@@ -195,13 +195,15 @@ const ROUTES: Route[] = [
 
 const ALL_CHECKS: CheckId[] = [...GEOMETRY_CHECKS, ...EXTRA_CHECKS];
 
-/** Where each check runs. G3 is a 1440 and 768 property (a table scrolls
-    sideways inside its container at 390 by design; 768 runs nothing else); G9
-    is measured on the five design routes at 1440 (criterion 7); every other
-    check runs at 1440 and 390. */
+/** Where each check runs. G3 runs at 1440 and 768 (768 runs nothing else)
+    and, from launch M1b (D4, LD5), IN FULL at 390: a table no longer scrolls
+    sideways inside its container on a phone — it folds into row cards — so a
+    table container wider than its box fails there too. G9 is measured on the
+    five design routes at 1440 (criterion 7); every other check runs at 1440
+    and 390. */
 function applies(check: CheckId, route: Route, width: Width): boolean {
   if (width === 768) return check === "G3";
-  if (check === "G3") return width === 1440;
+  if (check === "G3") return width === 1440 || width === 390;
   if (check === "G9") return width === 1440 && route.pairs !== undefined;
   if (check === "controlHeights") return width === 1440;
   return true;

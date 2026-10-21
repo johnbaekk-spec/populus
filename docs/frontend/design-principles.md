@@ -152,6 +152,47 @@ Previously specified by `Mobile.dc.html`; this section is now the authority
 - Count/disclosure strings are assembled once (`feedCountText()`) and every
   sink receives the same string — a disclosure that reaches only a
   desktop-visible element is the fold failure this section exists to prevent.
+- **Tables become row cards at ≤720px (launch redesign D4, from M1b).** No
+  table scrolls sideways and the page never does. Each row is a card: a
+  wrapping line of its cells, ordered by the ledger ROLE classes (`c-kind`,
+  `c-member`/`c-flex`, `c-ticker`, `c-secondary`, `c-num`, `c-bar`, `c-filed`,
+  `c-flags`, `c-src`) — never `:nth-child`. A number prints its column's label
+  (`data-label`, copied from the head). The head folds through the clip
+  pattern and unfolds as a wrapped line while it holds focus. Names, assets and
+  managers wrap; an owner, partial, flag, date, lag, range or receipt is never
+  line-clamped or ellipsised. The table attribute `data-card` (`feed`,
+  `ranking`, `member-trades`, `holders`, `moves`, `generic`) selects the
+  layout; the feed keeps its ≤1080px grid card. Every table carries explicit
+  roles at every width (`role="table"`, `rowgroup`, `row`,
+  `columnheader`/`rowheader`, `cell`), because WebKit can drop native table
+  semantics once `display` changes and WCAG 2.1 AA is a hard constraint (§8).
+
+**Record D4 (reversal, launch redesign M1b, owner decision 2026-10-20) — wide
+tables on phones.** *Was:* "wide tables scroll within their container, never
+the page" (here and in §8), with a sticky identity column and an edge fade at
+≤720px. *Measured:* 33 tables scrolled sideways across the 17 audited views at
+390px on live build 20261020.2 (the mock's phone audit), each hiding columns
+past its right edge behind a fade; the approved mobile scope reverses it.
+*Property kept:* the page never scrolls sideways, no column is off-screen
+without a cue, and every column's content stays visible and announced.
+*Mechanism replaced:* in-container scroll with a sticky identity column and an
+edge fade → row cards (above), with explicit table roles shipped first (M1a,
+R40) so the semantics survive the `display` change. *Sharper tests:* G3 runs
+in full at 390 (any table container wider than its box fails, not only the
+document; `ledger.spec.ts`); `launch-phone-css.test.ts` resolves the whole
+cascade and asserts the EFFECTIVE `overflow-x` of every table wrapper at
+360/390/430 is neither `auto` nor `scroll`, that card rows are flex cards keyed
+on role classes, and that no honesty cell is clamped or ellipsised, each with a
+re-planted control that fails; the phone harness (`phone.spec.ts`) checks
+sideways tables, honesty visibility and table roles at 360/390/430 with planted
+controls; `launch-semantics.test.ts` pins the roles on every parity surface and
+every client sink. The css-fold test that pinned the old mechanism ("sticky
+identity column + edge fade exist for wide 13F tables at the fold") is retired
+in the same commit, with this record cited in its place. *Residual risk:* no
+WebKit lane runs in the geometry suite (TD-L4); a VoiceOver pass on an iPhone
+during the M1b live probe confirms the roles and does not gate. Above 720px
+nothing changes: wide tables still scroll inside their container with the
+scroll cue.
 
 ## 6. Tokens — current reference and accessibility corrections
 
@@ -185,6 +226,24 @@ must not regress (pinned by `css-fold.test.ts`'s token assertions):
   dark (WCAG 1.4.11).
 - Fonts are self-hosted (Source Serif 4, Public Sans, IBM Plex Mono, latin
   subsets) — no external font requests, per the no-external-requests rule.
+
+### The phone type ramp and the fifteenth token (launch redesign M1b, LD12)
+
+At ≤720px the type tokens take their phone values — `--fs-label` and
+`--fs-meta` 11px, `--fs-control` and `--fs-note` 12px, `--fs-cell` and
+`--fs-small` 12.5px, `--fs-name` and `--fs-body` 14px, `--fs-title` 15px (the
+display and hero sizes keep their 22px and 28px) — so no visible text is under
+11px on a phone and no value is below its T0 value at any width. **Record
+(reversal) — fourteen tokens → fifteen.** *Property kept:* one closed,
+token-only type scale with a floor. *Mechanism:* a fifteenth token,
+`--fs-input`, for one platform constraint: iOS zooms the page when a field
+under 16px takes focus. It equals `--fs-name` by default and is 16px under the
+same `(any-pointer: coarse), (max-width: 720px)` query that makes `--hit-min`
+44px, and only inputs, selects and search boxes read it. *Sharper tests:*
+`launch-phone-css.test.ts` (every field reads it at 390, 1080-coarse and 1440;
+nothing else does; the ramp floors at 11px and never drops below T0),
+`ledger-system.test.ts` T1.1 (fifteen tokens), G4's width-aware floor (11px at
+≤720px, 9.5px above) and G5's fifteen-token minimum.
 
 ### Ledger tokens and non-text contrast (DESIGN-POLISH M1)
 
@@ -681,8 +740,11 @@ classifiable".
 - Lighthouse ≥90 (performance and accessibility) on feed, entity, and
   instrument pages; WCAG 2.1 AA. Light and dark from day one; data-dense
   tables hold contrast in both.
-- Responsive for real: wide tables scroll within their container, never the
-  page; feed and entity pages genuinely work on phones.
+- Responsive for real: the page never scrolls sideways. Above 720px a wide
+  table scrolls within its container with a scroll cue; at ≤720px every table
+  folds into row cards with explicit table roles (§5, record D4). Feed and
+  entity pages genuinely work on phones: no visible text under 11px, every
+  tap target at least 44×44, fields at 16px so iOS never zooms.
 - Mock numbers never ship: every tile derives from `stats.json` or the
   module's own manifest watermarks, or states absence. Cadence claims are
   replaced by the build stamp.

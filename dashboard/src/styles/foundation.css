@@ -37,7 +37,8 @@
   --mono: "JetBrains Mono", monospace;
 
   /* ---- DESIGN-POLISH M1 tokens (Architecture B). Every font-size on the site
-     reads one of these fourteen, and none is below the 9.5px floor. ---- */
+     reads one of these fifteen, and none is below the 9.5px floor (11px at
+     ≤720px: the launch phone ramp below). ---- */
   --fs-label: 9.5px;    /* table headers, card tags, party tags */
   --fs-meta: 10px;      /* kind word, ledger label, band meta, kicker */
   --fs-control: 10.5px; /* segmented controls, provenance, receipts, pager */
@@ -52,6 +53,11 @@
   --fs-heading: 20px;   /* module-card names, state headings */
   --fs-display: 26px;   /* H1, header-ledger values (22px at ≤720px) */
   --fs-hero: 40px;      /* home and methodology titles (28px at ≤720px) */
+  /* launch M1b (LD12): the fifteenth token. Every input, select and search box
+     reads it — and nothing else does: the name size here, 16px wherever the hit
+     square is 44px (a coarse pointer or ≤720px), so iOS never zooms the page
+     when a field takes focus, in portrait or landscape. */
+  --fs-input: var(--fs-name);
 
   /* spacing */
   --gutter: 32px;       /* band gutter (16px at ≤720px) */
@@ -156,11 +162,26 @@
    pointer (or the fold) takes the 44px hit square and the 44px ledger row. */
 @media (max-width:720px) {
   :root { --gutter: 16px; --fs-display: 22px; --fs-hero: 28px; }
+  /* launch M1b (LD12, R6): the phone type ramp, as token VALUES. No visible
+     text under 11px at the fold: labels and badges 11, data 12–13, names and
+     prose 14–15. Every value is at or above its desktop value, so no text
+     anywhere renders smaller than it did at T0. */
+  :root {
+    --fs-label: 11px;
+    --fs-meta: 11px;
+    --fs-control: 12px;
+    --fs-note: 12px;
+    --fs-cell: 12.5px;
+    --fs-small: 12.5px;
+    --fs-name: 14px;
+    --fs-body: 14px;
+    --fs-title: 15px;
+  }
 }
 @media (any-pointer: coarse), (max-width: 720px) {
   /* The header row grows with the body rows, so a header control's 44px
      square stays inside its table's scroll box. */
-  :root { --hit-min: 44px; --hit-half: 22px; --row-pad-y: 14.5px; --head-pad-t: 28.5px; }
+  :root { --hit-min: 44px; --hit-half: 22px; --row-pad-y: 14.5px; --head-pad-t: 28.5px; --fs-input: 16px; }
 }
 
 * {

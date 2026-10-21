@@ -91,7 +91,7 @@
   color: var(--ink3);
 }
 .site-search input {
-  font: 400 var(--fs-name) var(--sans);
+  font: 400 var(--fs-input) var(--sans); /* launch M1b (LD12) */
   color: var(--ink);
   background: none;
   border: none;

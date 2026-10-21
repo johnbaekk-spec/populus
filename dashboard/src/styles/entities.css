@@ -1215,28 +1215,146 @@ span.mgr-chip,
   .th-full { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
 
-/* ---------- ≤720px: the fold ----------
-   Wide tables scroll inside their container with a sticky identity column and
-   an edge fade; the page never scrolls sideways. Type stays on the tokens and
-   the floor; the 16px gutter and the 44px rows come from the tokens. */
+/* ---------- ≤720px: the fold — row cards (launch M1b: D4, LD5, LD6) ----------
+   D4 reverses "wide tables scroll within their container" on phones
+   (docs/frontend/design-principles.md §5, the reversal record): no table
+   scrolls sideways and the page never does. Every table row becomes a CARD —
+   a wrapping line of its cells, ordered by the ledger ROLE classes (never
+   :nth-child): the kind word and the identity first, then the qualifiers and
+   the numbers (each number prints its column's label, `data-label`, copied
+   from the head by withTableRoles), then the dates and the receipt. `data-card`
+   on the table (emitted with the explicit roles, R40) selects the layout; the
+   feed keeps its own ≤1080px grid card (above). The head folds through the
+   clip pattern and unfolds as a wrapped line while it holds focus, so its sort
+   buttons and notes stay reachable and announced. Names, assets and managers
+   WRAP; an owner, partial, flag, date, lag, range or receipt is never clamped
+   or ellipsised (launch-phone-css.test.ts sweeps it). The decorative size band
+   (aria-hidden, no honesty class) is omitted: the range text it draws stays.
+   Type stays on the tokens (the phone ramp, foundation.css); the 16px gutter
+   and the 44px row come from the tokens. */
 @media (max-width: 720px) {
   .table-scroll {
     position: relative;
-    mask-image: linear-gradient(to right, #000 calc(100% - 28px), rgba(0, 0, 0, 0.25));
-    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), rgba(0, 0, 0, 0.25));
+    overflow-x: visible;
+    background: none;
+    mask-image: none;
+    -webkit-mask-image: none;
   }
-  .etable[data-sticky-first] th:first-child,
-  .etable[data-sticky-first] td:first-child {
-    position: sticky;
-    left: 0;
-    background: var(--paper);
-    border-right: 1px solid var(--rule2);
-    z-index: 2;
+  table[data-card]:not([data-card="feed"]) {
+    --card-l: 0px;
+    --card-r: 0px;
+    display: block;
+    width: 100%;
   }
-  .etable td:is(.c-member, .c-filer, .c-pos):not(.c-flex) { max-width: 200px; }
-  /* A scrolling table's flexible column keeps its name readable (to 200px)
-     rather than collapsing to its zero minimum; the table scrolls instead. */
-  .etable td.c-flex { max-width: 200px; }
+  .table-scroll > table[data-card]:not([data-card="feed"]) {
+    --card-l: var(--gutter-l);
+    --card-r: var(--gutter-r);
+  }
+  table[data-card]:not([data-card="feed"]) > :is(thead, tbody, tfoot) { display: block; }
+  /* the head: folded, never removed; unfolded while it holds focus */
+  table[data-card]:not([data-card="feed"]) > thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+  table[data-card]:not([data-card="feed"]) > thead:focus-within {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
+    clip-path: none;
+    white-space: normal;
+  }
+  table[data-card]:not([data-card="feed"]) > thead:focus-within > tr {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    padding: 8px var(--card-r) 8px var(--card-l);
+  }
+  .etable[data-card]:not([data-card="feed"]) > thead:focus-within > tr > th { padding: 0; border: 0; white-space: normal; }
+  /* the row: one card */
+  table[data-card]:not([data-card="feed"]) > :is(tbody, tfoot) > tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 12px;
+    position: relative;
+    min-height: var(--hit-min);
+    padding: 10px var(--card-r) 10px var(--card-l);
+    border-bottom: 1px solid var(--rule-row);
+  }
+  /* the kind edge rides on the card, not on its first cell */
+  table[data-card]:not([data-card="feed"]) > tbody > tr[data-edge] {
+    padding-left: max(var(--card-l), 11px);
+    box-shadow: inset 3px 0 0 var(--row-edge, transparent);
+  }
+  .etable[data-card]:not([data-card="feed"]) > tbody > tr[data-edge] > td:first-child { box-shadow: none; }
+  /* every cell: a wrapping inline block, never clipped. The `.table-scroll >`
+     form matches the gutter rules' weight above and wins by source order. */
+  table[data-card]:not([data-card="feed"]) > :is(tbody, tfoot) > tr > :is(td, th),
+  .table-scroll > table[data-card]:not([data-card="feed"]) > :is(tbody, tfoot) > tr > :is(td, th) {
+    display: block;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    padding: 0;
+    border: 0;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    text-align: left;
+    position: static;
+    background: none;
+  }
+  .etable[data-card]:not([data-card="feed"]):not([data-multiline]) > * > tr > .c-num:not(:first-child) { padding-left: 0; }
+  /* order by role: the kind word and rank, then the identity, then the rest,
+     then the dates, then the receipt (pushed to the line's end) */
+  table[data-card]:not([data-card="feed"]) > tbody > tr > :is(.c-kind, .c-side, .c-rank) { order: -3; }
+  table[data-card]:not([data-card="feed"]) > tbody > tr > :is(.c-member, .c-filer, .c-pos, .c-issuer, .c-ticker) { order: -2; }
+  table[data-card]:not([data-card="feed"]) > tbody > tr > :is(.c-member, .c-filer, .c-pos, .c-issuer) {
+    flex: 1 1 60%;
+    font-size: var(--fs-name);
+  }
+  table[data-card]:not([data-card="feed"]) > tbody > tr > :is(.c-secondary, .c-flags) { order: -1; flex: 1 1 100%; }
+  table[data-card]:not([data-card="feed"]) > tbody > tr > :is(.c-traded, .c-dates, .c-filed) { order: 1; }
+  table[data-card]:not([data-card="feed"]) > tbody > tr > .c-src { order: 2; margin-left: auto; }
+  /* a cell that spans the table (a separator, an empty state) spans the card */
+  table[data-card]:not([data-card="feed"]) > :is(tbody, tfoot) > tr > [colspan] { flex: 1 1 100%; }
+  /* a number names its column (the head is folded); the label is decoration
+     for sight — the column head already announces it, so it is spoken once */
+  table[data-card]:not([data-card="feed"]) > tbody > tr > [data-label]::before {
+    content: attr(data-label) " ";
+    content: attr(data-label) " " / "";
+    font: 600 var(--fs-label)/1 var(--mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-label);
+  }
+  /* names, assets and managers wrap instead of ellipsising */
+  table[data-card]:not([data-card="feed"]) .asset-line { flex-wrap: wrap; }
+  table[data-card]:not([data-card="feed"]) .asset-line > .asset-text,
+  table[data-card]:not([data-card="feed"]) .asset-line > .asset-text > .note > .note-label {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+  }
+  /* the decorative size band: the range text beside it stays */
+  table[data-card]:not([data-card="feed"]) .band { display: none; }
+  /* no sticky identity column on a card */
+  .etable[data-card]:is([data-sticky-first], [data-sticky-issuer]) > * > tr > :is(:first-child, .c-pos) {
+    position: static;
+    border-right: 0;
+    background: none;
+  }
   .reference-feed .cell-member { white-space: normal; }
   .design-band > *, .design-rankings > * { padding-left: var(--gutter); padding-right: var(--gutter); }
 }

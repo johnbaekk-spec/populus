@@ -1036,10 +1036,14 @@ export function installLedgerProbe(): void {
     reset();
     const res = newResult("G4");
     const agg = aggregator(res);
+    /* launch M1b (R6, LD12): the floor is width-aware — 11px at the ≤720px
+       fold (the phone ramp), 9.5px above it. */
+    const floor = innerWidth <= 720 ? 11 : 9.5;
+    res.notes.push(`floor ${floor}px at ${innerWidth}px`);
     for (const s of sizeCensus()) {
       res.measured++;
-      if (s.size < 9.5 - 0.01) {
-        agg.add(`${s.size}|${s.where}`, { el: s.where, delta: r2(s.size - 9.5), detail: `${r2(s.size)}px text "${s.text}" in ${s.where} (floor 9.5px)` });
+      if (s.size < floor - 0.01) {
+        agg.add(`${s.size}|${s.where}`, { el: s.where, delta: r2(s.size - floor), detail: `${r2(s.size)}px text "${s.text}" in ${s.where} (floor ${floor}px)` });
       }
     }
     agg.flush();
@@ -1087,8 +1091,10 @@ export function installLedgerProbe(): void {
     const tokens = fsTokens();
     const values = [...new Set(tokens.map((t) => r2(t.px)))].sort((a, b) => a - b);
     res.notes.push(`tokens: ${tokens.map((t) => `${t.name}=${r2(t.px)}`).join(" ")}`);
-    if (tokens.length < 14) {
-      fail(res, { detail: `only ${tokens.length} --fs-* tokens resolve here (need the 14 of Architecture B): ${tokens.map((t) => t.name).join(", ")}` });
+    /* launch M1b (LD12): fifteen tokens — Architecture B's fourteen plus
+       --fs-input (reversal record: docs/frontend/design-principles.md §6). */
+    if (tokens.length < 15) {
+      fail(res, { detail: `only ${tokens.length} --fs-* tokens resolve here (need the 15: Architecture B's 14 plus --fs-input): ${tokens.map((t) => t.name).join(", ")}` });
     }
     const agg = aggregator(res);
     const sizes = new Map<number, number>();
@@ -1103,7 +1109,7 @@ export function installLedgerProbe(): void {
     agg.flush();
     const distinct = [...sizes.keys()].sort((a, b) => a - b);
     res.notes.push(`rendered sizes: ${distinct.map((d) => `${d}px×${sizes.get(d)}`).join(" ")}`);
-    if (distinct.length > 14) fail(res, { detail: `${distinct.length} distinct rendered sizes (at most 14): ${distinct.join(", ")}` });
+    if (distinct.length > 15) fail(res, { detail: `${distinct.length} distinct rendered sizes (at most 15): ${distinct.join(", ")}` });
     return done(res);
   }
 

@@ -306,9 +306,10 @@
 /* ---------- mobile fold, entity & feed surfaces (≤720px) ----------
    THE FOLD RULE (SS4, standing deviation): nothing honesty-bearing — dates,
    lag, owner/partial qualifiers, flags, SRC receipts, footnotes, terminus
-   rows, as-of stamps — is display:none'd here. Wide tables scroll INSIDE
-   their .table-scroll container with a sticky identity column and an edge
-   fade; the page never scrolls sideways. Enforced by test/css-fold.test.ts. */
+   rows, as-of stamps — is display:none'd here. Tables fold into row cards
+   (launch D4, the ledger region's ≤720px block in entities.css); the page
+   never scrolls sideways. Enforced by test/css-fold.test.ts and
+   test/launch-phone-css.test.ts. */
 
 @media (max-width: 720px) {
   .entity-head {
@@ -332,9 +333,9 @@
   .cta { min-height: 44px; }
   .module-shell, .s1-block, .s2-block, .s4-error { padding: 24px 18px; }
 
-  /* The wide-table fold — in-container scroll, the sticky identity column, the
-     edge fade and the 200px name cap — is in the ledger region's ≤720px block
-     (entities.css) now; all cells stay in the DOM, the fade removes nothing. */
+  /* The table fold — row cards keyed on role classes, the head folded through
+     the clip pattern (launch D4) — is in the ledger region's ≤720px block
+     (entities.css); every cell stays in the DOM and on its card. */
 
   .rb-track { gap: 8px; }
   .rb-bar { width: 12px; }

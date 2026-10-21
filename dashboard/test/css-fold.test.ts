@@ -1295,14 +1295,25 @@ test("dead-CSS sweep: every new class is styled AND emitted", () => {
   }
 });
 
-test("sticky identity column + edge fade exist for wide 13F tables at the fold", () => {
+/* RETIRED by launch M1b (D4; reversal record in docs/frontend/design-principles.md
+   §5). This test pinned the MECHANISM of the old fold — "sticky identity column
+   + edge fade exist for wide 13F tables at the fold" — whose property was: the
+   page never scrolls sideways and no column goes off-screen without a cue. The
+   property is kept and pinned more sharply by launch-phone-css.test.ts (the
+   EFFECTIVE overflow-x of every table wrapper at 390, resolved over the whole
+   cascade, is neither auto nor scroll; every table at the fold is a card; no
+   honesty cell is clamped or ellipsised; a re-planted scrolling table and a
+   planted clamp each fail) and by G3 run in full at 390 (ledger.spec.ts) and
+   the phone harness at 360/390/430 (phone.spec.ts). What remains true of the
+   13F tables is asserted here: they still carry their sticky marker for the
+   widths above the fold, and the fold turns them into cards. */
+test("launch M1b (D4): at the fold the 13F tables fold into cards; their sticky identity column stays above it", () => {
   const blocks = narrowMediaBlocks(css);
   const foldBody = blocks.map((b) => b.body).join("\n");
-  assert.ok(foldBody.includes("data-sticky-first"), "sticky first column rule");
-  assert.ok(foldBody.includes("position: sticky") || foldBody.includes("position:sticky"));
-  assert.ok(foldBody.includes("mask-image"), "edge fade signals in-container scroll");
+  assert.ok(foldBody.includes('table[data-card]:not([data-card="feed"]) > :is(tbody, tfoot) > tr'), "the fold's card row rule");
+  assert.ok(!/\.table-scroll\s*\{[^}]*mask-image:\s*linear-gradient/.test(foldBody), "no edge fade announces an in-container scroll at the fold");
   const corpus = renderCorpus();
-  assert.ok(corpus.includes("data-sticky-first"), "13F tables carry the sticky marker");
+  assert.ok(corpus.includes("data-sticky-first"), "13F tables carry the sticky marker (for the widths above the fold)");
 });
 
 test("print keeps the honesty layer: footnotes/terminus forced visible, chrome dropped", () => {

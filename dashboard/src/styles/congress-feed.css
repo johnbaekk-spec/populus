@@ -52,7 +52,7 @@
   border-radius: 0;
   background: transparent;
   padding: 5px 26px 5px 11px;
-  font: 500 var(--fs-cell) var(--sans);
+  font: 500 var(--fs-input) var(--sans); /* launch M1b (LD12): every field reads --fs-input */
   color: var(--ink2);
   min-height: 28px;
   cursor: pointer;
