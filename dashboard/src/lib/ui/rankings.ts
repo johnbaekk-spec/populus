@@ -722,9 +722,9 @@ export function congressRankingSection(
     rankingWindowHtml(windowText, rollup, kind, opts.sectionId, board) +
     `</span>` +
     /* The window control is the band head's own right-aligned control, on the
-       head's baseline, with its own words ("Window & dates") — never an
+       head's baseline, with its own word ("Window") — never an
        absolutely positioned "⋯" over the table. */
-    (opts.controls && ctx.referenceRankings ? `<details class="ranking-options"><summary>Window &amp; dates</summary>${rangeControlHtml(rollup.range, rollup.basis)}</details>` : "") +
+    (opts.controls && ctx.referenceRankings ? `<details class="ranking-options"><summary>Window</summary>${rangeControlHtml(rollup.range, rollup.basis)}</details>` : "") +
     `</div>` +
     (opts.controls && !ctx.referenceRankings ? rangeControlHtml(rollup.range, rollup.basis) : "") +
     /* The pending indicator. NOT a queue — `range` and `basis` are
@@ -801,7 +801,7 @@ export function congressRankingSection(
       ...(ctx.referenceRankings ? {} : { bound: `All rows are in the <a href="/congress/data/">published dataset</a>.` }),
     }) +
     (undisclosedBucket.length > 0 && opts.undisclosedRootId
-      ? (ctx.referenceRankings ? `<details class="unrankable-block design-supplement"><summary>${undisclosedBucket.length} not rankable · amounts wholly undisclosed</summary>` : `<div class="unrankable-block"><h3 class="section-h">Not rankable — amounts wholly undisclosed</h3>`) +
+      ? (ctx.referenceRankings ? `<details class="unrankable-block design-supplement"><summary>${undisclosedBucket.length} unrankable</summary>` : `<div class="unrankable-block"><h3 class="section-h">Not rankable — amounts wholly undisclosed</h3>`) +
         (ctx.referenceRankings
           ? `<p class="section-note">Every amount on one side failed to parse, so these rows are not ranked.</p>`
           : `<p class="section-note">These rows include at least one side whose every amount failed to parse. ` +

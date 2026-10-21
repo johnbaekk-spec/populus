@@ -223,17 +223,18 @@ const description =
       <div class="filter-controls">
       <!-- Launch M3a (LD20): the view and the two quick filters lead; the text
            filter stands on its own row; Party, Amount, Owner, Late, Dates and
-           the EXCHANGE side stay under More filters (DV17). -->
+           the EXCHANGE side stay under More filters (DV17). Launch F2 (SC5):
+           as in the approved mock, the quick groups carry no visible label
+           (each group keeps its aria-label) and the text filter's label is
+           the search glyph, its words in the placeholder. -->
       <div class="filter-quick">
       <div class="filter-group" role="group" aria-label="Rows">
-        <span class="filter-label" aria-hidden="true">Rows</span>
         <div class="seg">
           <button data-group="view" data-value="ticker" aria-pressed="true">With ticker</button>
           <button data-group="view" data-value="all" aria-pressed="false">All rows</button>
         </div>
       </div>
       <div class="filter-group" role="group" aria-label="Side">
-        <span class="filter-label" aria-hidden="true">Side</span>
         <div class="seg">
           <button data-group="side" data-value="all" aria-pressed="true">All</button>
           <button data-group="side" data-value="buy" aria-pressed="false">Buys</button>
@@ -241,7 +242,6 @@ const description =
         </div>
       </div>
       <div class="filter-group" role="group" aria-label="Chamber">
-        <span class="filter-label" aria-hidden="true">Chamber</span>
         <div class="seg">
           <button data-group="chamber" data-value="all" aria-pressed="true">Both</button>
           <button data-group="chamber" data-value="house" aria-pressed="false">House</button>
@@ -250,12 +250,12 @@ const description =
       </div>
       </div>
       <div class="filter-group filter-search">
-        <label class="filter-label" for="filter-q">Filter</label>
+        <label class="filter-label" for="filter-q"><span aria-hidden="true">⌕</span></label>
         <input
           class="filter-select filter-text"
           type="search"
           id="filter-q"
-          placeholder="Member or ticker"
+          placeholder="Filter by member or ticker"
           aria-label="filter by ticker prefix or member name — on this device"
         />
       </div>
@@ -364,13 +364,18 @@ const description =
       </div>
 
       <Fragment set:html={footnoteHtml} />
+      <!-- Launch F2 (SC5, copy item congress-23's pager): the count is stated
+           once on screen, by the count line above the table; the pager's
+           range keeps the same string for assistive technology and as the
+           focus target after paging (I6), visually hidden at every width as
+           it already was on desktop. -->
       <!-- The feed's compact bound is its PAGE, and the pager below is
            the disclosure that lifts it. A second "show all" control over a
            20-row page of ~60,000 rows would be a control that cannot honour
            its own label; the pager states the bound and moves through it. -->
       <div class="feed-foot">
         <div class="pager">
-          <span class="pager-range" id="pager-range" tabindex="-1">{rangeText}</span>
+          <span class="pager-range visually-hidden" id="pager-range" tabindex="-1">{rangeText}</span>
           <button class="pager-btn is-unavailable" id="pager-newer" aria-disabled="true">← Prev</button>
           <button
             class:list={["pager-btn", { "is-unavailable": !hasOlderPage }]}

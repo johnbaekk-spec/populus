@@ -191,7 +191,10 @@ test("R2/R20: the count line keeps \"filtered on this device\" and its reset con
     PAGE_SRC,
     /<span id="filter-count-line">\{rangeText\}<\/span>\{" · filtered on this device"\}<span\s+id="filter-reset-wrap"\s+hidden>\{" · "\}<button class="linklike" id="filter-reset">reset<\/button><\/span>/,
   );
-  assert.match(PAGE_SRC, /<span class="pager-range" id="pager-range" tabindex="-1">\{rangeText\}<\/span>/, "the pager sink starts on the same string");
+  /* launch F2 (SC5, congress-23's pager): the pager sink keeps the same
+     string for assistive technology and paging focus, visually hidden — the
+     count line above the table states it once on screen */
+  assert.match(PAGE_SRC, /<span class="pager-range visually-hidden" id="pager-range" tabindex="-1">\{rangeText\}<\/span>/, "the pager sink starts on the same string");
   assert.match(PAGE_SRC, /id="feed-status" role="status" aria-live="polite"/, "the live region is the third sink");
   // control: a page that dropped the device line would fail the first assertion
   assert.doesNotMatch(PAGE_SRC.replace(" · filtered on this device", ""), /filtered on this device/);

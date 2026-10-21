@@ -1193,7 +1193,6 @@ span.mgr-chip,
   #feed-section .filter-count { grid-row: 3; grid-column: 1; padding: 12px 0 8px var(--gutter); font: 400 var(--fs-note)/1.6 var(--sans); align-self: center; text-align: left; }
   #feed-section .reference-feed-scroll { grid-row: 2; grid-column: 1/-1; border-top: 1px solid var(--rule); padding-top: 18px; }
   #feed-section .feed-foot { grid-row: 3; grid-column: 2; padding: 8px var(--gutter) 8px 8px; margin: 0; border: 0; justify-content: flex-end; }
-  #feed-section .feed-foot .pager-range { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   #feed-footnote { grid-row: 4; grid-column: 1/-1; margin: 0; padding: 0 var(--gutter) 12px; font-size: var(--fs-meta); }
   #feed-section .feed-loading, #feed-section .feed-empty { grid-row: 2; grid-column: 1/-1; }
   .design-rankings .reference-ranking { padding-top: 14px; }
