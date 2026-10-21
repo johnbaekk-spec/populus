@@ -1493,3 +1493,41 @@ details.si-tier > summary > .si-tier-h { display: inline; }
 .member-facts dd { margin: 8px 0 0; font: 400 var(--fs-small)/1.5 var(--sans); color: var(--ink); }
 .fact-dim { color: var(--ink3); }
 @media (max-width: 720px) { .member-facts { grid-template-columns: minmax(0, 1fr); } .member-facts > div { border-left: 0; padding-left: 6px; border-top: 1px solid var(--rule); } .member-facts > div:first-child { border-top: 0; } }
+
+/* ==================================================== launch gate — R7 at the fold
+   The owner-tier phone run on 20261019.2 (75e9920) found targets the midpoint
+   split (scripts/hit-areas.ts) cannot make 44px, because their neighbours sit
+   closer than a square: a receipt and its ⓘ 2px apart, a tip 4px above the
+   next line, a summary 15px tall. At ≤720px those targets are 44px BOXES of
+   their own, so no neighbour can cut them (R7: 44×44, nothing covered). The
+   size is spelled 2 × --hit-half, never --hit-min: hit-areas.ts writes a
+   control's own, wider --hit-min when it shifts a square, and a box sized by
+   that would grow on every run. */
+@media (max-width: 720px) {
+  /* every tip (a mark or a label) and every disclosure summary */
+  .note-btn { min-height: calc(2 * var(--hit-half)); min-width: calc(2 * var(--hit-half)); }
+  summary { min-height: calc(2 * var(--hit-half)); }
+  .etable td.c-pos details.holding-group-rows > summary { display: inline-flex; align-items: center; }
+  .ranking-options > summary { min-width: calc(2 * var(--hit-half)); }
+  /* a card's receipts; the receipt cell keeps its marks beside them (in a card
+     the columns are gone, so a mark no longer hangs in a 0-width slot) */
+  table[data-card] :is(.cell-src, .c-src) a[href] { display: inline-flex; align-items: center; justify-content: center; min-height: calc(2 * var(--hit-half)); min-width: calc(2 * var(--hit-half)); }
+  table[data-card]:not([data-card="feed"]) > tbody > tr > td.c-src,
+  .table-scroll > table[data-card]:not([data-card="feed"]) > tbody > tr > td.c-src { flex: 0 0 auto; display: inline-flex; flex-wrap: wrap; align-items: center; }
+  table[data-card]:not([data-card="feed"]) > tbody > tr > td .note:has(> .note-mark) { width: auto; }
+  /* links that stand on their own line or in a row of links (not running prose) */
+  :is(.section-link, a.mono-note, .view-note a, .mf-notes a, .si-card-h a)[href],
+  .si-foot a, .inst-moved a, .ev-src { display: inline-flex; align-items: center; min-height: calc(2 * var(--hit-half)); }
+  :is(.section-link, a.mono-note, .view-note a, .mf-notes a, .si-card-h a)[href] { min-width: calc(2 * var(--hit-half)); }
+  .filter-count .linklike { min-height: calc(2 * var(--hit-half)); min-width: calc(2 * var(--hit-half)); }
+  /* the tier's ⓘ sits in its 44px head line, never over the first row */
+  .si-tier-tip { top: 0; }
+  section.si-tier > .si-tier-h { display: flex; align-items: center; min-height: calc(2 * var(--hit-half)); margin-top: 0; margin-bottom: 0; }
+  /* whole-row taps (LD7): the feed's row link stretches over the ROW, not
+     its cell, and a card's stretch covers the row's bottom rule too (the
+     row's 44px includes that 1px border; the stretch is its padding box) */
+  .reference-feed .reference-row > .cell:has(a[data-row-link]) { position: static; }
+  table[data-card] > tbody > tr a[data-row-link]:not(:is(.cell-src, .c-src) a)::after { bottom: -1px; }
+  /* R4: a committee name wraps instead of widening a phone page */
+  .member-cmte { white-space: normal; }
+}
