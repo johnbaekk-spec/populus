@@ -824,7 +824,7 @@
       "shipped": null,
       "replaced": null,
       "reason": "honesty-pin:dashboard/test/ledger-system.test.ts",
-      "note": "'This page carries the first N — filer pages list every move.': 'Showing the first N' fails ledger-system.test.ts T1.4 (M7a)."
+      "note": "'This page carries the first N — filer pages list every change.': 'Showing the first N' fails ledger-system.test.ts T1.4 (M7a); 'every change', not M7a's 'every move', which the site-wide banned-wording gate reads as the banned word (F1)."
     },
     {
       "id": "signals-13",
