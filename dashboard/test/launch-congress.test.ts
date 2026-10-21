@@ -499,7 +499,10 @@ test("R19/LD19: the Members board reads # · Member · Trades · Buys · Sells �
   assert.match(members, /Every amount on one side failed to parse, so these rows are not ranked\./);
   // Show 50 more is the in-place binder, never a link
   assert.match(members, /class="compact-disclosure" data-compact-for="members-ranked-tbody"/);
-  assert.match(members, /<tr hidden data-compact-hidden role="row">/, "the next rows ride hidden for the in-place expansion");
+  /* launch F2 (R35, LD26/LD31): the next step rides in the one island for
+     the in-place expansion — never as hidden rows in the DOM */
+  assert.match(members, /<script type="application\/json" data-held-for="members-ranked-tbody" data-held-render="congress-ranking">/, "the next rows ride in the island");
+  assert.doesNotMatch(members, /<tr hidden/, "no held row is in the DOM");
 });
 
 test("R19/LD19: the Tickers board reads # · Ticker · Buys · Sells · Trades · Members · Net", () => {

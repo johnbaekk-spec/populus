@@ -589,7 +589,11 @@ test("SIGNALS-CLARITY M3: dead-CSS sweep over the Monthly flow panel — styled 
     row({ txnId: "unparsed", traded: "2026-05-10", low: null, high: null }), // an all-unparsed sum: the stub
     row({ txnId: "outlier", traded: "2026-03-10", low: 5000001, high: 25000000 }), // an outlier scale: the small ranges get the tick
   ];
-  const corpus = monthlyFlowPanel(rows as never, "2026-08-17");
+  /* launch F2 (R35, LD31): the Dollars view and the All-assets variant are
+     island data the toggle draws on first use, so the corpus is the panel with
+     every view drawn by the real toggle — the classes a reader's DOM carries */
+  const { drawnMonthlyFlow } = await import("./lib/held-views.ts");
+  const corpus = drawnMonthlyFlow(monthlyFlowPanel(rows as never, "2026-08-17")).outerHTML;
   const bare = css.replace(/\/\*[\s\S]*?\*\//g, "");
   const styled = (cls: string): boolean => new RegExp(`\\.${cls}(?![\\w-])`).test(bare);
   const emitted = (cls: string): boolean => new RegExp(`class="(?:[^"]*\\s)?${cls}(?:\\s[^"]*)?"`).test(corpus);

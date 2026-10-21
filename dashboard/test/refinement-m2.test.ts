@@ -177,7 +177,11 @@ test("R11 → D1/D2 (L10) → launch M3b: the Congress landing pairs Members │
   assert.ok(congressCompositionProblems(congressMain(flowFirst)).some((p) => /closes the page|directly after the provenance/.test(p)), "control: Monthly flow before the boards fails");
 });
 
-test("R11/R13: a ranking section shows 10 rows and ships the next 50 hidden for a download-free 'Show 50 more'", () => {
+/* launch F2 (R35, LD26/LD31): the property is unchanged — the next fifty
+   ride in the page for a download-free "Show 50 more" — and the mechanism
+   moved: they are island data (rule 8), drawn by the board's pager through
+   the binder, not hidden rows in the DOM. */
+test("R11/R13: a ranking section shows 10 rows and ships the next 50 in the page for a download-free 'Show 50 more'", () => {
   const rows = Array.from({ length: 80 }, (_, i) =>
     txn({ txnId: `t-${i}`, bioguide: `M${String(i).padStart(6, "0")}`, name: `Member ${i}`, low: 1000 * (i + 1), high: 2000 * (i + 1) }),
   );
@@ -191,9 +195,11 @@ test("R11/R13: a ranking section shows 10 rows and ships the next 50 hidden for 
   );
   const tbody = html.slice(html.indexOf(`<tbody id="${CONGRESS_ROOTS.membersRanked}" role="rowgroup">`), html.indexOf("</tbody>"));
   const visible = (tbody.match(/<tr(?! hidden)\b/g) ?? []).length;
-  const hidden = (tbody.match(/<tr hidden data-compact-hidden/g) ?? []).length;
+  const hidden = (tbody.match(/<tr hidden/g) ?? []).length;
+  const island = /<script type="application\/json" data-held-for="members-ranked-tbody" data-held-render="congress-ranking">([\s\S]*?)<\/script>/.exec(html);
   assert.equal(visible, COMPACT_ROWS, "ten rows visible");
-  assert.equal(hidden, COMPACT_STEP, "fifty more ride hidden in the server bytes");
+  assert.equal(hidden, 0, "no held row is in the DOM");
+  assert.equal((JSON.parse(island![1]!) as { offset: number; rows: unknown[] }).rows.length, COMPACT_STEP, "fifty more ride in the server bytes, as island data");
   assert.match(html, /data-compact-shown="10"/);
   // DESIGN-POLISH M1 (R8): the range grammar, still plain words.
   assert.match(html, /<span class="compact-bound-count">1–10 of 80 ranked members<\/span>/, "the count is plain words");

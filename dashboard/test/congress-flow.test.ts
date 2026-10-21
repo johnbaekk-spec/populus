@@ -22,9 +22,10 @@ import {
   completenessLabel,
 } from "../src/lib/derive.ts";
 import type { TxnRow } from "../src/lib/format.ts";
-import { domOf, visibleText } from "./lib/ledger-dom.ts";
+import { visibleText } from "./lib/ledger-dom.ts";
 import { installDom, type MiniElement } from "./lib/mini-dom.ts";
 import { initMonthlyFlowToggle } from "../src/scripts/congress-sections.ts";
+import { drawnMonthlyFlow } from "./lib/held-views.ts";
 
 const SRC = path.resolve(import.meta.dirname, "..", "src");
 const BUILD = "2026-08-17";
@@ -59,7 +60,12 @@ const ROWS: TxnRow[] = [
 ];
 
 const HTML = monthlyFlowPanel(ROWS, BUILD);
-const ROOT = domOf(HTML);
+/* Launch F2 (R35, LD31): the served panel carries only the default view; the
+   three others are island data the toggle draws on first use. The tests below
+   read the panel as a reader has it once every view has been shown — drawn
+   by the REAL toggle through the binder (`drawnMonthlyFlow`) — and the test
+   "launch F2: the served panel …" pins the served bytes themselves. */
+const ROOT = drawnMonthlyFlow(HTML);
 const variant = (v: "stocks" | "all"): MiniElement => ROOT.querySelector(`.mf-variant[data-flow-variant="${v}"]`)!;
 const text = (el: MiniElement | null): string => (el ? visibleText(el).replace(/\s+/g, " ").trim() : "");
 
@@ -128,7 +134,7 @@ test("review F1: under an outlier scale a small closed range is drawn to its TRU
     txn({ txnId: "aug-buy", traded: "2026-08-05", low: 1001, high: 15000 }),
     txn({ txnId: "mid", traded: "2026-05-05", low: 1000001, high: 5000000 }),
   ];
-  const root = domOf(monthlyFlowPanel(rows, BUILD));
+  const root = drawnMonthlyFlow(monthlyFlowPanel(rows, BUILD));
   const EPS = 1e-6;
   for (const [v, axisMax] of [["stocks", 50_000_000], ["all", 100_000_000]] as const) {
     const el = root.querySelector(`.mf-variant[data-flow-variant="${v}"]`)!;
@@ -175,7 +181,7 @@ test("review F1: under an outlier scale a small closed range is drawn to its TRU
   assert.match(css, /\.ribbon-monthly \.mf-tick \{ height: [12]px;/, "a fixed 1–2px mark");
   assert.match(css, /\.ribbon-monthly \.rb-bar \{[^}]*border: 0; \}/, "no border inflates a monthly bar");
   // a window whose ranges are all visible draws no tick and explains none
-  const plain = domOf(monthlyFlowPanel([txn({ traded: "2026-07-10" })], BUILD));
+  const plain = drawnMonthlyFlow(monthlyFlowPanel([txn({ traded: "2026-07-10" })], BUILD));
   assert.equal(plain.querySelectorAll(".mf-tick").length, 0);
   assert.ok(!/thin tick/.test(text(plain.querySelector(".rb-caption"))));
 });
@@ -201,7 +207,7 @@ test("T15/R16: an open sum is solid to its provable minimum, then a FIXED-height
     ],
     BUILD,
   );
-  const cols = domOf(html).querySelector('.mf-variant[data-flow-variant="stocks"]')!.querySelectorAll(".rb-track .rb-col");
+  const cols = drawnMonthlyFlow(html).querySelector('.mf-variant[data-flow-variant="stocks"]')!.querySelectorAll(".rb-track .rb-col");
   const styles = (col: MiniElement, half: string) => col.querySelectorAll(`${half} .rb-bar`).map((b) => `${b.getAttribute("class")} | ${b.getAttribute("style") ?? ""}`);
   // axis max = the closed high, $15,000; an open minimum of $1,000 is 6.66% of it (floored, never past the bound)
   assert.deepEqual(styles(cols[33]!, ".rb-up"), ["rb-bar rb-buy | bottom:0;height:6.66%", "rb-bar rb-buy rb-hatch mf-cap | bottom:6.66%"]);
@@ -212,7 +218,7 @@ test("T15/R16: an open sum is solid to its provable minimum, then a FIXED-height
   // a closed sum has neither mark, and no hatch at all
   assert.deepEqual(styles(cols[34]!, ".rb-up"), ["rb-bar rb-buy | bottom:6.66%;height:93.34%"]);
   // no bar in the monthly ribbon is hatched by a percentage of the axis
-  for (const b of domOf(html).querySelectorAll(".rb-hatch")) assert.ok(!/height/.test(b.getAttribute("style") ?? ""), "a hatch never has a dollar height");
+  for (const b of drawnMonthlyFlow(html).querySelectorAll(".rb-hatch")) assert.ok(!/height/.test(b.getAttribute("style") ?? ""), "a hatch never has a dollar height");
   for (const b of ROOT.querySelectorAll(".rb-hatch")) assert.ok(!/height/.test(b.getAttribute("style") ?? ""));
 
   // the cap and the stub are ONE fixed CSS height, with no closing edge on the far side
@@ -222,18 +228,18 @@ test("T15/R16: an open sum is solid to its provable minimum, then a FIXED-height
   assert.match(css, /\.ribbon-monthly \.rb-down \{ flex: 1; \}/, "purchases and sales share one scale");
 
   // the caption says what each mark means, in plain words, only where the mark is drawn
-  const cap = text(domOf(html).querySelector('.mf-variant[data-flow-variant="stocks"] .rb-caption'));
+  const cap = text(drawnMonthlyFlow(html).querySelector('.mf-variant[data-flow-variant="stocks"] .rb-caption'));
   assert.match(cap, /a hatched cap means no upper bound is disclosed \(an open-ended or unparsed amount\) — the bar shows the provable minimum only, and the cap's height is not a dollar amount/);
   assert.match(cap, /a hatched stub at the axis means amounts were filed but none parsed — never counted as \$0/);
   assert.ok(!/then hatched/.test(cap), "the hatch-to-the-top wording is gone");
   const fixtureCap = text(variant("stocks").querySelector(".rb-caption"));
   assert.match(fixtureCap, /a hatched cap means/);
   assert.ok(!/hatched stub/.test(fixtureCap), "no stub is drawn in this fixture, so none is explained");
-  const closedOnly = text(domOf(monthlyFlowPanel([txn({ traded: "2026-07-10" })], BUILD)).querySelector(".rb-caption"));
+  const closedOnly = text(drawnMonthlyFlow(monthlyFlowPanel([txn({ traded: "2026-07-10" })], BUILD)).querySelector(".rb-caption"));
   assert.ok(!/hatched/.test(closedOnly), "a window with only closed sums explains no hatch");
 
   // the assistive-technology table says the state in words
-  const rows = domOf(html).querySelector('.mf-variant[data-flow-variant="stocks"] table.mf-table')!.querySelectorAll("tbody tr");
+  const rows = drawnMonthlyFlow(html).querySelector('.mf-variant[data-flow-variant="stocks"] table.mf-table')!.querySelectorAll("tbody tr");
   const cells = (i: number) => rows[i]!.querySelectorAll("td").map((c) => text(c));
   assert.equal(cells(33)[0], "Over $1K (open — no upper bound disclosed)");
   assert.equal(cells(32)[1], "Over $1K (open — no upper bound disclosed)");
@@ -310,7 +316,7 @@ test("T16/R17: the caption prints the method, the measured CDF points, the sampl
   assert.match(line, /Shaded: under 90% filed \(est\.\); darker: the month ended fewer than 45 days before the build/);
   assert.ok(variant("stocks").querySelector('.mf-completeness a[href="/methodology/#monthly-flow"]'), "links the method");
   // with no mature sample the panel says so and labels nothing as an estimate
-  const bare = domOf(monthlyFlowPanel(ROWS.filter((r) => !r.txnId.startsWith("lag")), BUILD));
+  const bare = drawnMonthlyFlow(monthlyFlowPanel(ROWS.filter((r) => !r.txnId.startsWith("lag")), BUILD));
   assert.match(text(bare.querySelector(".mf-completeness")), /Completeness is not estimated: no row traded 2022-08-17 to 2025-07-17 carries a filing lag/);
   assert.ok(!/≈\d+% filed/.test(text(bare.querySelector(".mf-shade-labels"))), "no estimate is printed from nothing");
   assert.match(text(bare.querySelector(".mf-shade-labels")), /2026-08 completeness not estimated · inside the 45-day window/);
@@ -343,6 +349,62 @@ test("T17/R18: both variants render at build time; exactly one is visible by def
   } finally {
     bare.restore();
   }
+});
+
+/* ---------- launch F2 (R35, LD31): the hidden views are island data ---------- */
+
+test("launch F2 (R35, LD31): the served panel carries the default view alone; Dollars and All assets ride in the one island and the toggle draws each once, byte for byte the server's renderer", async () => {
+  const { monthlyFlowView, monthlyDollarsViewHtml, monthlyVariantViewHtml, MONTHLY_FLOW_HELD } = await import("../src/lib/ui/congress.ts");
+  const { parseHeldIsland } = await import("../src/lib/held-rows.ts");
+  const { withTableRoles } = await import("../src/lib/format.ts");
+  // the served bytes: no bar, no All-assets body — two empty, hidden shells and two islands
+  assert.doesNotMatch(HTML, /class="rb-col/, "no Dollars bar is in the served page");
+  assert.match(HTML, /<div class="mf-measure" data-flow-measure="dollars" id="mf-stocks-dollars" hidden><\/div>/);
+  assert.match(HTML, /<div class="mf-variant" data-flow-variant="all" id="mf-all" hidden><\/div>/);
+  const island = (root: string, render: string) => {
+    const m = new RegExp(`<script type="application/json" data-held-for="${root}" data-held-render="${render}">([\\s\\S]*?)</script>`).exec(HTML);
+    assert.ok(m, `the ${render} island for #${root}`);
+    const body = parseHeldIsland(m![1]!)!;
+    assert.equal(body.offset, 0);
+    assert.equal(body.rows.length, 1, "one view per island");
+    return body.rows[0] as ReturnType<typeof monthlyFlowView>;
+  };
+  const cdf = lagCdf(ROWS, BUILD);
+  const stocks = monthlyFlowView("stocks", monthlyFlow(ROWS, BUILD, 36, { listedStockOnly: true }), cdf, BUILD);
+  const all = monthlyFlowView("all", monthlyFlow(ROWS, BUILD, 36), cdf, BUILD);
+  const heldStocks = island("mf-stocks-dollars", MONTHLY_FLOW_HELD.dollars);
+  const heldAll = island("mf-all", MONTHLY_FLOW_HELD.variant);
+  // the island carries every input the renderer reads: the JSON round trip renders the same bytes
+  assert.equal(monthlyDollarsViewHtml(heldStocks), monthlyDollarsViewHtml(stocks));
+  assert.equal(monthlyVariantViewHtml(heldAll), monthlyVariantViewHtml(all));
+  // drawn on first use, through the binder's one render path, once
+  const { doc, restore } = installDom(`<main id="congress-page">${HTML}</main>`);
+  try {
+    assert.equal(initMonthlyFlowToggle(), true);
+    const shell = doc.getElementById("mf-stocks-dollars")!;
+    assert.equal(shell.innerHTML, "", "nothing is drawn before the reader asks");
+    doc.querySelector('[data-flow-measure-toggle="dollars"]')!.click();
+    assert.equal(shell.innerHTML, "\n" + monthlyDollarsViewHtml(stocks), "the Dollars view: the server's bytes — its bars, readout and axis");
+    assert.equal(shell.hidden, false);
+    doc.querySelector('[data-flow-measure-toggle="members"]')!.click();
+    doc.querySelector('[data-flow-measure-toggle="dollars"]')!.click();
+    assert.equal(doc.querySelectorAll("#mf-stocks-dollars .rb-track").length, 1, "a second press draws nothing again");
+    doc.querySelector('[data-flow-measure-toggle="members"]')!.click();
+    doc.querySelector('[data-flow-toggle="all"]')!.click();
+    assert.equal(doc.getElementById("mf-all")!.innerHTML, "\n" + withTableRoles(monthlyVariantViewHtml(all)), "All assets: the server's variant, with the page's table roles");
+    doc.querySelector('[data-flow-measure-toggle="dollars"]')!.click();
+    assert.deepEqual(
+      doc.querySelectorAll(".mf-measure").filter((m) => !m.hidden && !m.closest(".mf-variant")!.hidden).map((m) => m.closest(".mf-variant")!.getAttribute("data-flow-variant") + ":" + m.getAttribute("data-flow-measure")),
+      ["all:dollars"],
+      "exactly the view the toggles name is showing",
+    );
+  } finally {
+    restore();
+  }
+  // control: an island whose data drifted from the server's renders other bytes, so the comparison above can fail
+  const drifted = JSON.parse(JSON.stringify(stocks)) as typeof stocks;
+  drifted.flow.months[34]!.buy = { kind: "closed", low: 1001, high: 50000, rows: 1, undisclosed: 0 };
+  assert.notEqual(monthlyDollarsViewHtml(drifted), monthlyDollarsViewHtml(stocks));
 });
 
 test("T17/R18: the toggle reads no rows and fetches nothing — the section module stays fetch-free", () => {
@@ -506,7 +568,7 @@ test("§0: the panel's own copy carries no banned trading verb (the post-build g
 
 test("review F3: the panel never prints an impossible sample date", () => {
   for (const build of ["2026-03-29", "2026-03-30", "2026-03-31"]) {
-    const line = text(domOf(monthlyFlowPanel(ROWS, build)).querySelector(".mf-completeness"));
+    const line = text(drawnMonthlyFlow(monthlyFlowPanel(ROWS, build)).querySelector(".mf-completeness"));
     assert.ok(line.includes("2025-02-28"), `${build}: the sample ends on February's last day`);
     assert.ok(!/-02-(29|30|31)\b/.test(line), `${build}: no 2025-02-29/30/31 — ${line.slice(0, 200)}`);
   }

@@ -179,9 +179,12 @@ test("R19: collapsing omits DATA ROWS and only data rows", () => {
   // Everything OUTSIDE the roots is byte-identical between the two states,
   // apart from the terminus row and the control, which exist precisely to
   // describe the bound. Strip the two roots and compare the rest.
+  /* launch F2 (rule 8): the collapsed table's next step rides in the island
+     after the table — rows, as data — so the strip takes it with the roots */
   const strip = (html: string): string =>
     html
       .replace(/<tbody id="[^"]+"[^>]*>[\s\S]*?<\/tbody>/g, "<tbody/>")
+      .replace(/<script type="application\/json" data-held-for="[^"]+"[^>]*>[\s\S]*?<\/script>/g, "")
       .replace(/<div class="terminus"[\s\S]*?<\/div>/g, "")
       // SL-R10: the terminus row's content is inside the control now, so the
       // strip has to reach the whole wrapper — `[\s\S]*?</div>` stops at the

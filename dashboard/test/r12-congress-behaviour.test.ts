@@ -27,6 +27,7 @@ import { CONGRESS_ROOTS, congressRankingSection, type BuildStamps } from "../src
 import { congressTickersRollup, leadersRollup } from "../src/lib/derive.ts";
 import type { RenderCtx, TxnRow } from "../src/lib/format.ts";
 import { initCongressSections } from "../src/scripts/congress-sections.ts";
+import { heldRows } from "../src/scripts/inst-index-client.ts";
 import { stripTableRoles } from "./lib/table-roles.ts";
 
 const GENERATED_AT = "2026-08-12";
@@ -219,7 +220,10 @@ test("F12/F25: initializing over SSR rows changes NO honesty content before rows
        toggle after load). It reveals the prefetched rows, exactly one step,
        and says so. */
     const btn = disclosureFor(doc, CONGRESS_ROOTS.momentum).querySelector("button")!;
-    const heldInDom = doc.getElementById(CONGRESS_ROOTS.momentum)!.querySelectorAll("tr[data-compact-hidden]").length;
+    /* launch F2 (R35, LD26/LD31): the prefetched rows are island data the
+       binder reads (rule 8), not hidden rows — none is in the DOM at load */
+    const heldInDom = heldRows(CONGRESS_ROOTS.momentum)?.length ?? 0;
+    assert.equal(doc.getElementById(CONGRESS_ROOTS.momentum)!.querySelectorAll("tr[data-compact-hidden]").length, 0, "no held row is in the DOM at load");
     assert.equal(btn.hidden, false, "after load the control is offered (R36)");
     assert.equal(btn.getAttribute("aria-expanded"), "false");
     assert.ok(heldInDom > 0, "the server prefetched held rows for the first press");

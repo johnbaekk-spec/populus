@@ -98,7 +98,7 @@ import {
 } from "../derive.ts";
 import { RANKING_FOOTNOTES as RANKING_FOOTNOTES_LIST } from "../congress-columns.ts";
 import { type BuildStamps, breadcrumb, asOfNote, netCellHtml, netKindWord, sectorLabel } from "./shared.ts";
-import { heldTableParts } from "../held-rows.ts";
+import { heldIslandHtml, heldTableParts } from "../held-rows.ts";
 
 /* ---------- flow ribbon ---------- */
 
@@ -389,10 +389,13 @@ export function flowRibbon(
    (L6). Recent months are shaded by ESTIMATED filing completeness from the
    build's own lag distribution (R17), and every estimate says it is one.
 
-   Two variants render at build time — listed stocks (the default) and all
+   Two variants are built at build time — listed stocks (the default) and all
    asset types — and a small client script flips `hidden` between them; there
    is no fetch (L4). Each variant carries its own caption, exclusion counts,
-   shading labels and a visually-hidden table of every month (R19). */
+   shading labels and a visually-hidden table of every month (R19). Launch F2
+   (R35, LD31): the views no reader sees at load — Dollars on listed stocks
+   and the whole All-assets variant — travel as island data built from the
+   same rows and are drawn on first use; the default view is in the page. */
 
 const MONTHLY_FLOW_MONTHS = 36;
 
@@ -588,14 +591,41 @@ function membersChartHtml(flow: MonthlyFlowResult, comp: readonly MonthCompleten
   );
 }
 
-function monthlyFlowVariantHtml(
-  variant: "stocks" | "all",
-  flow: MonthlyFlowResult,
-  cdf: LagCdf,
-  buildDate: string,
-  hidden: boolean,
-): string {
-  const comp = flow.months.map((m) => estimatedCompleteness(cdf, m, buildDate));
+/** Launch F2 (R35, LD31; pagination-and-counts.md rule 8): EVERYTHING one
+    Monthly flow variant draws, derived once on the server from the build's
+    rows. The visible view renders from it there; a hidden view (the stocks
+    Dollars view, the whole All-assets variant) ships it in the site's one
+    held-rows island, and the client draws it through the SAME functions, so
+    a drawn view — its bars, readout and axis — is the server's bytes. It is
+    JSON-safe: the lag sample travels as the facts the caption prints (its
+    size, its bounds and its measured points), never as its rows. */
+export interface MonthlyFlowView {
+  variant: "stocks" | "all";
+  buildDate: string;
+  flow: MonthlyFlowResult;
+  comp: MonthCompleteness[];
+  cdf: { n: number; sampleFrom: string; sampleTo: string; points: string };
+}
+
+export function monthlyFlowView(variant: "stocks" | "all", flow: MonthlyFlowResult, cdf: LagCdf, buildDate: string): MonthlyFlowView {
+  return {
+    variant,
+    buildDate,
+    flow,
+    comp: flow.months.map((m) => estimatedCompleteness(cdf, m, buildDate)),
+    cdf: { n: cdf.n, sampleFrom: cdf.sampleFrom, sampleTo: cdf.sampleTo, points: cdf.n === 0 ? "" : lagCdfPointsText(cdf) },
+  };
+}
+
+/** The names the two held views render under on the client
+    (`registerHeldRows` in `scripts/congress-sections.ts`). */
+export const MONTHLY_FLOW_HELD = { dollars: "monthly-dollars", variant: "monthly-variant" } as const;
+
+/** A variant's four parts, from its view alone: the Members view, the Dollars
+    view's content, the tips and the screen-reader table. */
+function monthlyVariantParts(view: MonthlyFlowView): { members: string; dollars: string; tips: string; table: string } {
+  const { variant, flow, comp, buildDate } = view;
+  const cdf = view.cdf;
   const axisMax = ribbonAxisMax(flow.months.flatMap((m) => [m.buy, m.sell]));
   const drawn = flow.months.some((m) => m.buy.kind !== "empty" || m.sell.kind !== "empty");
   const toneCls = (c: MonthCompleteness): string => (c.tone === null ? "" : ` mf-${c.tone}`);
@@ -643,7 +673,7 @@ function monthlyFlowVariantHtml(
       ? `Completeness is not estimated: no row traded ${esc(cdf.sampleFrom)} to ${esc(cdf.sampleTo)} carries a filing lag, so this build has no mature sample to measure. `
       : `Shading estimates how much of each month is filed so far: the share of this build's mature sample — ` +
         `${fmtInt(cdf.n)} trades made ${esc(cdf.sampleFrom)} to ${esc(cdf.sampleTo)} (${LAG_SAMPLE_MONTHS.newest}–${LAG_SAMPLE_MONTHS.oldest} months before the build), all asset types — ` +
-        `filed within the month's age at the build (the build date minus the month's midpoint; for the build's own month, the midpoint of the days elapsed so far). Filed within ${esc(lagCdfPointsText(cdf))}. ` +
+        `filed within the month's age at the build (the build date minus the month's midpoint; for the build's own month, the midpoint of the days elapsed so far). Filed within ${esc(cdf.points)}. ` +
         `Trades in that sample that are still unfiled are not observed yet, so the estimate slightly overstates completeness. ` +
         `Shaded: under ${Math.round(COMPLETENESS_SHADE_BELOW * 100)}% filed (est.); darker: the month ended fewer than ${FILING_WINDOW_DAYS} days before the build, inside the 45-day filing window. `) +
     `<a href="/methodology/#monthly-flow">Method ↗</a></span>`;
@@ -722,8 +752,7 @@ function monthlyFlowVariantHtml(
     noteFromHtml(`<span class="rb-caption">${esc(caption)}</span>`, notes, "drawn", { trigger: "label", textHtml: "How it’s drawn" }) +
     ` · <a href="/methodology/#monthly-flow">Method ↗</a></div>`;
 
-  const dollars =
-    `<div class="mf-measure" data-flow-measure="dollars" hidden>` +
+  const dollarsBody =
     `<p class="mf-legend" aria-hidden="true"><span class="mf-key-buy">purchases, above</span><span class="mf-key-sell">sales, below</span></p>` +
     `<div class="mf-dollars">` +
     `<div class="mf-dollar-axis" aria-hidden="true"><span>${esc(fmtMoney(axisMax))}</span><span>$0</span><span>${esc(fmtMoney(axisMax))}</span></div>` +
@@ -731,26 +760,41 @@ function monthlyFlowVariantHtml(
     `<div class="rb-track">${cols}</div>` +
     `<div class="rb-labels" aria-hidden="true">${labels}</div>` +
     `</div></div>` +
-    `<p class="mf-readout" id="${esc(scope)}-ro-dollars" role="status" aria-live="polite">${esc(monthReadouts(last, comp[comp.length - 1]!, buildDate).dollars)}</p>` +
-    `</div>`;
+    `<p class="mf-readout" id="${esc(scope)}-ro-dollars" role="status" aria-live="polite">${esc(monthReadouts(last, comp[comp.length - 1]!, buildDate).dollars)}</p>`;
+  return { members: membersChartHtml(flow, comp, buildDate, scope), dollars: dollarsBody, tips, table };
+}
 
-  return (
-    `<div class="mf-variant" data-flow-variant="${variant}"${hidden ? " hidden" : ""}>` +
-    membersChartHtml(flow, comp, buildDate, scope) +
-    dollars +
-    tips +
-    table +
-    `</div>`
-  );
+/** A variant's body: the Members view; the Dollars view, drawn here or — for
+    the default variant (`dollars: "held"`) — an empty shell its island fills
+    on first use; the tips; the screen-reader table. */
+function monthlyVariantBody(view: MonthlyFlowView, dollars: "drawn" | "held"): string {
+  const p = monthlyVariantParts(view);
+  const dollarsView =
+    dollars === "held"
+      ? `<div class="mf-measure" data-flow-measure="dollars" id="mf-${view.variant}-dollars" hidden></div>`
+      : `<div class="mf-measure" data-flow-measure="dollars" hidden>${p.dollars}</div>`;
+  return p.members + dollarsView + p.tips + p.table;
+}
+
+/** The held views' row functions, on the server and in the client binder
+    alike: the Dollars view's content (its legend, axis, bars and readout),
+    and a whole variant's body. */
+export function monthlyDollarsViewHtml(view: MonthlyFlowView): string {
+  return monthlyVariantParts(view).dollars;
+}
+export function monthlyVariantViewHtml(view: MonthlyFlowView): string {
+  return monthlyVariantBody(view, "drawn");
 }
 
 /** The whole "Monthly flow" panel: Members or Dollars × Stocks or All assets,
     all four built here from the build's rows and switched with no fetch
-    (launch M3b, R21, LD23). Members on listed stocks is the default. */
+    (launch M3b, R21, LD23). Members on listed stocks is the default and is in
+    the page; the three other views ride in the one held-rows island and the
+    toggle draws them through the same functions (launch F2, R35/LD31). */
 export function monthlyFlowPanel(txns: readonly TxnRow[], buildDate: string, months = MONTHLY_FLOW_MONTHS): string {
   const cdf = lagCdf(txns, buildDate);
-  const stocks = monthlyFlow(txns, buildDate, months, { listedStockOnly: true });
-  const all = monthlyFlow(txns, buildDate, months);
+  const stocks = monthlyFlowView("stocks", monthlyFlow(txns, buildDate, months, { listedStockOnly: true }), cdf, buildDate);
+  const all = monthlyFlowView("all", monthlyFlow(txns, buildDate, months), cdf, buildDate);
   const controls =
     `<div class="mf-controls">` +
     `<div class="seg" role="group" aria-label="Measure">` +
@@ -768,8 +812,13 @@ export function monthlyFlowPanel(txns: readonly TxnRow[], buildDate: string, mon
     controls +
     `</div>` +
     `<noscript><p class="caveat-inline">Dollars and All assets need JavaScript.</p></noscript>` +
-    monthlyFlowVariantHtml("stocks", stocks, cdf, buildDate, false) +
-    monthlyFlowVariantHtml("all", all, cdf, buildDate, true) +
+    `<div class="mf-variant" data-flow-variant="stocks">${monthlyVariantBody(stocks, "held")}</div>` +
+    /* launch F2 (R35, LD31): the three views a reader without JavaScript
+       cannot see — Dollars on listed stocks, and both views of All assets —
+       ship as island data and are drawn on first use (rule 8) */
+    `<div class="mf-variant" data-flow-variant="all" id="mf-all" hidden></div>` +
+    heldIslandHtml({ rootId: "mf-stocks-dollars", render: MONTHLY_FLOW_HELD.dollars, offset: 0, shared: null, rows: [stocks] }) +
+    heldIslandHtml({ rootId: "mf-all", render: MONTHLY_FLOW_HELD.variant, offset: 0, shared: null, rows: [all] }) +
     `</section>`
   );
 }

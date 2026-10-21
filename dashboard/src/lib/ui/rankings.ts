@@ -64,6 +64,7 @@ import {
 } from "../congress-columns.ts";
 import { type BuildStamps, type LedgerItem, netCellHtml } from "./shared.ts";
 import { flowCellHtml } from "./congress.ts";
+import { heldIslandHtml } from "../held-rows.ts";
 
 /** The reference displays a provable bound, never a fabricated point estimate. */
 function referenceNetHtml(net: NetInterval, overlaps: boolean): string {
@@ -319,7 +320,7 @@ export function rankingRowsHtml(
   rows: readonly LeaderRow[],
   kind: "leaders" | "tickers",
   ctx: RenderCtx,
-  opts: { numbered?: boolean; startAt?: number; hiddenFrom?: number } = {},
+  opts: { numbered?: boolean; startAt?: number } = {},
 ): string {
   // The incomparability marker is recomputed from THIS order. Carrying a
   // marker over from a previous sort would claim an overlap against a row that
@@ -327,15 +328,56 @@ export function rankingRowsHtml(
   const flags = overlapFlags(rows);
   const numbered = opts.numbered ?? true;
   const start = opts.startAt ?? 1;
-  /* R13: rows at or past `hiddenFrom` ship in the server bytes but start
-     `hidden` — the "Show 50 more" control reveals them without any download. */
-  const hiddenFrom = opts.hiddenFrom ?? Number.MAX_SAFE_INTEGER;
-  return rows
-    .map((r, i) => {
-      const html = rankingRowHtml(r, numbered ? start + i : null, flags[i]!, kind, ctx);
-      return i >= hiddenFrom ? html.replace(/^<tr\b/, "<tr hidden data-compact-hidden") : html;
-    })
-    .join("\n");
+  return rows.map((r, i) => rankingRowHtml(r, numbered ? start + i : null, flags[i]!, kind, ctx)).join("\n");
+}
+
+/* ---------- launch F2 (R35, LD26/LD31): the boards' prefetched rows are held ----------
+
+   A board shows its first ten rows; the next step (`COMPACT_STEP`, the rows
+   the first "Show 50 more" reveals before the dataset arrives, R13) used to
+   ride in the tbody as `hidden` rows — about 1,400 elements at first load
+   that no reader could see. They now ride in the site's one held-rows island
+   (`heldIslandHtml`, pagination-and-counts.md rule 8) and the board's own
+   pager (`scripts/congress-sections.ts`) draws them through the binder's one
+   render path when the reader asks. A reader without JavaScript could never
+   reach them (the control needs a script), so no `<noscript>` copy ships;
+   the visible "1–10 of N ranked …" count still states the bound. */
+
+/** One held board row: EVERY input `rankingRowHtml` reads beyond the row's
+    place in the list — the row, its overlaps-the-row-above flag (computed
+    over the WHOLE order, so the first held row is compared with the last
+    shown one) and whether its link goes to the generic route because the
+    page budget cut its entity (`memberHrefFor` / `tickerHrefFor`). */
+export interface RankingHeldRow {
+  r: LeaderRow;
+  o: boolean;
+  c?: 1;
+}
+
+/** The island's list-wide inputs: which board, and the board columns. */
+export interface RankingHeldShared {
+  kind: "leaders" | "tickers";
+  reference: boolean;
+}
+
+/** The name the board rows' renderer is registered under on the client. */
+export const RANKING_HELD_ROWS = "congress-ranking";
+
+function heldRankingRow(r: LeaderRow, o: boolean, kind: "leaders" | "tickers", ctx: RenderCtx): RankingHeldRow {
+  const cut = kind === "tickers" ? ctx.cutTickers?.has(r.id) === true : r.bioguide !== null && ctx.cutMembers?.has(r.bioguide) === true;
+  return cut ? { r, o, c: 1 } : { r, o };
+}
+
+/** The row function a held board row renders through, on the server and in
+    the client binder alike: `index` is the row's zero-based place in the
+    whole ranked list, so its rank is `index + 1`, as `rankingRowsHtml`
+    numbers the rows it renders. */
+export function rankingHeldRowHtml(row: RankingHeldRow, index: number, shared: RankingHeldShared): string {
+  const key = shared.kind === "tickers" ? row.r.id : row.r.bioguide;
+  const cut = row.c === 1 && key ? new Set([key]) : undefined;
+  const ctx: RenderCtx =
+    shared.kind === "tickers" ? { referenceRankings: shared.reference, cutTickers: cut } : { referenceRankings: shared.reference, cutMembers: cut };
+  return rankingRowHtml(row.r, index + 1, row.o, shared.kind, ctx);
 }
 
 /** The rows an interval sort could not rank, with their own stated separator.
@@ -359,16 +401,23 @@ export function rankingRootHtml(
   kind: "leaders" | "tickers",
   ctx: RenderCtx,
   opts: { compact?: number; prefetch?: number } = {},
-): { html: string; total: number; shown: number } {
+): { html: string; total: number; shown: number; held: RankingHeldRow[] } {
   const cols = visualColumns(kind, ctx.referenceRankings);
   const { ranked, unrankable } = sortRankingRows(rows, key, dir);
   const total = ranked.length + unrankable.length;
   const limit = opts.compact ?? total;
-  /* R13: `prefetch` more ranked rows ride along HIDDEN past the compact slice,
-     so the expand control has real rows to reveal before (or without) the
-     full dataset download. They are not counted as shown. */
-  const prefetch = opts.compact === undefined ? 0 : (opts.prefetch ?? 0);
-  const rankedShown = ranked.slice(0, limit + prefetch);
+  /* R13 → launch F2 (R35, LD26/LD31; rule 8): `prefetch` more ranked rows
+     ride past the compact slice as DATA (`held`, the island's rows), never as
+     hidden DOM rows, so the expand control has real rows to reveal before (or
+     without) the full dataset download. They are not counted as shown. The
+     binder appends drawn rows at the END of the root, so rows are held only
+     when nothing unrankable follows the ranked run (at a board's default sort
+     nothing does: a count sort ranks every row, and `rankNetRows` has already
+     moved every undisclosed net to its own table). */
+  const prefetch = opts.compact === undefined || unrankable.length > 0 ? 0 : (opts.prefetch ?? 0);
+  const rankedShown = ranked.slice(0, limit);
+  const flags = overlapFlags(ranked.slice(0, limit + prefetch));
+  const held = ranked.slice(limit, limit + prefetch).map((r, j) => heldRankingRow(r, flags[limit + j]!, kind, ctx));
   // The compact slice is a bound on the WHOLE table, so it consumes the ranked
   // rows first and only then the unrankable tail — otherwise collapsing could
   // drop every ranked row and show only the tail.
@@ -377,7 +426,7 @@ export function rankingRootHtml(
     cols.find((c) => c.sortable && c.key === key)?.label ?? key;
   return {
     html:
-      rankingRowsHtml(rankedShown, kind, ctx, { hiddenFrom: limit }) +
+      rankingRowsHtml(rankedShown, kind, ctx) +
       // The separator states that rows exist which this column CANNOT
       // rank. That is a stated absence, so it renders whenever the bucket is
       // non-empty — NOT only when a bucket row happens to survive the compact
@@ -393,7 +442,8 @@ export function rankingRootHtml(
             : "")
         : ""),
     total,
-    shown: Math.min(rankedShown.length, limit) + unrankableShown.length,
+    shown: rankedShown.length + unrankableShown.length,
+    held,
   };
 }
 
@@ -706,6 +756,17 @@ export function congressRankingSection(
     `<caption class="visually-hidden">${esc(caption)}</caption>` +
     `<thead role="rowgroup"><tr role="row">${rankingHeadHtml(cols, defaultKey, "desc", { scope: `rank-${opts.sectionId}` }, kind)}</tr></thead>` +
     `<tbody id="${esc(opts.rootId)}" role="rowgroup">${main.html}</tbody></table></div>` +
+    /* launch F2 (rule 8): the next step's rows, as island data after the
+       table — offset = the rows the tbody already holds */
+    (main.held.length > 0
+      ? heldIslandHtml<RankingHeldRow, RankingHeldShared>({
+          rootId: opts.rootId,
+          render: RANKING_HELD_ROWS,
+          offset: main.shown,
+          shared: { kind, reference: ctx.referenceRankings === true },
+          rows: main.held,
+        })
+      : "") +
     /* A zero-rankable window STATES itself. The container ships
        in both states so the client can fill it when a range change empties the
        window — an element that was never rendered cannot be filled in later,
