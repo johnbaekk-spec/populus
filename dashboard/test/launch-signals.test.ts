@@ -368,3 +368,30 @@ test("H6: 'Congress lines · N names and sides' — the count equals the bank's 
   // re-planted control: the bare count the review found is gone
   assert.doesNotMatch(html, /<summary>Congress lines · [\d,]+<\/summary>/);
 });
+
+/* Launch review H7 (orchestrator decision): two caveats the copy pass cut are restored. */
+test("H7: an opened triage row whose Cmte meter reads ≥1 says 'Context, not an allegation.' on that line; the absolute lead cards keep 'listed-stock … in the window'", () => {
+  const f = loadTriageFixture();
+  const tr = triage();
+  const body = signalsBody(f.artifact, CTX, { rowsEvaluated: 2051, triage: tr, institutional: null, overlap: fixtureOverlap(), playbooks: stressModel() });
+  const root = domOf(body);
+  const rows = root.querySelectorAll("article.si-row");
+  assert.ok(rows.length > 0);
+  let withCmte = 0;
+  for (const row of rows) {
+    const cmte = row.querySelector(".si-row-mw")!.querySelectorAll("div").find((d) => text(d.querySelector("dt")) === "Cmte" || /cmte|committee/i.test(text(d.querySelector("dt"))));
+    assert.ok(cmte, "every opened row has its Cmte line");
+    const level = Number(cmte!.querySelector(".si-mw-word")!.getAttribute("data-level"));
+    const caveat = cmte!.querySelector(".si-cmte-context");
+    if (level >= 1) {
+      withCmte++;
+      assert.equal(text(caveat), "Context, not an allegation.", `${row.getAttribute("id")}: Cmte ${level} carries the caveat`);
+    } else assert.equal(caveat, null, `${row.getAttribute("id")}: Cmte 0 carries none (re-planted control)`);
+  }
+  assert.ok(withCmte > 0, `precondition: the fixture has rows with Cmte ≥ 1 (${withCmte})`);
+  const facts = [...body.matchAll(/Largest lower bound of [\d,]+ [^.<]*\./g)].map((m) => m[0]);
+  assert.ok(facts.length > 0, "the absolute cards render");
+  for (const fact of facts) assert.match(fact, /^Largest lower bound of [\d,]+ listed-stock (?:purchases?|sales?) in the window\.$/, fact);
+  // re-planted control: the cut form the review found would fail the pattern
+  assert.doesNotMatch("Largest lower bound of 12 purchases.", /^Largest lower bound of [\d,]+ listed-stock (?:purchases?|sales?) in the window\.$/);
+});

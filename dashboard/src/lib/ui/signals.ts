@@ -971,10 +971,17 @@ function leadDatesHtml(t: TxnRow): string {
     The Cmte line carries "context, never an allegation" on every row. */
 function meterWordsHtml(m: Record<MeterKey, Level>): string {
   /* copy item signals-07 (launch M7a): the level words only — each meter's
-     definition is the column head's bars tip, said once, not on every row */
+     definition is the column head's bars tip, said once, not on every row.
+     Adapted (launch review H7, orchestrator decision): a row whose Cmte meter
+     reads at least 1 keeps the committee caveat on that line. */
   return (
     `<dl class="si-row-mw">` +
-    METER_KEYS.map((k) => `<div><dt>${esc(METER_LABELS[k])}</dt><dd><span class="si-mw-word" data-level="${m[k]}">${esc(LEVEL_WORDS[m[k]])}</span></dd></div>`).join("") +
+    METER_KEYS.map(
+      (k) =>
+        `<div><dt>${esc(METER_LABELS[k])}</dt><dd><span class="si-mw-word" data-level="${m[k]}">${esc(LEVEL_WORDS[m[k]])}</span>` +
+        (k === "cmte" && m[k] >= 1 ? ` <span class="si-cmte-context">${esc(COMMITTEE_CAVEAT_SHORT)}</span>` : "") +
+        `</dd></div>`,
+    ).join("") +
     `</dl>`
   );
 }

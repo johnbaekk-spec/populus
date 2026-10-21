@@ -732,11 +732,11 @@
       "page": "Signals — Congress tab (default)",
       "path": "/signals/",
       "milestone": "M7a",
-      "disposition": "applied",
-      "shipped": "Largest lower bound of [\\d,]+ (?:purchases|sales)\\.",
+      "disposition": "adapted",
+      "shipped": "Largest lower bound of [\\d,]+ listed-stock (?:purchases?|sales?) in the window\\.",
       "replaced": "listed-stock (?:purchase|sale) lines ranked in the window",
-      "reason": null,
-      "note": "The lead cards' facts: 'Largest lower bound of N purchases.' / '… sales.' (lib/signal-triage.ts) (M7a)."
+      "reason": "honesty-pin:dashboard/test/launch-signals.test.ts",
+      "note": "The lead cards' facts: 'Largest lower bound of N listed-stock purchases in the window.' / '… sales …' (lib/signal-triage.ts). Adapted by orchestrator decision (launch review H7): the shortened fact keeps the listed-stock and in-the-window qualifiers, pinned by launch-signals.test.ts H7 (M7a)."
     },
     {
       "id": "signals-05",
@@ -765,11 +765,11 @@
       "page": "Signals — Congress tab (default)",
       "path": "/signals/",
       "milestone": "M7a",
-      "disposition": "applied",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": "Applied as proposed (M7a)."
+      "reason": "honesty-pin:dashboard/test/launch-signals.test.ts",
+      "note": "Each meter's definition moved to the column head's bars tip; adapted by orchestrator decision (launch review H7): an opened row whose Cmte meter reads at least 1 keeps 'Context, not an allegation.' on its Cmte line, pinned by launch-signals.test.ts H7 (M7a)."
     },
     {
       "id": "signals-08",
@@ -1550,10 +1550,17 @@
           "words": 6,
           "basis": "audit",
           "how": "not applied: the audit's own words_before − words_after"
+        },
+        {
+          "id": "signals-04",
+          "reason": "honesty-pin:dashboard/test/launch-signals.test.ts",
+          "words": 8,
+          "basis": "measured",
+          "how": "the two absolute lead cards each keep 'listed-stock' and 'in the window' (4 words each; launch review H7)"
         }
       ],
-      "retainedWords": 13,
-      "gateCeiling": 217,
+      "retainedWords": 21,
+      "gateCeiling": 226,
       "measureOnRealBuild": [
         "signals-01"
       ]

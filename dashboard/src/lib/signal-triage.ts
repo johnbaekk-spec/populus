@@ -598,7 +598,10 @@ export function pickCards(rows: readonly TriageRow[]): TriageCards {
   const sells = withLow.filter((p) => p.line.txn.side === "sale" || p.line.txn.side === "sale_partial");
   const byRecord = (a: LineScore, b: LineScore): number => b.bracketDelta! - a.bracketDelta! || cardOrderAbsolute(a, b);
   /* copy item signals-04: the same fact, the method words left to Methodology */
-  const absFact = (noun: string) => (_l: LineScore, n: number) => `Largest lower bound of ${plural(n, noun === "purchase" ? "purchase" : "sale", noun === "purchase" ? "purchases" : "sales")}.`;
+  /* copy item signals-04, adapted (launch review H7, orchestrator decision):
+     the shortened fact keeps its scope qualifier — listed-stock lines, in the
+     window — so the bound is never read as one over every trade */
+  const absFact = (noun: string) => (_l: LineScore, n: number) => `Largest lower bound of ${plural(n, `listed-stock ${noun}`, `listed-stock ${noun}s`)} in the window.`;
   const s5 = pool.filter((p) => p.line.cmte.grade !== null);
   const committee = pick(
     s5,
