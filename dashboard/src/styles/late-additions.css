@@ -627,7 +627,6 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
  .design-band > *, .design-rankings > * { padding:10px var(--gutter-r) 16px var(--gutter-l); } /* launch M1c (LD10): the safe gutters */
  .design-story { padding:16px; }
  .design-rankings { margin-left:-16px; margin-right:-16px; }
- .design-unavailable .etable { min-width:480px; }
  .design-provenance { padding:6px 0 14px; }
 }
 .design-provenance { display:flex; flex-wrap:wrap; gap:8px 20px; }
@@ -673,6 +672,11 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
     column rule (.design-filer-band and its siblings), or those win. */
  .design-band, .design-rankings { grid-template-columns:minmax(0,1fr); }
  .design-band > * + *, .design-rankings > * + * { border-left:0; border-top:1px solid var(--rule); }
+}
+/* The boards keep their scrolling widths only ABOVE the fold (launch review
+   B1): at ≤720px every table is a card (D4) and its wrapper no longer scrolls,
+   so a min-width there made the whole page scroll sideways on every phone. */
+@media (min-width: 721px) and (max-width: 1080px) {
  .design-rankings .reference-ranking .etable { min-width:680px; }
  #momentum-section.reference-ranking .etable { min-width:440px; }
 }
@@ -979,7 +983,7 @@ details.si-tier > summary > .si-tier-h { display: inline; }
 .si-withheld-carried { color: var(--ink3); }
 
 /* R14: Methodology's signal sections. */
-.si-method { margin: 24px 0 0; }
+.si-method { margin: 24px 0 0; overflow-wrap: break-word; } /* a cited URL wraps rather than widen a phone's page (launch review, the phone-surfaces suite) */
 .si-method-list { margin: 8px 0 0; padding-left: 18px; font: 400 var(--fs-body)/1.7 var(--sans); color: var(--ink2); }
 .si-method-list li { margin: 0 0 6px; }
 .si-direct-table td.si-direct-ranges { font-family: var(--mono); white-space: normal; }
@@ -995,7 +999,6 @@ details.si-tier > summary > .si-tier-h { display: inline; }
 @media (max-width: 720px) {
   .si-lags li { grid-template-columns: 110px minmax(0,1fr) 48px; }
   .si-rate-row { grid-template-columns: 90px minmax(0,1fr) 60px; }
-  .si-table { min-width: 720px; }
   .si-card, .si-card:first-child { flex-basis: 88%; }
   /* R3 / LD4: a row is three lines — ticker, side, range, filed date and the
      receipt's cell; the filer, party and state, owner and tags beside the

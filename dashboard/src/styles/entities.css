@@ -1246,6 +1246,7 @@ span.mgr-chip,
     --card-r: 0px;
     display: block;
     width: 100%;
+    min-width: 0; /* a card never keeps a scrolling table's width (launch review B1) */
   }
   .table-scroll > table[data-card]:not([data-card="feed"]) {
     --card-l: var(--gutter-l);
