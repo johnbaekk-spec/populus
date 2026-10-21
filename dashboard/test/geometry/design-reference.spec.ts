@@ -1064,11 +1064,13 @@ test('compact feed paging and row flags remain usable', async ({page}) => {
   const first = await page.locator('.reference-row').first().textContent();
   await expect(page.locator('#pager-older')).toHaveAttribute('aria-disabled','false');
   await page.locator('#pager-older').click();
-  await expect(page.locator('#filter-count-line')).toContainText('51–100');
-  await expect(page.locator('.reference-row')).toHaveCount(50);
+  // launch M3a (LD20): twenty rows a page in the default "With ticker" view
+  await expect(page.locator('#filter-count-line')).toContainText('21–40');
+  await expect(page.locator('.reference-row')).toHaveCount(20);
   expect(await page.locator('.reference-row').first().textContent()).not.toBe(first);
   await page.locator('#pager-newer').click();
-  await expect(page.locator('#filter-count-line')).toContainText('1–50');
+  await expect(page.locator('#filter-count-line')).toContainText('1–20');
+  await expect(page.locator('#filter-count-line')).toContainText('without a ticker');
   /* DESIGN-POLISH M1 (H-17): a row's flags are VISIBLE chips in the range
      cell, never inside a note panel — and each chip OPENS ITS OWN definition,
      one interaction away, as the row's single flag note did before (M1 review,
