@@ -267,9 +267,17 @@ test("production dist has NO institutional fixture routes (Locked #19 leakage ch
 });
 
 test("S3 stays live on the feed (verify-only per R10)", () => {
+  /* launch copy ledger congress-24 (applied, M3a; style rule 5 "one plain
+     line"): the empty state's heading shortened from "No disclosures match —
+     and that's an answer, not an error." The property is unchanged — the S3
+     empty state ships in the served feed, ready to show, with its heading and
+     the detail sink the client fills (feed-client.ts setHeading). */
   const feed = readFileSync(path.join(DIST, "congress", "index.html"), "utf-8");
-  assert.ok(feed.includes("No disclosures match — and that's an answer, not an error."));
-  assert.ok(feed.includes("feed-empty"));
+  /* Astro scopes the markup (data-astro-cid-*), so attributes are matched loosely */
+  const empty = /<div class="feed-empty" id="feed-empty" hidden[^>]*>([\s\S]*?)<\/div>/.exec(feed);
+  assert.ok(empty, "the S3 empty state ships in the served feed (hidden until shown)");
+  assert.match(empty[1], /<h2\b[^>]*>No disclosures match these filters\.<\/h2>/, "its heading (congress-24)");
+  assert.ok(empty[1].includes('id="feed-empty-detail"'), "and the detail line the client fills");
 });
 
 test("the build_id marker is the manifest's, not the directory name (R19)", () => {
