@@ -1624,10 +1624,13 @@ function tradingProfileHtml(m: MemberEntityT, stamps: BuildStamps, bench: Chambe
       title: "purchases as a share of all disclosed rows — a count of disclosures, not of dollars",
     },
     {
-      label: "Self-owned", value: st.selfOwnedShare == null ? null : st.selfOwnedShare * 100, text: pct(st.selfOwnedShare), scale: 100,
+      /* launch review H9: the share counts a row with NO owner stated as well
+         as "self", so it is labelled by what it measures — rows without an
+         SP/DC/JT code — never "self-owned" */
+      label: "No SP/DC/JT code", value: st.selfOwnedShare == null ? null : st.selfOwnedShare * 100, text: pct(st.selfOwnedShare), scale: 100,
       median: bench?.selfOwnedShare == null ? null : bench.selfOwnedShare * 100, medText: (v) => `median ${Math.round(v)}%`,
-      compare: (v, med) => (v < med ? "family accounts" : v > med ? "mostly self-owned" : "at median"),
-      title: "rows with no spouse (SP), dependent-child (DC) or joint (JT) owner code",
+      compare: (v, med) => (v < med ? "more SP/DC/JT rows" : v > med ? "fewer SP/DC/JT rows" : "at median"),
+      title: "rows with no spouse (SP), dependent-child (DC) or joint (JT) owner code — a row whose owner is not stated counts here too, so this is not a share of self-owned holdings",
     },
   ];
   const row = (x: Metric): string => {

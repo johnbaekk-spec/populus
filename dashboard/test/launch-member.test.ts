@@ -362,3 +362,14 @@ test("R26: the PLANNED strip and the 'Additional disclosure analysis' drawer are
   const gross = sumRanges(member(10).txns);
   assert.ok(gross.kind === "closed");
 });
+
+/* Launch review H9: the owner-code share counts a missing owner too, so it is never labelled "self-owned". */
+test("H9: the trading profile labels the share 'No SP/DC/JT code' and its tip says a missing owner counts; 'Self-owned' is gone", async () => {
+  const { memberProfileStats } = await import("../src/lib/inst-analytics.ts");
+  const rows = [txn(0, { owner: null }), txn(1, { owner: "self" }), txn(2, { owner: "SP" }), ...Array.from({ length: 9 }, (_, i) => txn(3 + i, { owner: "JT" }))];
+  assert.equal(memberProfileStats(rows).selfOwnedShare, 2 / 12, "a missing owner counts in the share — the reason for the label");
+  const html = memberBody(member(12, { txns: rows }), STAMPS, CTX, 0, deps());
+  assert.match(html, /No SP\/DC\/JT code/, "the profile renders the label");
+  assert.match(html, /a row whose owner is not stated counts here too/);
+  assert.doesNotMatch(html, /Self-owned|mostly self-owned/, "re-planted control: the reviewed label is gone");
+});
