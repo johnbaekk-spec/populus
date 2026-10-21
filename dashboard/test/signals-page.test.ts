@@ -179,19 +179,24 @@ test("LD9 / signals-v4 LD19 (T1.8): every caveat that left the visible page is i
   const how = root.querySelector(".page-head .page-title-row .note-pop")!;
   assert.ok(how, "the head's How signals work tip");
   const howText = how.textContent;
+  /* launch copy item signals-02 (reversal record: the launch copy ledger):
+     the generic sentences are said in fewer words — every caveat kept (not a
+     forecast; no prices, returns or intent; zero is computed; the window by
+     filed date) — and the ranking sentence left this tip for its own, "About
+     filings to read" (asserted below: "each against the filer's own record,
+     as of its filing"). This build's facts stay here by exact text. */
   for (const needle of [
-    "A signal is a fact about a filing, not a forecast: no returns are computed.",
-    "Never used: prices, returns, intent.",
-    "Recomputed every build from the same rows you can audit; zero hits is a computed answer, not missing coverage.",
-    `The coverage window is ${art.coverageFrom} → ${art.coverageTo} (${art.retentionDays} days by filed date).`,
+    "A signal is a rule-based fact about a filing — never a forecast; no prices, returns or intent are used.",
+    "Zero hits is a computed answer, not missing coverage.",
+    `Congress: the last ${art.retentionDays} days by filed date (${art.coverageFrom} → ${art.coverageTo}).`,
     art.lagCaveat,
     `Lifecycle: ${art.lifecycleNote}`,
     "No kind was withheld this build.",
     "date-anomaly rows were excluded before any rule ran",
-    "Filings to read ranks each filing against the filer's own record as it stood on the filing's date; the tiers, meters and cards are defined on Methodology.",
   ]) assert.ok(howText.includes(needle), `How signals work carries: ${needle}`);
   assert.match(howText, /\d+ signals? from an earlier build left the window; \d+ (?:is|are) carried forward unevaluated\./);
-  assert.match(how.querySelector('a[href="/methodology/#signals-ranking"]')!.textContent, /How rows are ranked/);
+  assert.match(how.querySelector('a[href="/methodology/#signal-rules"]')!.textContent, /How signals work/);
+  assert.ok(!howText.includes("Filings to read ranks each filing"), "the ranking sentence is the triage tip's, not repeated here");
   const trigger = root.querySelector(".page-head .page-title-row .note-btn")!;
   assert.equal(trigger.getAttribute("aria-label"), "How signals work, explain");
   assert.ok(trigger.classList.contains("note-mark"), "an ⓘ (mark) trigger");
@@ -203,7 +208,7 @@ test("LD9 / signals-v4 LD19 (T1.8): every caveat that left the visible page is i
   assert.equal(howParas.length, 4, "the Congress paragraph, then the Institutional, Overlap and Playbooks ones");
   assert.equal(howParas[2]!.textContent, "Overlap — Same name, same quarter: a co-occurrence in public filings, never coordination or intent.", "LD9's Overlap paragraph");
   assert.equal(howParas[3]!.textContent, "Playbooks — Published research on the patterns these rows show, with evidence on both sides; the numbers are the papers' own. Not advice.", "LD9's Playbooks paragraph");
-  assert.ok(howParas[0]!.textContent.includes("A signal is a fact about a filing"), "the nine sentences come first");
+  assert.ok(howParas[0]!.textContent.includes("A signal is a rule-based fact about a filing"), "the Congress sentences come first");
   assert.ok(
     howParas[1]!.textContent.includes("13F filings are quarter-end, long-only snapshots filed up to 45 days after the quarter — never current holdings. Exits are inferred from absence in the next filing."),
     "the Institutional paragraph",

@@ -467,12 +467,9 @@ export function initNamedMoves(): MovesPager | null {
       section's — the server's renderer, so the two cannot differ */
   const detailOf = (row: Element): MoveDetail => {
     const tk = row.querySelector(".mv-tk .mono-ticker")?.textContent?.trim() || null;
-    const filed = row.querySelector(".mv-fil time")?.textContent?.trim() || null;
     return {
       type: row.getAttribute("data-type") ?? "",
       kind: (row.getAttribute("data-kind") ?? "new") as MoveDetail["kind"],
-      filed,
-      period: section!.getAttribute("data-mv-period") || "—",
       quarter: section!.getAttribute("data-mv-q"),
       ticker: tk,
       verified: row.hasAttribute("data-tv") ? row.getAttribute("data-tv") || null : section!.getAttribute("data-mv-tv"),

@@ -712,7 +712,7 @@ test("T2.4 (R13, R24; codex M2 r2 F2): a Consensus name only broad accounts trad
   assert.doesNotMatch(none.detail + none.body, /broad/i);
 });
 
-test("T2.4 (R12, R13, LD11, D11; codex M2 r2 F3): a HELD row a reader pages to and opens — a summary click, then the browser's toggle — gets its body: filer page, verification, filed date and quarter, and its side's Congress lines with range, both dates, owner and receipt", () => {
+test("T2.4 (R12, R13, LD11, D11; codex M2 r2 F3): a HELD row a reader pages to and opens — a summary click, then the browser's toggle — gets its body: filer page, verification (the filed date on its row, the quarter in its Congress head), and its side's Congress lines with range, both dates, owner and receipt", () => {
   const m = mount(false);
   try {
     const model = fixtureInstitutional();
@@ -730,7 +730,12 @@ test("T2.4 (R12, R13, LD11, D11; codex M2 r2 F3): a HELD row a reader pages to a
     summary.activate();
     assert.ok(row.querySelector("details.mv-row")!.hasAttribute("open"), "the reader's click opened it");
     const facts = text(row.querySelector(".mv-facts"));
-    assert.match(facts, new RegExp(` · filed ${mv.filed} · quarter ended ${FIXTURE_PERIOD}`), "the filed date and the quarter");
+    /* launch copy item signals-11: the filed date is the row's own Filed cell
+       and the quarter the tab's chip and this body's Congress head — the
+       facts line no longer repeats them; an exit keeps its inference */
+    assert.equal(row.querySelector(".mv-fil time")!.getAttribute("datetime"), mv.filed, "the filed date, on the row itself");
+    assert.doesNotMatch(facts, /quarter ended| · filed /, "the body does not repeat the row's date or the tab's quarter");
+    assert.match(facts, mv.kind === "exit" ? /exit inferred from absence/ : /^\S/, "an exit says it is inferred");
     assert.match(facts, new RegExp(`${mv.ticker} — verified against the SEC company list on ${mv.ticker_verified}`), "the verification statement");
     assert.equal(row.querySelector(".mv-facts a")!.getAttribute("href"), row.getAttribute("data-fp"), "the filer-page link");
     assert.match(text(row.querySelector(".mv-cong-h")), new RegExp(`^Congress · \\d+ members? with a ${side === "buy" ? "purchase" : "sale"} of ${mv.ticker} traded in Q1 2026$`));

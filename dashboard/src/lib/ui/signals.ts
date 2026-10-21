@@ -1494,12 +1494,20 @@ function howSignalsWorkHtml(artifact: SignalArtifact, superseded: number, uneval
   );
 }
 
+/** Launch copy item signals-02 (adapted): the generic sentences say it in
+    fewer words (not a forecast; no prices, returns or intent; zero is a
+    computed answer; the window by filed date); the sentence on how Filings
+    to read ranks is cut — it is the "About filings to read" tip's own text.
+    What stays is THIS build's: the lag caveat, the lifecycle, the withheld
+    kinds, the signals that left the window or carry forward unevaluated,
+    the excluded date anomalies — Methodology is static and cannot carry
+    them, so they do not move there as the audit proposed. */
 function congressHowHtml(artifact: SignalArtifact, superseded: number, unevaluated: number): string {
   const withheld = artifact.withheld;
   const parts = [
-    "A signal is a fact about a filing, not a forecast: no returns are computed. Never used: prices, returns, intent.",
-    "Recomputed every build from the same rows you can audit; zero hits is a computed answer, not missing coverage.",
-    `The coverage window is ${artifact.coverageFrom} → ${artifact.coverageTo} (${artifact.retentionDays} days by filed date).`,
+    "A signal is a rule-based fact about a filing — never a forecast; no prices, returns or intent are used.",
+    "Zero hits is a computed answer, not missing coverage.",
+    `Congress: the last ${artifact.retentionDays} days by filed date (${artifact.coverageFrom} → ${artifact.coverageTo}).`,
     artifact.lagCaveat,
     `Lifecycle: ${artifact.lifecycleNote}`,
     withheld.length === 0
@@ -1507,9 +1515,8 @@ function congressHowHtml(artifact: SignalArtifact, superseded: number, unevaluat
       : `${withheld.length} ${withheld.length === 1 ? "kind was" : "kinds were"} withheld this build: ${withheld.map((w) => `${SIGNAL_KIND_LABELS[w.kind]} (${w.reason})`).join("; ")}.`,
     `${superseded} ${superseded === 1 ? "signal" : "signals"} from an earlier build left the window; ${unevaluated} ${unevaluated === 1 ? "is" : "are"} carried forward unevaluated.`,
     artifact.dateAnomaliesExcluded > 0 ? `${artifact.dateAnomaliesExcluded} date-anomaly rows were excluded before any rule ran.` : "No date-anomaly row was excluded.",
-    "Filings to read ranks each filing against the filer's own record as it stood on the filing's date; the tiers, meters and cards are defined on Methodology.",
   ];
-  return parts.map((p) => esc(p)).join(" ") + ` <a href="/methodology/#signals-ranking">How rows are ranked ↗</a>`;
+  return parts.map((p) => esc(p)).join(" ") + ` <a href="/methodology/#signal-rules">How signals work ↗</a>`;
 }
 
 /** signals-v4 LD19: the page foot's link row — the v3 Methodology-links

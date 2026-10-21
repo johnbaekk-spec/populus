@@ -178,7 +178,9 @@ test("D-2 body: rules, receipts, lag caveat, and withheld kinds all render", asy
   assert.match(html, /eFD&nbsp;↗/);
   assert.ok(html.includes("WITHHELD"), "withheld kinds render as withheld");
   assert.ok(html.includes(LAG_CAVEAT.slice(0, 40)));
-  assert.match(html, /coverage window/);
+  /* launch copy item signals-02: the window is stated by its dates ("the last
+     N days by filed date (from → to)"), no longer under the words "coverage window" */
+  assert.ok(html.includes(`the last ${art.retentionDays} days by filed date (${art.coverageFrom} → ${art.coverageTo})`), "the coverage window, by its dates");
   const { ruleBookHtml } = await import("../src/lib/ui/index.ts");
   const book = ruleBookHtml(art);
   assert.match(book, /Signal rule book/);

@@ -440,8 +440,9 @@ export function signalsOverlapHtml(o: Overlap | null, ctx: RenderCtx, opts: { pl
   const tip = noteFromHtml(
     `<span class="si-tip-p">${esc(overlapTipText(o ?? { start: null, end: null }))}</span>` +
       `<span class="si-tip-p">The managers' side is 13F: quarter-end, long-only snapshots filed up to 45 days after the quarter — never current holdings; an exit is inferred from absence in the next filing.</span>` +
-      `<span class="si-tip-p">Same and opposite read the two sides' directions; mixed is a tie on either side. Unanimous names — neither side split — come first, then the names with the most members and managers. ` +
-      `Tickers compare in the SEC spelling, so BRK.B meets BRK-B. <a href="/methodology/#signals-overlap">How Overlap is read ↗</a></span>`,
+      /* launch copy item signals-10 (adapted): the ordering paragraph shorter; the co-occurrence and 13F caveats above it unchanged */
+      `<span class="si-tip-p">Same and opposite compare the two sides' directions; mixed is a tie on either side. Unanimous names come first, then those with the most members and managers. ` +
+      `Tickers compare in the SEC spelling (BRK.B = BRK-B). <a href="/methodology/#signals-overlap">How Overlap is read ↗</a></span>`,
     { scope: "signals-overlap" },
     "about",
     { trigger: "mark", name: "About overlap" },

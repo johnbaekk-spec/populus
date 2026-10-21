@@ -470,9 +470,6 @@ const TYPE_ONE: Readonly<Record<ManagerType, string>> = {
 export interface MoveDetail {
   type: string;
   kind: NotableMove["kind"];
-  filed: string | null;
-  /** the quarter end */
-  period: string;
   /** "Q1 2026", or null when the period is not a calendar quarter */
   quarter: string | null;
   ticker: string | null;
@@ -501,13 +498,21 @@ export function overlapAnchorFor(ticker: string | null): string | null {
   return ticker ? `ov-${slug(normalizeTicker13f(ticker))}` : null;
 }
 
-/** The body's facts: everything but its Congress side. */
+/** The body's facts: everything but its Congress side.
+
+    Launch copy item signals-11 (adapted): the filed date and the quarter end
+    left the body — the row's own Filed cell carries the date and the tab's
+    provenance chips the quarter; an exit keeps "inferred from absence". The
+    ticker's verification stays a visible line (pinned by
+    signals-institutional.test.ts and the reveal geometry), not a tip: a
+    popover per opened row would add weight the held rows were built to
+    shed. */
 function moveFactsHtml(d: MoveDetail): string {
   return (
     `<div class="mv-facts">` +
-    `<p>${esc(TYPE_ONE[d.type as ManagerType] ?? d.type)} · filed ${d.filed ? `<time datetime="${esc(d.filed)}">${esc(d.filed)}</time>` : "date not stated"} · quarter ended ${esc(d.period)}${d.kind === "exit" ? " · exit inferred from absence" : ""}</p>` +
+    `<p>${esc(TYPE_ONE[d.type as ManagerType] ?? d.type)}${d.kind === "exit" ? " · exit inferred from absence" : ""}</p>` +
     (d.ticker ? `<p><span class="mono-ticker">${esc(d.ticker)}</span> — verified against the SEC company list${d.verified ? ` on ${esc(d.verified)}` : ""}</p>` : "") +
-    `<p><a href="${esc(d.filerPage)}">This position on the filer page ↗</a></p>` +
+    `<p><a href="${esc(d.filerPage)}">Filer page ↗</a></p>` +
     `</div>`
   );
 }
@@ -533,13 +538,13 @@ export function moveRowHtml(
   return moveRowFrom(moveRowData(m, id, model, overlapIds), moveSection(model), hidden, tvDefault);
 }
 
-/** What every move row of one section shares: the quarter end and its label. */
+/** What every move row of one section shares: the quarter's label (the
+    quarter end left the row body with copy item signals-11). */
 export interface MoveSection {
-  period: string;
   quarter: string | null;
 }
-export function moveSection(model: Pick<SignalsInstitutional, "period" | "quarter">): MoveSection {
-  return { period: model.period ?? "—", quarter: model.quarter ? (quarterLabel(model.quarter.period) ?? model.quarter.period) : null };
+export function moveSection(model: Pick<SignalsInstitutional, "quarter">): MoveSection {
+  return { quarter: model.quarter ? (quarterLabel(model.quarter.period) ?? model.quarter.period) : null };
 }
 
 /** One move row as DATA (launch M7a, D5, LD26/LD27): every input
@@ -622,7 +627,7 @@ export function moveRowFrom(r: MoveRowData, sec: MoveSection, hidden = false, tv
   const broad = congressBroadFrom(r.broad);
   const lean = hidden && broad === null;
   const d: MoveDetail = {
-    type: r.type, kind: r.kind, filed: r.filed, period: sec.period, quarter: sec.quarter,
+    type: r.type, kind: r.kind, quarter: sec.quarter,
     ticker: r.ticker, verified: r.tv, filerPage: r.fp, congress: r.counted, overlap: r.ov,
   };
   const detail = `<div class="mv-det">${lean ? "" : broad === null ? moveDetailHtml(d) : moveFactsHtml(d) + broad + overlapLinkHtml(d.ticker, d.overlap)}</div>`;
@@ -714,13 +719,16 @@ function nameDetailHtml(key: string, ticker: string | null, label: string, model
 
 function namedMovesHtml(model: SignalsInstitutional, ctx: RenderCtx, overlapIds: ReadonlySet<string> | null = null): string {
   const period = model.period;
+  /* launch copy item signals-10 (adapted): fewer words, every qualifier kept
+     (share-count classification, a dollar change is not a position change,
+     exits inferred, reviewed tickers only, the page's own bound); the
+     how-to-use paragraph is cut */
   const tip = noteFromHtml(
-    `<span class="si-tip-p">Notable managers' position changes in the quarter ended ${esc(period ?? "—")}, largest dollar change first within New › Exit › Add › Trim. ` +
-      `Classified by share count between the two quarters; a dollar change alone is not a position change. Exit is inferred from absence in the next filing. ` +
+    `<span class="si-tip-p">Notable managers' changes in the quarter ended ${esc(period ?? "—")}, largest dollar change first within New › Exit › Add › Trim. ` +
+      `Classified by share count — a dollar change alone is not a position change; an exit is inferred from absence in the next filing. ` +
       `Tickers appear only where the reviewed mapping names one.</span>` +
-      `<span class="si-tip-p">Every count is the build's whole population for the filter (${plural(model.moves.length, "change", "changes")} this quarter). ` +
-      `This page carries the first ${fmtInt(model.sliceRows)} for each filter and every change on a Consensus or lead-card name; each manager's filer page lists all of its moves.</span>` +
-      `<span class="si-tip-p">Open a row for its Congress side and its filer page; choose a Consensus row or a card to list every change on that name.</span>`,
+      `<span class="si-tip-p">Counts cover the build's whole population for each filter (${plural(model.moves.length, "change", "changes")} this quarter); ` +
+      `this page carries the first ${fmtInt(model.sliceRows)} per filter and every change on a Consensus or lead-card name. Filer pages list every move.</span>`,
     { scope: "signals-inst-moves" },
     "about",
     { trigger: "mark", name: "About named moves" },
@@ -767,18 +775,18 @@ function namedMovesHtml(model: SignalsInstitutional, ctx: RenderCtx, overlapIds:
   for (const [, v] of withTicker) for (const side of ["buy", "sell"] as const) linked.add(congKey(v.ticker!, side));
   const bank = congressBankHtml(model.quarter, bankKeys, ctx, linked);
   const cgTip = note(
-    `Members of Congress with a listed-stock purchase (beside a new stake or an add) or sale (beside a trim or an exit) of the same ticker, ` +
-      `traded inside the quarter${model.quarter ? ` (${model.quarter.start} → ${model.quarter.end})` : ""} and filed at any date, each counted once. ` +
+    `Members of Congress with a listed-stock purchase (beside a new stake or an add) or sale (beside a trim or an exit) of the ticker, ` +
+      `traded in the quarter${model.quarter ? ` (${model.quarter.start} → ${model.quarter.end})` : ""}, filed at any date, each counted once. ` +
       `Broad accounts — members who traded more than ${BROAD_ACCOUNT_NAMES} names in the quarter — are not counted` +
       (model.quarter && model.quarter.broad.length > 0 ? `: ${model.quarter.broad.map((b) => `${b.name} (${b.breadth})`).join(", ")}` : "") +
-      `. Tickers compare in the SEC spelling, so BRK.B meets BRK-B. A co-occurrence in public filings, never coordination.`,
+      `. Tickers compare in the SEC spelling (BRK.B = BRK-B). A co-occurrence in public filings, never coordination.`,
     { scope: "signals-inst-moves" },
     "congress",
     { trigger: "mark", name: "About the Congress column" },
   );
   const boundShown = shown === model.domSet.length && model.domSet.length < total;
   return (
-    `<section class="panel sig-moves" id="named-moves" aria-labelledby="named-moves-h" data-mv-period="${esc(period ?? "")}"` +
+    `<section class="panel sig-moves" id="named-moves" aria-labelledby="named-moves-h"` +
     (model.quarter ? ` data-mv-q="${esc(quarterLabel(model.quarter.period) ?? model.quarter.period)}"` : "") +
     (tvDefault ? ` data-mv-tv="${esc(tvDefault)}"` : "") +
     /* M3: a held row's body links its Overlap row when the page carries it (the client reads the DOM) */
@@ -828,7 +836,8 @@ export function consensusPanelHtml(board: ConsensusBoard | null, q: CongressQuar
       (board.qualifying > board.rows.length ? ` The ${fmtInt(board.rows.length)} highest-ranked are listed.` : "") +
       (board.rows.some((r) => r.disambiguator) ? ` #n tells apart issuers filed under one name: the order of their stable issuer keys.` : "") +
       ` ${esc(consensusExclusionText(board))}</span>` +
-      `<span class="si-tip-p">Choose a row to list every change on that name in the Named moves. ▲ / ▼ = members of Congress with a purchase / a sale of it traded in the quarter, broad accounts not counted; a name only broad accounts traded says so.</span>`
+      /* copy item signals-10: the row's control in one clause; ▲/▼ and the broad-account rule kept */
+      `<span class="si-tip-p">▲ / ▼ = members of Congress with a purchase / a sale traded in the quarter, broad accounts not counted (a name only they traded says so). A row filters the Named moves to that name.</span>`
     : `<span class="si-tip-p">Issuers several notable managers changed in one closed quarter. This build has no closed quarter to group over.</span>`;
   const tip = noteFromHtml(tipBody, { scope: "signals-inst-consensus" }, "about", { trigger: "mark", name: "About consensus" });
   const head = `<div class="panel-head"><h2 class="section-h" id="consensus-h">Consensus</h2>${tip}${strip ? playbookStripHtml("consensus") : ""}</div>`;
@@ -1018,7 +1027,8 @@ function provenanceHtml(model: SignalsInstitutional): string {
   const tip = noteFromHtml(
     `<span class="si-tip-p">Every institutional figure on this tab is a snapshot of the quarter ended ${esc(model.period ?? "—")}: positions at quarter end, long only, ` +
       `filed up to 45 days after the quarter — never current holdings. An exit is inferred from absence in the next filing.</span>` +
-      `<span class="si-tip-p">${esc(model.freshness)} The newest closed quarter is ${esc(model.period ?? "not yet available")}.</span>` +
+      /* copy item signals-10: "The newest closed quarter is …" left — the chip beside this tip states it */
+      `<span class="si-tip-p">${esc(model.freshness)}</span>` +
       `<span class="si-tip-p">Notable managers only: ${fmtInt(model.notableManagers)} on a curated registry. <a href="/methodology/#13f-method">How 13F data is read ↗</a></span>`,
     { scope: "signals-inst-prov" },
     "about",

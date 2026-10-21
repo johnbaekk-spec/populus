@@ -1145,7 +1145,9 @@ test("T2.4 (R12, R13, LD11, D11; codex M2 r2 F3) @1440: a HELD row a reader page
     expect(got.open).toBe(true);
     expect(got.factsVisible, "the body shows").toBe(true);
     expect(got.filer, "the filer-page link").toBe(got.fp);
-    expect(got.facts).toMatch(/ · filed \d{4}-\d{2}-\d{2} · quarter ended 2026-03-31/);
+    /* launch copy item signals-11: the body no longer repeats the row's
+       filed date or the tab's quarter (the head below still names Q1 2026) */
+    expect(got.facts).not.toMatch(/ · filed \d{4}-\d{2}-\d{2} · quarter ended/);
     expect(got.facts).toMatch(/[A-Z.-]+ — verified against the SEC company list on \d{4}-\d{2}-\d{2}/);
     expect(got.head).toMatch(/^Congress · \d+ members? with a (purchase|sale) of [A-Z.-]+ traded in Q1 2026$/);
     expect(got.lines, "its Congress lines").toBeGreaterThan(0);
