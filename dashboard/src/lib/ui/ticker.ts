@@ -28,7 +28,6 @@ import {
   universalFlagNote,
   srcLinkDerived,
   terminusRow,
-  footnoteBlock,
   memberHrefFor,
   congressTickerHref,
   partyClass,

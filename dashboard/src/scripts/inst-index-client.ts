@@ -11,7 +11,7 @@
    that: it captures this island's output and asserts it is unchanged. */
 
 import { parseDirectoryShard, parseDirectoryShardList, type InstIndexRow, type InstSortKey } from "../lib/inst-index.ts";
-import { COMPACT_ROWS, compactBoundCountFor, esc, fmtInt, parseDataColumns, rangeOfTotal, syncCompactDisclosure } from "../lib/format.ts";
+import { COMPACT_ROWS, compactBoundCountFor, fmtInt, parseDataColumns, rangeOfTotal, syncCompactDisclosure } from "../lib/format.ts";
 import { initSortableTable } from "./table-sort.ts";
 import {
   addsBoundNoun,

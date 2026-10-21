@@ -86,7 +86,6 @@ import {
 import { type CongressColumn } from "../congress-columns.ts";
 import { quarterLabel } from "../congress-quarter.ts";
 import { breadcrumb } from "./shared.ts";
-import { quarterLabel } from "../congress-quarter.ts";
 import { s7Banner } from "./states.ts";
 
 /** The institutional table time stamp. The published aggregate has
