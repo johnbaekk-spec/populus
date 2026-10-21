@@ -420,16 +420,22 @@ test("T3.8 (G-11, V1 NEW-4): the empty-activity sentence is true of what QoQ emi
   assert.doesNotMatch(html, /appears in both quarters|nothing keyable/, "control: the false and the pipeline wordings");
 });
 
-test("T3.8 (V1 NEW-1): the EDGAR block and the holdings-absent sentence state the 2026-08-01 decision, never a served-since claim", () => {
+test("T3.8 (V1 NEW-1): the EDGAR block and the holdings-absent sentence never make a served-since claim; the absent sentence states the 2026-08-01 decision", () => {
   const edgar = filerEdgarBlock("0001067983", "F");
   const absent = projectionAbsentHtml("filer", "https://www.sec.gov/x");
   for (const html of [edgar, absent]) {
-    assert.match(html, /Public Filings decided on 2026-08-01 to serve this list from its published build/);
     assert.doesNotMatch(html, /has served|has published [^.]* since/, "control: a served-since claim");
     assert.doesNotMatch(html, /2026-08-02/, "control: the parameter-lock date");
     assert.doesNotMatch(html, /M2-CONTRACT §3/);
   }
-  assert.match(edgar, /where the page cannot embed every reported row, the list says how many it leaves out/);
+  assert.match(absent, /Public Filings decided on 2026-08-01 to serve this list from its published build/);
+  /* Launch copy audit filer-11 (reversal record, docs/frontend/launch-redesign.md):
+     the EDGAR block keeps its receipt and names the filing as the record; the
+     internal decision log and the completeness sentence left it (the list's own
+     terminus states any cap, so the block needs neither). */
+  assert.match(edgar, /<p>The filing on EDGAR is the record, including any filed after this build\.<\/p>/);
+  assert.match(edgar, /<a class="cta" href="https:\/\/www\.sec\.gov\/[^"]*CIK=0001067983[^"]*"[^>]*>Open F's 13F filings on SEC EDGAR ↗<\/a>/, "the receipt link stays");
+  assert.doesNotMatch(edgar, /decided on 2026-08-01|provenance, not a substitute|says how many it leaves out/, "control: the retired decision log");
 });
 
 test("T3.8 (H-8): the Reported positions caveat is true of the rows — complete vs size-capped, grouped vs as filed", () => {
@@ -440,13 +446,20 @@ test("T3.8 (H-8): the Reported positions caveat is true of the rows — complete
   const complete = holdingsTableHtml({ reference: true, cik: "0001067983", filerName: "F", period: "2026-03-31", rows, filings: FILINGS, page: 0 });
   const capped = holdingsTableHtml({ reference: true, cik: "0001067983", filerName: "F", period: "2026-03-31", rows, filings: FILINGS, page: 0, totalRows: 40 });
   const caveat = (html: string): string => visibleText(domOf(html).querySelectorAll(".caveat-line").at(-1)!);
-  assert.match(caveat(complete), /^One line per issuer, largest first; a row with no issuer key stands on its own line\. Open a line for its rows as this filer reported them\. The list holds every row this filer reported for the quarter\. Issuer totals on the holders pages count each manager's own report once; that never removes a row here\./);
+  /* Launch copy audit filer-09 (reversal record, docs/frontend/launch-redesign.md):
+     what the table is in one line, the grouping detail one link away on
+     /methodology/#filer-positions. The caveat no longer carries the positive
+     completeness sentence ("The list holds every row …"): the head counts the
+     rows, and a size-capped list's terminus states how many it leaves out —
+     the honesty half of the old property, asserted just below. */
+  assert.match(caveat(complete), /^One line per issuer, largest first — open a line for its reported rows\. Grouping ↗$/);
+  assert.match(complete, /<a href="\/methodology\/#filer-positions">Grouping ↗<\/a>/, "the de-duplication detail is one link away");
   assert.doesNotMatch(caveat(capped), /every row this filer reported/, "control: no completeness sentence over a size-capped page");
   assert.match(capped, /38 of this filer's 40 reported rows for 2026-03-31 are not embedded in this page/, "…whose terminus states the count");
   // a row with no issuer key stands on its own line
   const names = domOf(complete).querySelectorAll("tr.design-holding-row .filed-name").map((n) => visibleText(n));
   assert.ok(names.includes("NO KEY CO") && names.includes("APPLE INC"));
-  assert.match(holdingsCaveatHtml(false, 3, 3), /Each row as this filer reported it\. The list holds every row/);
+  assert.match(holdingsCaveatHtml(false, 3, 3), /^<div class="caveat-line">Each row as this filer reported it\. <a href="\/methodology\/#filer-positions">Grouping ↗<\/a><\/div>$/);
   assert.doesNotMatch(holdingsCaveatHtml(true, 5, 3), /every row this filer reported/);
 });
 
@@ -525,4 +538,15 @@ test("M2V-D2: a grouped holdings table showing its whole collection carries its 
   const capped = holdingsTableHtml({ reference: true, cik: "0001067983", filerName: "F", period: "2026-03-31", rows, filings: FILINGS, page: 0, totalRows: 30 });
   assert.doesNotMatch(capped, /data-compact-for="filer-holdings-tbody"/, "control: a size-capped page never reads as complete");
   assert.doesNotMatch(capped, /<tbody id=/);
+});
+
+/* Launch copy audit global-01 (M6): the masthead search panel's foot keeps its
+   privacy promise in five words; "the index ships with the build" was
+   engineering. The device-only meaning is the property: the query is matched on
+   the reader's device, against a file the page fetched. */
+test("launch M6 (global-01): the search panel's foot says search runs on this device, and nothing more", () => {
+  const base = readFileSync(path.resolve(import.meta.dirname, "..", "src", "layouts", "Base.astro"), "utf-8");
+  assert.match(base, /<div class="search-panel-foot">Search runs on this device\.<\/div>/);
+  assert.doesNotMatch(base, /never leaves this device — the index ships with the build/, "control: the old line is gone");
+  assert.equal((base.match(/class="search-panel-foot"/g) ?? []).length, 1, "one foot, inside the one search panel");
 });

@@ -577,7 +577,13 @@ function filerReadingOrder(html: string): string[] {
   return root.children.map(mark).filter((m): m is string => m !== null);
 }
 
-test("R15 (M2): the filer page reads head + ledger → changes → band F1 [holdings │ book shape + history] → one Planned line → EDGAR/notes → §5 note, in DOM order", () => {
+/* Launch copy audit filer-01 / filer-06 / filer-11 (reversal record,
+   docs/frontend/launch-redesign.md): the Planned line (a roadmap) and the
+   "Notes on this data" cards (generic restatements of caveats the provenance
+   line and the §5 box carry) left the foot, and the reported value left the
+   subline for the ledger. The reading order is otherwise unchanged and still
+   held by DOM order. */
+test("R15 (M2): the filer page reads head + ledger → changes → band F1 [holdings │ book shape + history] → EDGAR → §5 note, in DOM order", () => {
   const holdingsHtml = '<section class="panel panel-wide" aria-label="Reported holdings" data-holdings-surface="filer"><div data-holdings-body></div></section>';
   const html = filerBody(
     { cik: "0001067983", name: "BERKSHIRE HATHAWAY INC", latestPeriod: "2026-03-31" },
@@ -593,15 +599,16 @@ test("R15 (M2): the filer page reads head + ledger → changes → band F1 [hold
   const subline = html.slice(html.indexOf('class="entity-subline"'), html.indexOf("</div>", html.indexOf('class="entity-subline"')));
   assert.match(subline, /Warren Buffett/);
   assert.match(subline, /Asset managers/);
-  assert.match(subline, /\$2\.5B reported 13\(f\) long value/);
+  assert.doesNotMatch(subline, /reported 13\(f\) long value|latest quarter|notable/, "the value is the ledger's, the quarter the band head's (filer-01)");
+  assert.match(subline, /CIK 1067983/);
 
   // the reading order IS the DOM order
-  assert.deepEqual(filerReadingOrder(html), ["head", "changes", "band", "planned", "edgar", "notes", "data-note"]);
+  assert.deepEqual(filerReadingOrder(html), ["head", "changes", "band", "edgar", "data-note"]);
   // control: the pre-M2 order (the holdings band before the changes) is caught
   const bandAt = html.indexOf('<div class="design-band design-filer-band">');
   const changesAt = html.indexOf("<div data-filer-root>");
-  const planned = html.indexOf('<p class="planned-line">');
-  const swapped = html.slice(0, changesAt) + html.slice(bandAt, planned) + html.slice(changesAt, bandAt) + html.slice(planned);
+  const edgarAt = html.indexOf('<details class="edgar-block');
+  const swapped = html.slice(0, changesAt) + html.slice(bandAt, edgarAt) + html.slice(changesAt, bandAt) + html.slice(edgarAt);
   assert.notDeepEqual(filerReadingOrder(swapped), filerReadingOrder(html), "control: a band moved above the changes changes the order");
 
   // the four period figures, from the ledger inside the head's ledger root
@@ -628,9 +635,9 @@ test("R15 (M2): the filer page reads head + ledger → changes → band F1 [hold
   assert.equal(posRows.filter((tr) => tr.hasAttribute("data-compact-extra")).length, 15);
   assert.match(html, /data-compact-for="filer-changes-tbody" data-compact-total="35" data-compact-shown="20"/);
   assert.doesNotMatch(html, /aria-label="Congress overlap"|aria-label="Signals for this filer"|aria-label="Sector rotation"/, "empty frames are gone");
-  assert.equal((html.match(/class="planned-line"/g) ?? []).length, 1);
-  assert.match(html, /PLANNED<\/span> sector rotation · Congress overlap · signals for this filer/);
-  assert.match(html, /id="filer-notes"/, "the explainer cards are folded, not deleted");
+  assert.equal((html.match(/class="planned-line"/g) ?? []).length, 0, "no roadmap line (filer-06)");
+  assert.doesNotMatch(html, /PLANNED|sector rotation/);
+  assert.doesNotMatch(html, /id="filer-notes"|Notes on this data/, "the generic explainer cards are gone (filer-11)");
   assert.equal((html.match(/id="inst-data-note"/g) ?? []).length, 1, "the §5 note renders once, at the foot");
   assert.doesNotMatch(html, /producer-classified \(change_kind\)/);
 });

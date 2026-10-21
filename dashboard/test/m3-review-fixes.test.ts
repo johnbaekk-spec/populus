@@ -343,7 +343,10 @@ test("W-6: an issuer line that shows a reviewed ticker does not also say 'ticker
 
 test("W-7: the †v note says what this build's data did, and what builds from 2026-09-10 on do", () => {
   const tv = QOQ_FOOTNOTES.find((f) => f.mark === "†v")!.html;
-  assert.equal(tv, "the reported share count is unchanged across the pair; this build's data classified the change from its reported value; builds from 2026-09-10 on read it as NO CHANGE <code>classified_by_value</code>");
+  /* Launch copy audit filer-05: the producer slug left the reader copy (the
+     flag and its decoding are untouched); the three facts stay word for word. */
+  assert.equal(tv, "the reported share count is unchanged across the pair; this build's data classified the change from its reported value; builds from 2026-09-10 on read it as NO CHANGE");
+  for (const f of QOQ_FOOTNOTES) assert.doesNotMatch(f.html, /<code>|_[a-z]+_/, `control: no producer slug in the ${f.mark} note`);
   assert.doesNotMatch(tv, /reads as held/, "control: false beside the ADD or TRIM word this marker only ever sits next to");
 });
 

@@ -276,11 +276,15 @@ test("R16/R17: two real tabs over two panels, both visible in the HTML; no Finan
   for (const gone of ["Financials", "Macro", "PLANNED", "SOON", "section-index", "si-soon", "entity-lede", "design-briefing", "design-story", "planned-card"]) {
     assert.ok(!html.includes(gone), `no ${gone}`);
   }
-  // the clock sentence moved, it did not vanish (LD9)
+  // the clock sentence moved, it did not vanish (LD9). Launch copy audit
+  // ticker-04: each regime's clock is stated once, in the provenance line,
+  // without the sentence that restated them.
   const prov = dom.querySelector(".design-provenance")!;
-  assert.match(visibleText(prov.querySelector(".tk-clock")!), /^Each section keeps its own clock — congressional trades on the 45-day PTR clock, 13F holdings as quarter-end snapshots\.$/);
-  assert.equal(html.split("keeps its own clock").length - 1, 1, "stated once, in the provenance line");
-  assert.ok(html.includes("full congressional view ↗"));
+  assert.match(visibleText(prov.querySelector(".tk-clock")!), /^Congress: statutory ranges, filed up to 45 days after the trade · 13F: quarter-end snapshots, filed up to 45 days later$/);
+  assert.equal(html.split("statutory ranges, filed up to 45 days").length - 1, 1, "stated once, in the provenance line");
+  assert.doesNotMatch(html, /keeps its own clock|Congress = transactions|no price data/, "control: the restating sentence and the old line are gone");
+  assert.match(visibleText(prov.querySelector(".stamp-line")!), /^as of \d{4}-\d{2}-\d{2}$/, "the as-of date stays in the provenance line");
+  assert.match(html, /<a class="section-link" href="\/congress\/tickers\/WMB\/">All \d+ rows? ↗<\/a>/, "one link to every row (ticker-08)");
 });
 
 /* ---------- TD-7: the ticker surface CI actually deploys ---------- */
@@ -421,17 +425,18 @@ test("filerBody: explainer, period-correct tiles, EDGAR block with the decision 
      decision and the §3 amendment (holdings-publication.md:3, :83) — never
      "has served … since", and never 2026-08-02 (only when parameters were
      locked). The contract's name leaves the reader copy. */
-  assert.ok(html.includes("Public Filings decided on 2026-08-01 to serve this list from its published build"), "the EDGAR link-out names the decision and its date");
-  assert.ok(html.includes("filings newer than this build are on EDGAR"));
-  assert.ok(html.includes("where the page cannot embed every reported row, the list says how many it leaves out"));
-  assert.ok(!/has served|has published [^.]* since|2026-08-02|M2-CONTRACT §3/.test(html), "control: no served-since claim, no parameter-lock date");
+  /* Launch copy audit filer-11: the block keeps its receipt and names the
+     filing as the record (newer filings included); the internal decision log
+     left the reader copy, and the list's terminus states any cap. */
+  assert.ok(html.includes("The filing on EDGAR is the record, including any filed after this build."), "the EDGAR link-out names the record");
+  assert.ok(html.includes("13F filings on SEC EDGAR ↗"), "and keeps the receipt link");
+  assert.ok(!/has served|has published [^.]* since|2026-08-02|M2-CONTRACT §3|decided on 2026-08-01/.test(html), "control: no served-since claim, no parameter-lock date, no decision log");
   // M2-CONTRACT §3 was amended 2026-08-01: holdings will be SERVED, not federated.
   // Until RUN M2-8 publishes the projection the page must say so honestly, and it
   // must never re-assert the retired "never served" claim.
   // T11 landed: the holdings table renders, so the EDGAR block is now
   // PROVENANCE rather than a stand-in. Asserting the retired copy would pin the
   // page to a claim it no longer makes.
-  assert.ok(html.includes("provenance, not a substitute"));
   assert.ok(!html.includes("not rendered here yet"));
   assert.ok(!html.includes("never served"));
   /* R20 (DESIGN-POLISH M3, T3.4): the CIK a reader sees has no leading zeros —
@@ -582,7 +587,9 @@ test("unified ticker: ledger totals count the full 12-month population, not a di
   // DESIGN-POLISH M2 (T2.8): the figure is read from the ONE ledger's <dl> (DOM parse).
   const figs = ledgerFigures(html);
   // signals-v3 M3 (R17): exactly five figures, in order
-  assert.deepEqual(figs.map((f) => f.label), ["Congress txns", "Members · 12m", "Latest PTR", "Filed late", "13F holders"]);
+  // launch copy audit ticker-03 (the remainder #163 left): the PTR jargon left the labels
+  assert.deepEqual(figs.map((f) => f.label), ["Congress trades", "Members · 12m", "Latest filing", "Filed late", "13F holders"]);
+  assert.deepEqual(figs.filter((f) => f.label === "Congress trades" || f.label === "Latest filing").map((f) => f.sub), ["all time", "2026-07-20"]);
   assert.equal(figs.find((f) => f.label === "Members · 12m")?.value, "6", "six members, not a display slice");
   assert.match(html, /6 buys · 0 sells/);
   /* LD9: the timeliness card's three states moved into the Filed late figure —
@@ -594,7 +601,11 @@ test("unified ticker: ledger totals count the full 12-month population, not a di
   assert.doesNotMatch(unknown, /every row filed inside/i, "no claim that every row was on time");
   assert.match(unknown, /1 row discloses no trade date: the lag is unknown there, not zero/, "the figure's note says why");
   const lateRows = tickerUnifiedBody({ ticker: "T", txns: [...txns.slice(1), { ...base, txnId: "l", bioguide: "A000010", late: 1, lag: 60, traded: "2026-05-21" }] }, { state: "no-map" }, stamps, {}, { fullTable: false });
-  assert.deepEqual([late(lateRows).value, late(lateRows).tone, late(lateRows).sub], ["1", "sell", "filed past the 45-day window"], "a late row: the SELL tone");
+  /* launch copy audit ticker-03: a late row's state is the value and the SELL
+     tone (the figure's note names the 45-day window); the sub-line is kept for
+     the two states it alone tells apart — undated, and every row on time */
+  assert.deepEqual([late(lateRows).value, late(lateRows).tone, late(lateRows).sub], ["1", "sell", null], "a late row: the SELL tone, no sub-line");
+  assert.match(lateRows, /Rows filed past the STOCK Act&#39;s 45-day window/, "the figure's note names the window");
   const both = tickerUnifiedBody({ ticker: "T", txns: [...txns.slice(2), { ...base, txnId: "l", bioguide: "A000010", late: 1, lag: 60, traded: "2026-05-21" }, { ...base, txnId: "u", bioguide: "A000009", traded: null, lag: null, late: 0 }] }, { state: "no-map" }, stamps, {}, { fullTable: false });
   assert.deepEqual([late(both).value, late(both).tone, late(both).sub], ["1", "sell", "1 of 6 undated: timeliness unknown"], "late AND undated: the sub carries the undated count");
   const empty = tickerUnifiedBody({ ticker: "T", txns: [] }, { state: "no-map" }, stamps, {}, { fullTable: false });
@@ -808,7 +819,8 @@ function fullBlockProblems(html: string, row: TRIAGE.TriageRow): string[] {
   const receipt = block.querySelector(".si-row-src a");
   if (receipt?.getAttribute("href") !== L.doc) out.push(`receipt ${receipt?.getAttribute("href")} is not the lead filing ${L.doc}`);
   const back = block.querySelector("a.tk-onsig-back");
-  if (back?.getAttribute("href") !== "/signals/" || visibleText(back).trim() !== "← Back to Signals") out.push("back to Signals");
+  // launch copy audit ticker-05: the link names its page ("Signals ↗"), no "back"
+  if (back?.getAttribute("href") !== "/signals/" || visibleText(back).trim() !== "Signals ↗") out.push("back to Signals");
   /* the block's own caveat paragraph (the opened row's Cmte line says
      "context, never an allegation" on every row) */
   const caveat = block.querySelector("p.si-cmte-context");
@@ -817,22 +829,29 @@ function fullBlockProblems(html: string, row: TRIAGE.TriageRow): string[] {
   return out;
 }
 
-test("T3.2 (R17): the title keeps today's name source — ticker — mapped name exactly as supplied with its † link and footnote; no mapped name, the ticker alone", () => {
+test("T3.2 (R17): the title keeps today's name source — ticker — mapped name exactly as supplied with its † and the †'s tip; no mapped name, the ticker alone", () => {
+  /* Launch copy audit ticker-02 (reversal record, docs/frontend/launch-redesign.md):
+     the † no longer links to a footnote at the foot of the page; it is the
+     trigger of its own tip, which says the same thing (G14). Property kept:
+     the mapped name carries a † that explains it is a present-day mapping, and
+     an unmapped title carries neither. */
   const name = "Williams Cos Inc. (Mixed Case)";
-  const mapped = domOf(unified({ state: "resolved-no-data", name, cik: "0000107263" }));
+  const html = unified({ state: "resolved-no-data", name, cik: "0000107263" });
+  const mapped = domOf(html);
   const h1 = mapped.querySelector("h1.entity-title")!;
-  const own = (el: MiniElement): string => el.nodes.map((n) => (typeof n === "string" ? n : n.classList.contains("fn-ref") ? "" : own(n))).join("");
+  const own = (el: MiniElement): string => el.nodes.map((n) => (typeof n === "string" ? n : n.classList.contains("note") ? "" : own(n))).join("");
   assert.equal(own(h1), `${TICKER.ticker} — ${name}`, "ticker + ' — ' + the mapped name, never re-cased");
-  const dagger = h1.querySelector('a.fn-ref[href="#ticker-footnotes"]');
-  assert.equal(dagger && visibleText(dagger), "†");
-  const foot = mapped.querySelector("#ticker-footnotes")!;
-  assert.match(visibleText(foot), /present-day mapping, not the name as of each filing/);
+  const dagger = h1.querySelector("button.note-btn.note-mark")!;
+  assert.equal(visibleText(dagger), "†");
+  const tip = h1.querySelector(`#${dagger.getAttribute("popovertarget")}`)!;
+  assert.match(visibleText(tip), /present-day mapping, not the name as of each filing/);
+  assert.ok(!mapped.querySelector("#ticker-footnotes") && !html.includes("company_tickers.json"), "no footnote block at the foot; no file name");
   for (const inst of [{ state: "no-map" }, { state: "ambiguous" }, { state: "module-absent" }] as TickerInstSection[]) {
     const html = unified(inst);
     const plain = domOf(html).querySelector("h1.entity-title")!;
     assert.equal(visibleText(plain), TICKER.ticker, `${inst.state}: the ticker alone`);
-    assert.ok(!visibleText(plain).includes("—") && !plain.querySelector(".fn-ref"), `${inst.state}: no dash, no † link`);
-    assert.ok(!html.includes("†") && !html.includes("present-day mapping"), `${inst.state}: no † footnote`);
+    assert.ok(!visibleText(plain).includes("—") && !plain.querySelector(".note"), `${inst.state}: no dash, no † tip`);
+    assert.ok(!html.includes("†") && !html.includes("present-day mapping"), `${inst.state}: no † at all`);
   }
 });
 
@@ -846,6 +865,12 @@ test("T3.3 (R18): a Stands-out ticker renders the FULL block once, before the ta
   assert.deepEqual(fullBlockProblems(html, row), []);
   // the same function the triage row uses: rendered OPEN, with no link to the page it is on (signals-v4 LD4)
   const block = domOf(html).querySelector("#on-signals")!;
+  /* launch copy audit ticker-05: the caps meta is the count it carried and a
+     tip with the ranking basis; the link names its page */
+  const meta = block.querySelector(".panel-head .panel-note")!;
+  assert.match(visibleText(meta), /^(Strongest of \d+ rows|1 row) ⓘ$/);
+  assert.equal(visibleText(meta.querySelector(".note-pop")!), "Ranked against each filer's own record as of its filing.");
+  assert.doesNotMatch(html, /FILINGS TO READ · AGAINST|THE STRONGEST OF|← Back to Signals/, "control: the caps meta and the back link are gone");
   assert.ok(block.querySelector("details.si-row-d")!.hasAttribute("open"), "the block's row is open");
   assert.ok(!block.querySelectorAll(".si-row-links a").some((a) => (a.getAttribute("href") ?? "").startsWith("/tickers/")), "no link to the ticker page it is on");
   assert.ok(block.querySelectorAll(".si-row-links a").some((a) => a.getAttribute("href") === row.lead.doc), "the opened row links the receipt");
@@ -992,7 +1017,8 @@ test("T3.4 (R19, R20): the block's triggering lines on THIS ticker are pinned fi
     for (const r of pinned) {
       assert.ok(r.querySelector("td.c-filed") && r.querySelector("td.c-traded") && r.querySelector("td.c-src a"), `${ticker}: a pinned row keeps both dates and its receipt`);
     }
-    assert.match(goldenPage(ticker), new RegExp(`<a href="/congress/tickers/${ticker}/">all ${entity.txns.length.toLocaleString("en-US")} rows ↗</a>`), `${ticker}: the full Congress view`);
+    // launch copy audit ticker-08: the full Congress view is the head's one link
+    assert.match(goldenPage(ticker), new RegExp(`<a class="section-link" href="/congress/tickers/${ticker}/">All ${entity.txns.length.toLocaleString("en-US")} rows ↗</a>`), `${ticker}: the full Congress view`);
   }
   // the full block's lines: lead first, LD4 line order, only this ticker's (BAC's row holds three lines, one on BAC)
   const bac = strongRow("BAC");
@@ -1009,7 +1035,7 @@ test("T3.4 (R19, R20): the block's triggering lines on THIS ticker are pinned fi
   const plain = previewRows(goldenPage("TJX"));
   assert.ok(plain.every((r) => !r.classList.contains("on-signals")));
   assert.match(goldenPage("TJX"), /aria-sort="descending"/, "unpinned, the Filed column claims its sort");
-  assert.match(goldenPage("BAC"), /ON SIGNALS ROWS FIRST, THEN FILED ↓/, "pinned, the panel states the order");
+  assert.match(goldenPage("BAC"), /<span class="panel-note">Signals rows first, then newest<\/span>/, "pinned, the panel states the order");
 });
 
 test("T3.4 (R19): universalFlags covers the pinned rows — a flag the newest rows share but a pinned row lacks is never hoisted", () => {

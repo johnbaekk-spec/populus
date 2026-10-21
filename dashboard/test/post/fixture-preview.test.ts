@@ -74,7 +74,8 @@ test("filer happy path emitted: /institutional/filers/1067983/ renders the aggre
   assert.ok(html.includes("2025-12-31"));
   /* DESIGN-POLISH M3 (Architecture H, V1 NEW-1): the EDGAR block states the
      decision and its date in plain words */
-  assert.ok(html.includes("Public Filings decided on 2026-08-01 to serve this list"), "the EDGAR link-out block ships");
+  /* launch copy audit filer-11: the block names the filing as the record and keeps its receipt */
+  assert.ok(html.includes("The filing on EDGAR is the record, including any filed after this build."), "the EDGAR link-out block ships");
   assert.ok(html.includes("latest filing in build filed 2026-05-15"), "Locked #20 stamp");
   assert.ok(
     html.includes("not current holdings"),

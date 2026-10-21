@@ -239,3 +239,109 @@ test("signals-v4 LD8: on the ticker page selectTabFor selects the panel holding 
     h.restore();
   }
 });
+
+/* ------------------------- launch redesign M6: the ticker head and Congress tab */
+
+/* Launch copy audit ticker-01 … ticker-08 (PLAN R29, R30, R2; LD3 gives M6 the
+   ticker page's header and Congress tab; ticker-09 … 13 are M7b's). Applied
+   text present, replaced text gone, every caveat the items touched kept, and
+   each element within the audit's words_after by the audit's own counting
+   rule. The tab-level gate (≤ 206 on the served HTML) is the post-build word
+   predicate's on the integrated build: it also needs M7a's signals-03 and
+   signals-07, which shorten the open row the "On Signals" block shares. */
+import { BANNED_PATTERNS, redactFiledNames } from "./lib/banned-scan.ts";
+import { domOf, visibleText } from "./lib/ledger-dom.ts";
+
+function auditWordsOf(el: MiniElement | null): number {
+  if (!el) return 0;
+  const text = (n: MiniElement): string =>
+    n.nodes.map((c) => (typeof c === "string" ? c : c.classList.contains("visually-hidden") || c.classList.contains("note-pop") ? " " : text(c))).join("");
+  return text(el).replace(/&[a-z#0-9]+;/g, " ").replace(/[⏎↗↓→←▲▼◂▸ⓘ§†‡·|/⌕☰]/g, " ").split(/\s+/).filter((w) => /[A-Za-z0-9]/.test(w)).length;
+}
+
+function m6Body(rows: TxnRow[]): string {
+  return tickerUnifiedBody(
+    { ticker: "WMB", txns: rows },
+    { state: "data", name: "Williams Cos Inc", cik: "0000107263", period: "2026-03-31", latestFiled: "2026-05-01", topn: 25, holders: [] },
+    STAMPS,
+    {},
+    { fullTable: false },
+    { crowding: null, committees: { byMember: new Map(), windowFrom: "2025-01-01", windowTo: "2026-12-31", snapshotDate: "2026-07-20" } },
+  );
+}
+
+const UNDATED: TxnRow = { ...ROW, txnId: "t-2", traded: null, lag: null, bioguide: "T000002", name: "Second Member" };
+const LATE: TxnRow = { ...ROW, txnId: "t-3", traded: "2026-04-01", lag: 111, late: 1, side: "sale", bioguide: "T000003", name: "Third Member" };
+
+test("launch M6 (ticker-01…08): the shipped copy, the replaced copy gone, every touched caveat kept", () => {
+  const html = m6Body([ROW, UNDATED, LATE]);
+  const dom = domOf(html);
+  const one = (sel: string): MiniElement => {
+    const el = dom.querySelector(sel);
+    assert.ok(el, `${sel} renders`);
+    return el!;
+  };
+  // ticker-01: no kicker over the H1
+  assert.equal(dom.querySelectorAll(".page-head .kicker").length, 0);
+  // ticker-02: the † is its own tip (G14), not a link to a footnote at the foot
+  const h1 = one("h1.entity-title");
+  assert.equal(visibleText(h1.querySelector("button.note-mark")!), "†");
+  assert.match(visibleText(one("#n-ticker-head-mapped-name")), /present-day mapping, not the name as of each filing/);
+  assert.equal(dom.querySelectorAll("#ticker-footnotes").length, 0);
+  // ticker-03 (the remainder #163 left): the PTR jargon out of the labels; the undated count stays
+  const ledger = dom.querySelectorAll(".ledger-fig").map((f) => visibleText(f));
+  assert.ok(ledger[0]!.startsWith("Congress trades") && ledger[0]!.endsWith("all time"));
+  assert.ok(ledger[2]!.startsWith("Latest filing") && ledger[2]!.endsWith("2026-07-21"));
+  assert.match(ledger[3]!, /1 of 3 undated: timeliness unknown$/, "an undated row's timeliness is still stated");
+  // ticker-04: each regime's clock once, with the as-of date
+  assert.equal(visibleText(one(".design-provenance .tk-clock")), "Congress: statutory ranges, filed up to 45 days after the trade · 13F: quarter-end snapshots, filed up to 45 days later");
+  assert.equal(visibleText(one(".design-provenance .stamp-line")), "as of 2026-07-24");
+  // ticker-06: one meta line; rows that cannot be placed are counted in it; the legend is its tip
+  assert.equal(visibleText(one(".design-timeline .panel-note")), "By trade date · 24 months · 2 rows · 1 undated, not placed ⓘ");
+  assert.match(visibleText(one("#n-ticker-timeline-legend")), /^▲ buy, ▼ sell; height = lower bound \(log scale\)\. Trade date, not filing date — the filing lag is in the table below\.$/);
+  assert.equal(dom.querySelectorAll(".design-timeline p.section-note").length, 0, "no note under the plot");
+  // ticker-07: the window and the order; the two method lines are its tip
+  assert.equal(visibleText(one(".design-members-active .panel-note")), "12 months · most active first ⓘ");
+  assert.match(visibleText(one("#n-ticker-members-method")), /^Rows = number of disclosures, not dollars\. Net = lower bound of the net range\. Committees as of each member's latest trade in the window \(roster snapshot 2026-07-20\)\.$/);
+  assert.equal(visibleText(dom.querySelectorAll(".design-members-active p.section-note").at(-1)!), "3 members");
+  // ticker-08: the order in a few words, one link to every row, no card foot
+  const disclosures = one('[aria-label="Congressional disclosures"]');
+  assert.equal(visibleText(disclosures.querySelector(".panel-note")!), "Newest filed first");
+  assert.equal(visibleText(disclosures.querySelector("a.section-link")!), "All 3 rows ↗");
+  assert.equal(disclosures.querySelectorAll(".card-foot").length, 0);
+
+  for (const gone of [
+    "Public record / Tickers", 'href="#ticker-footnotes"', "Congress txns", "all PTR rows naming", "Latest PTR", "Congress = transactions", "keeps its own clock",
+    "a disclosure record, not a chart", "TRADE DATES", "HEIGHT = LOG LOWER BOUND", "the lag lives in the table below", "rows placed", "NET LOWER BOUND",
+    "COMMITTEES AS OF TRADE DATE", "in the window, most active first", "counts of disclosures, not dollars.</p>", "ALL PTR ROWS NAMING", "SORTED FILED",
+    "STATUTORY RANGES · FILED ≤45D LATE", "full congressional view", "Traded → filed dates on every row", "filed past the 45-day window</dd>",
+  ]) {
+    assert.ok(!html.includes(gone), `replaced copy is gone: "${gone}"`);
+  }
+  for (const kept of ["statutory ranges", "filed up to 45 days after the trade", "quarter-end snapshots", "undated, not placed", "not the name as of each filing", "Rows filed past the STOCK Act&#39;s 45-day window"]) {
+    assert.ok(html.includes(kept), `the caveat stays: "${kept}"`);
+  }
+  const scanned = redactFiledNames(html);
+  assert.deepEqual(BANNED_PATTERNS.filter((p) => p.re.test(scanned)).map((p) => p.name), []);
+});
+
+test("launch M6 (ticker-01…08): each element within the audit's words_after, counted by the audit's rule", () => {
+  const dom = domOf(m6Body([ROW]));
+  const words = (sel: string): number => auditWordsOf(dom.querySelector(sel));
+  assert.equal(words(".page-head .kicker"), 0, "ticker-01: 0");
+  /* ticker-04, adapted: 23 against the audit's 20 — the 13F clause keeps the
+     13F lag ("filed up to 45 days later") where the audit wrote "not current
+     holdings", a phrase the ticker page never prints (pages-render.test.ts) */
+  assert.ok(words(".design-provenance") <= 23, `ticker-04: ${words(".design-provenance")}`);
+  assert.ok(words(".design-timeline .panel-note") <= 7, `ticker-06: ${words(".design-timeline .panel-note")}`);
+  const members = auditWordsOf(dom.querySelector(".design-members-active .panel-note")) + auditWordsOf(dom.querySelectorAll(".design-members-active p.section-note").at(-1) ?? null);
+  assert.ok(members <= 8, `ticker-07: ${members}`);
+  // and with more than eight members the count line is the bare range, as the audit wrote it
+  const many = Array.from({ length: 10 }, (_, i) => ({ ...ROW, txnId: `m-${i}`, bioguide: `M00000${i}`, name: `Member ${i}` }));
+  const manyDom = domOf(m6Body(many));
+  assert.equal(visibleText(manyDom.querySelectorAll(".design-members-active p.section-note").at(-1)!), "1–8 of 10");
+  const disclosures = dom.querySelector('[aria-label="Congressional disclosures"] .panel-head')!;
+  assert.ok(auditWordsOf(disclosures) - 2 <= 8, `ticker-08: ${auditWordsOf(disclosures) - 2} besides the 2-word heading`);
+  // ticker-02 and the tips: a tip's words are never visible copy
+  assert.equal(auditWordsOf(dom.querySelector("h1.entity-title")), 4, "the H1 reads 'WMB — Williams Cos Inc'; the † tip adds nothing");
+});

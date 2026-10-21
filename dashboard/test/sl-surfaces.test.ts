@@ -420,8 +420,11 @@ test("SL-R10: the terminus inventory partitions EXACTLY — five deleted, eight 
   // in ticker.ts (2: inst section + holders cap), institutional.ts (2: changes
   // bound + filer period terminus) and signals.ts (1: render bound).
   // R17 retired the signals hits terminus (a real pager replaced the cap).
+  // Launch copy audit filer-07 retired the filer period "terminus": nothing is
+  // truncated there, so its comparability sentence is a caveat line now
+  // (`filerPeriodSectionHtml`, asserted in sl-filer.test.ts).
   const files = {
-    "ui-modules": 4,
+    "ui-modules": 3,
     "../src/lib/activity.ts": 1,
     "../src/lib/holdings.ts": 2,
     "../src/pages/institutional/index.astro": 0,
@@ -434,7 +437,7 @@ test("SL-R10: the terminus inventory partitions EXACTLY — five deleted, eight 
     total += calls;
     assert.ok(!/syncTerminusFor/.test(src.replace(/\/\*[\s\S]*?\*\//g, "")), `${f} still calls syncTerminusFor`);
   }
-  assert.equal(total, 7, "seven standalone terminus rows are KEPT — R10 deleted the five duplicates, R17 the signals cap");
+  assert.equal(total, 6, "six standalone terminus rows are KEPT — R10 deleted the five duplicates, R17 the signals cap, the launch copy audit (filer-07) the filer comparability line");
 
   const fmt = readFileSync(new URL("../src/lib/format.ts", import.meta.url), "utf8");
   assert.match(fmt, /export function terminusRow\(/, "the primitive itself stays");

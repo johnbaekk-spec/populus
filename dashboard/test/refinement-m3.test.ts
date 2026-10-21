@@ -41,10 +41,16 @@ test("R21: the six footers are converted — no raw card-foot literal is left in
   /* launch M4b (member-16): the member Signals panel's foot and its drawer
      became ONE header note, so lib/ui/signals.ts no longer renders a foot at
      all; the property — no raw card-foot literal anywhere — still covers it. */
+  /* Launch copy audit ticker-08: the ticker page's one card foot (the Congress
+     preview's "Traded → filed dates on every row") is retired — both dates
+     show on every row and its "all N rows" link moved into the panel head — so
+     ticker.ts renders no card foot at all, raw or converted. The property kept:
+     no renderer prints a raw card-foot literal. */
+  const footRetired = new Set(["lib/ui/ticker.ts", "lib/ui/signals.ts"]);
   for (const f of ["lib/ui/congress.ts", "lib/ui/ticker.ts", "lib/ui/signals.ts"]) {
     const src = readFileSync(path.join(SRC, f), "utf-8");
     assert.ok(!src.includes('`<div class="card-foot">'), `${f} still renders a raw card-foot`);
-    if (f !== "lib/ui/signals.ts") assert.ok(src.includes("cardFoot({"), `${f} uses cardFoot`);
+    if (!footRetired.has(f)) assert.ok(src.includes("cardFoot({"), `${f} uses cardFoot`);
   }
   const inst = readFileSync(path.join(SRC, "lib/ui/institutional.ts"), "utf-8");
   assert.ok(!inst.includes("caveat-inline\">${esc(INST_STAMP_CAVEAT)}"), "the INST_STAMP_CAVEAT lines go through cardFoot");

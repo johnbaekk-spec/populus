@@ -109,7 +109,15 @@ test('filer weight requires a complete, fully valued book', async () => {
   assert.deepEqual(heads(full), cols(full), 'every rendered header is a listed column, in order');
   assert.equal((full.match(/<th\b/g) ?? []).length, cols(full).length);
   for (const gone of ['Kind', 'Position change', 'Congress']) assert.doesNotMatch(full, new RegExp(`<th\\b[^>]*>(?:<[^>]+>)*${gone}<`), `the derived ${gone} column is removed`);
-  assert.match(reason(full), /Change kind and share change are in Position changes above; Congress overlap is planned\./, 'the removed derived columns are accounted for in the foot');
+  /* Launch copy audit filer-06 (reversal record, docs/frontend/launch-redesign.md):
+     the foot no longer carries the STATIC pointer for the three derived
+     columns removed by design ("Change kind and share change are in Position
+     changes above; Congress overlap is planned.") — it pointed at the band
+     directly above and announced a roadmap item. The property kept is the
+     data-dependent one: a column the DATA removes still states why (the
+     Weight reason below, the Ticker reason here). */
+  assert.doesNotMatch(full, /Congress overlap is planned|are in Position changes above/, 'the static pointer and the roadmap note are gone');
+  assert.match(reason(full), /^Ticker: no reported row here maps to a reviewed ticker\./, 'a data-removed column still states why');
   for (const partial of [holdingsTableHtml({...opts,totalRows:3}), holdingsTableHtml({...opts,rows:[row,{...row as object,value_usd:null} as never]})]) {
     assert.doesNotMatch(partial,/66\.7%/);
     assert.ok(!cols(partial).includes('weight') && !cols(partial).includes('wt'), 'an incomplete book removes the weight columns');

@@ -545,8 +545,10 @@ test('signals-v4 T2.4 / T2.6: /signals/#institutional at 1440 — the tab select
 test('Filer composition at 1440 (T2.5): parts in DOM order = visual order; the period roots', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   expect((await page.goto('/institutional/filers/1067983/'))?.status()).toBe(200);
-  /* head → changes → band F1 → Planned line → EDGAR / notes → the §5 note */
-  const parts = ['main header.entity-head', 'main [data-filer-root]', 'main .design-filer-band', 'main > p.planned-line', 'main details.edgar-block', 'main #filer-notes', 'main .filer-data-note'];
+  /* head → changes → band F1 → EDGAR → the §5 note (launch copy audit
+     filer-06 / filer-11: the Planned line and the "Notes on this data" cards
+     left the foot) */
+  const parts = ['main header.entity-head', 'main [data-filer-root]', 'main .design-filer-band', 'main details.edgar-block', 'main .filer-data-note'];
   const order = await partsInOrder(page, parts);
   expect(order.missing).toEqual([]);
   expect(order.domOrder, 'the parts are emitted in the Decision-log order').toBe(true);
@@ -789,14 +791,18 @@ const CANVAS_CASES: CanvasCase[] = [
     },
   },
   {
-    file: "Institutional Filer.dc.html", route: "/institutional/filers/1067983/", open: "#filer-notes",
+    /* launch copy audit filer-11: the route's "Notes on this data" cards are
+       retired (generic restatements of the provenance line and the §5 box), so
+       the canvas's three summary cards have no route twin and are not compared
+       (never faked); the ledger, heads, tables and segments still are. */
+    file: "Institutional Filer.dc.html", route: "/institutional/filers/1067983/",
     tables: [
       { label: "Position changes", selector: ".design-changes table.etable" },
       { label: "Reported positions", selector: '[data-holdings-surface="filer"] table.etable' },
       { label: "Filing history", selector: ".design-filer-history table.etable" },
     ],
     map: {
-      ledger: true, cards: true,
+      ledger: true, cards: false,
       /* review Q2-8: the measured Filing history is mapped to its canvas band */
       tables: [
         {
@@ -808,7 +814,7 @@ const CANVAS_CASES: CanvasCase[] = [
         { canvas: "Holdings", route: "Reported positions", unmatched: { "WEIGHT (canvas cell unmeasured)": WHY.bar } },
         { canvas: "Filing history", route: "Filing history", minCompared: 0, unmatched: { PERIOD: WHY.headerless, SOURCE: WHY.headerless }, gutterDeviation: "table.gutter.d11" },
       ],
-      heads: [{ canvas: "Holdings", route: "Position changes — …" }, { canvas: "Holdings", route: "Reported positions — …" }, { canvas: "Book shape", route: "Book shape" }, { canvas: "Filing history", route: "Filing history" }],
+      heads: [{ canvas: "Holdings", route: "Changes · …" }, { canvas: "Holdings", route: "Reported positions — …" }, { canvas: "Book shape", route: "Book shape" }, { canvas: "Filing history", route: "Filing history" }],
       pairs: [{ canvas: ["Holdings", "Book shape"], route: ["Reported positions — …", "Book shape"] }],
       segs: [{ canvas: "All|Changed|New|Congress overlap", route: "All|New stakes|…" }],
     },

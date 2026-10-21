@@ -405,7 +405,8 @@ test("POST-BUILD R15/R16/R18: filer 1067983 leads with identity → stats → ch
     const holdings = html.indexOf('data-holdings-surface="filer"');
     assert.ok(stats > 0 && changes > stats, "stats precede the changes");
     assert.ok(holdings > 0, "the holdings surface renders");
-    assert.equal((html.match(/class="planned-line"/g) ?? []).length, 1);
+    // launch copy audit filer-06: the filer page's roadmap line is gone
+    assert.equal((html.match(/class="planned-line"/g) ?? []).length, 0);
     assert.doesNotMatch(html, /aria-label="Congress overlap"|aria-label="Signals for this filer"/);
   }
   const members = path.join(DIST, "congress", "members");
