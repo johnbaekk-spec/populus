@@ -19,7 +19,7 @@ import type { TxnRow } from "../src/lib/format.ts";
 import { buildTriage, daysBetween, type TriageResult } from "../src/lib/signal-triage.ts";
 import { scanBannedWording } from "../src/lib/activity.ts";
 import { MiniElement } from "./lib/mini-dom.ts";
-import { syncScrollRegion, type ScrollRegionNode } from "../src/scripts/signals-client.ts";
+import { syncScrollRegion, type ScrollRegionNode } from "../src/scripts/scroll-regions.ts";
 import { loadTriageFixture } from "./lib/triage-fixture.ts";
 import { baseStylesheet } from "./lib/styles.ts";
 

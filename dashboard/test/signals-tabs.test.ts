@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import { signalsBody } from "../src/lib/ui/index.ts";
 import { initTabs, selectTabFor, type TabsEnv } from "../src/scripts/tabs.ts";
 import { initSignalsPage } from "../src/scripts/signals-client.ts";
+import { initScrollRegions } from "../src/scripts/scroll-regions.ts";
 import type { SignalArtifact } from "../src/lib/signals.ts";
 import { buildTriage } from "../src/lib/signal-triage.ts";
 import { loadTriageFixture } from "./lib/triage-fixture.ts";
@@ -212,6 +213,9 @@ test("T2.2 (LD8): initTabs and the scroll regions together — as the wrapper st
     wrap.scrollWidth = 300;
     wrap.clientWidth = 300;
     initSignalsPage({ tabsEnv: env });
+    /* launch integration: the scroll regions are synced by the layout's
+       runtime on every page (Base.astro runs it beside the page's script) */
+    initScrollRegions();
     const list = doc.querySelector('[role="tablist"]')!;
     const roles = () => [wrap.getAttribute("role"), list.getAttribute("role"), list.getAttribute("aria-label")];
     assert.deepEqual(roles(), [null, "tablist", "Signal sources"], "fits: a plain box");

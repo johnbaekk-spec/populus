@@ -38,8 +38,10 @@ const IPHONE_UA =
 
 const THEME = (process.env.POPULUS_THEME ?? "dark").trim() === "light" ? "light" : "dark";
 
-/** R10's allowlist: tab bars, chip and tool rows, swipe strips. */
-export const SCROLLER_ALLOW: readonly string[] = [".sig-tabs-scroll", ".tk-tabs", ".si-pb-chips", ".ov-tools", ".mv-chips", ".si-cards", "[data-scroll-region]"];
+/** R10's allowlist: tab bars, chip and tool rows, swipe strips — and (launch
+    integration, M7b R34/LD30) Methodology's sticky contents menu, a nav row
+    named by its own `aria-label="Sections"` that scrolls sideways at ≤720px. */
+export const SCROLLER_ALLOW: readonly string[] = [".sig-tabs-scroll", ".tk-tabs", ".si-pb-chips", ".ov-tools", ".mv-chips", ".si-cards", ".metho-toc", "[data-scroll-region]"];
 /** The swipe strips among them (LD11: x mandatory snap): the signal cards
     (home and Signals), the playbook list, and any strip a renderer marks. */
 export const SWIPE_STRIPS: readonly string[] = [".pb-list", ".si-cards", "[data-swipe]"];

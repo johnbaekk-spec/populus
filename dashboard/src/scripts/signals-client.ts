@@ -1051,65 +1051,9 @@ export function initInPageLinks(): void {
   }
 }
 
-/* ---------------------------------------------------------------- R-8: scroll regions */
-
-/** The narrow surface `syncScrollRegion` touches, declared structurally so
-    it runs under `node --test` as well as on a real element. */
-export interface ScrollRegionNode {
-  scrollWidth: number;
-  clientWidth: number;
-  dataset: Record<string, string | undefined>;
-  getAttribute(name: string): string | null;
-  setAttribute(name: string, value: string): void;
-  removeAttribute(name: string): void;
-}
-
-/** A wrapper is a focusable, named "scroll sideways" region exactly while
-    its content overflows it, and a plain box otherwise (review R-8). The
-    name is the one the server rendered in `data-scroll-region`.
-
-    signals-v4 LD8: `data-scroll-region` goes only on a ROLE-LESS wrapper. An
-    element that carries a role or an accessible name of its own in the
-    server HTML (a tablist, a group) is never re-roled: the first sync finds
-    it, logs a console error and leaves it untouched — the roles this
-    function writes are recorded (`data-scroll-region-owned`), so a later
-    sync can tell them from the server's. */
-export function syncScrollRegion(el: ScrollRegionNode): boolean {
-  if (el.getAttribute("data-scroll-region-owned") !== "1") {
-    if (el.getAttribute("role") !== null || el.getAttribute("aria-label") !== null) {
-      console.error("populus: [data-scroll-region] on an element with its own role or name; it is not re-roled", el);
-      return false;
-    }
-    el.setAttribute("data-scroll-region-owned", "1");
-  }
-  const name = el.dataset.scrollRegion;
-  const scrolls = !!name && el.scrollWidth > el.clientWidth + 1;
-  if (scrolls) {
-    el.setAttribute("tabindex", "0");
-    el.setAttribute("role", "region");
-    el.setAttribute("aria-label", name!);
-  } else {
-    el.removeAttribute("tabindex");
-    el.removeAttribute("role");
-    el.removeAttribute("aria-label");
-  }
-  return scrolls;
-}
-
-function initScrollRegions(): void {
-  for (const el of Array.from(document.querySelectorAll<HTMLElement>("[data-scroll-region]"))) {
-    const sync = (): void => void syncScrollRegion(el);
-    sync();
-    // the wrapper's width moves with the viewport, its content's (the hits
-    // table, the tablist, a chip row) with what it holds
-    if (typeof ResizeObserver === "function") {
-      const ro = new ResizeObserver(sync);
-      ro.observe(el);
-      const content = el.querySelector("table") ?? el.firstElementChild;
-      if (content) ro.observe(content);
-    } else window.addEventListener("resize", sync);
-  }
-}
+/* R-8: the scroll regions (`data-scroll-region`) are synced on every page by
+   `scripts/scroll-regions.ts`, which `Base.astro` runs (launch integration:
+   the home carries scroll regions too). */
 
 let fit: FitBinding | null = null;
 let movesFit: FitBinding | null = null;
@@ -1125,7 +1069,6 @@ export function initSignalsPage(opts: { tabsEnv?: TabsEnv } = {}): void {
   playbookList = initPlaybooks();
   pbFilter = initPlaybookFilter();
   initPaneSwitches();
-  initScrollRegions();
   initInPageLinks();
   initRowLinks();
   /* LD6 (Congress): the hits fill to the height of "Filings to read" */

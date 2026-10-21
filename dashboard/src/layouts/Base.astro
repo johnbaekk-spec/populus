@@ -225,7 +225,11 @@ const FOOTER_NOTICE = {
     <script>
       import { initSearch } from "../scripts/search-client";
       import { initHitAreas } from "../scripts/hit-areas";
+      import { initScrollRegions } from "../scripts/scroll-regions";
       initSearch();
+      // R-8 / R10 (launch integration): every named sideways scroller, on
+      // every page, is a focusable named region exactly while it overflows.
+      initScrollRegions();
       // DESIGN-POLISH M1 (H-16): each trigger's hit square stops at the
       // midpoint to its neighbour; an enhancement, never a layout change.
       initHitAreas();

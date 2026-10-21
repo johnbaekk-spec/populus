@@ -323,3 +323,30 @@ test("R7 (LD7): links take the hit square under the hit query; a card's main lin
   const hit = readFileSync(path.resolve(import.meta.dirname, "..", "src", "scripts", "hit-areas.ts"), "utf-8");
   assert.match(hit, /const LINKS = "a\[href\]:not\(:is\(p, li, dd, \.note-pop, \.footer-notice\) a\)";/);
 });
+
+/* ----------------------------- R10 (launch integration): scroll regions, global */
+
+import { renderParitySurfaces } from "./lib/ui-parity-surfaces.ts";
+
+test("R10 (launch integration): the scroll-region runtime runs on every page from the layout; every named scroller is role-less in the server HTML, so the runtime can name it", async () => {
+  const SRCDIR = path.resolve(import.meta.dirname, "..", "src");
+  const base = readFileSync(path.join(SRCDIR, "layouts", "Base.astro"), "utf-8");
+  assert.match(base, /import \{ initScrollRegions \} from "\.\.\/scripts\/scroll-regions";/, "the layout loads the runtime");
+  assert.match(base, /\n\s*initScrollRegions\(\);/, "and runs it on every page (the home's strips included)");
+  const sig = readFileSync(path.join(SRCDIR, "scripts", "signals-client.ts"), "utf-8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.doesNotMatch(sig, /function syncScrollRegion|function initScrollRegions|from "\.\/scroll-regions/, "one runtime: /signals/ no longer runs its own, nor a second copy of the layout's");
+  // every [data-scroll-region] start tag the renderers emit: a name, and no role or name of its own
+  const all = await renderParitySurfaces();
+  const tags = new Map<string, string>();
+  for (const html of Object.values(all)) for (const m of html.matchAll(/<[a-z]+\b[^>]*\bdata-scroll-region="([^"]*)"[^>]*>/g)) tags.set(m[0], m[1]!);
+  const problems = (tag: string, name: string): string[] =>
+    [...(name.trim() === "" ? ["empty name"] : []), ...(/\s(?:role|aria-label|aria-labelledby)=/.test(tag) ? ["own role or name"] : [])];
+  for (const [tag, name] of tags) assert.deepEqual(problems(tag, name), [], tag);
+  // the strips the plan names: Signals' lead cards and change chips, the home's cards and Try chips
+  const has = (cls: string): boolean => [...tags.keys()].some((t) => new RegExp(`class="${cls}"`).test(t));
+  for (const cls of ["si-cards", "mv-chips", "home-try-strip"]) assert.ok(has(cls), `.${cls} carries a data-scroll-region name`);
+  assert.ok([...tags].some(([t, n]) => /class="si-cards"/.test(t) && /What stands out/.test(n)), "the home's card strip (it reuses .si-cards) is named apart from Signals'");
+  // control: the same reading catches a scroller that brings its own role
+  assert.deepEqual(problems('<div class="x" role="group" data-scroll-region="X">', "X"), ["own role or name"]);
+  assert.deepEqual(problems('<div class="x" data-scroll-region="">', ""), ["empty name"]);
+});
