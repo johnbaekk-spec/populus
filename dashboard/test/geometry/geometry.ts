@@ -2366,7 +2366,12 @@ export interface PhoneAudit {
 }
 
 export function phoneAuditInPage(arg: PhoneAuditArg): PhoneAudit {
-  const vw = innerWidth;
+  /* The LAYOUT viewport's width (launch review, B1). In a mobile context
+     (isMobile) `innerWidth` grows to the content: a page 720px wide reads
+     innerWidth 720 at a 390px viewport, so "scrollWidth > innerWidth" could
+     never see a page that scrolls sideways, nor a table or an honesty field
+     past the edge. `clientWidth` stays the viewport's 390. */
+  const vw = document.documentElement.clientWidth;
   const csOf = new Map<Element, CSSStyleDeclaration>();
   const cs = (el: Element): CSSStyleDeclaration => {
     let s = csOf.get(el);
@@ -2521,16 +2526,17 @@ export function phoneAuditInPage(arg: PhoneAuditArg): PhoneAudit {
     if (h.w < arg.minTap - 0.5 || h.h < arg.minTap - 0.5) out.smallTaps.push(`${label(el)} ${Math.round(h.w)}x${Math.round(h.h)}`);
   }
   const scrollY0 = window.scrollY;
+  const vh = document.documentElement.clientHeight; // innerHeight grows with innerWidth (above)
   for (const el of taps) {
     const r0 = el.getBoundingClientRect();
     const cxDoc = r0.left + r0.width / 2;
     const cyDoc = r0.top + window.scrollY + r0.height / 2;
-    if (cxDoc < 0 || cxDoc > vw) continue; // inside a sideways scroller, off its visible part
-    window.scrollTo(0, Math.max(0, cyDoc - innerHeight / 2));
+    if (cxDoc < 0 || cxDoc > vw) continue; // past the viewport's edge (inside a sideways scroller, or the page overflows: R4 names it)
+    window.scrollTo(0, Math.max(0, cyDoc - vh / 2));
     const r = el.getBoundingClientRect();
     const cx = r.left + r.width / 2;
     const cy = r.top + r.height / 2;
-    if (cy < 0 || cy > innerHeight) continue;
+    if (cy < 0 || cy > vh) continue;
     out.coverChecked += 1;
     const top = document.elementFromPoint(cx, cy);
     if (!top || top === el || el.contains(top)) continue;
@@ -2586,10 +2592,21 @@ export function phoneAuditInPage(arg: PhoneAuditArg): PhoneAudit {
         out.honestyProblems.push(`${sel}: ${label(el)} is not rendered`);
         continue;
       }
-      const r = el.getBoundingClientRect();
+      let r: DOMRect = el.getBoundingClientRect();
       if (r.width < 1 || r.height < 1) {
-        if ((el.textContent ?? "").trim()) out.honestyProblems.push(`${sel}: ${label(el)} has no box`);
-        continue;
+        /* A hung mark (`.hang`: an inline-block of width 0, overflow visible)
+           has no advance by design yet paints its glyph: measure the painted
+           text, not the box (launch review: "≈ has no box" on every card). */
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        const painted = Array.from(range.getClientRects()).filter((q) => q.width >= 1 && q.height >= 1);
+        if (painted.length === 0) {
+          if ((el.textContent ?? "").trim()) out.honestyProblems.push(`${sel}: ${label(el)} has no box`);
+          continue;
+        }
+        const L = Math.min(...painted.map((q) => q.left));
+        const T = Math.min(...painted.map((q) => q.top));
+        r = new DOMRect(L, T, Math.max(...painted.map((q) => q.right)) - L, Math.max(...painted.map((q) => q.bottom)) - T);
       }
       const s = cs(el);
       const clamp = s.getPropertyValue("-webkit-line-clamp");
@@ -2636,6 +2653,200 @@ export function phoneAuditInPage(arg: PhoneAuditArg): PhoneAudit {
     out.gutterL = parseFloat(cs(shell).paddingLeft);
     out.gutterR = parseFloat(cs(shell).paddingRight);
   }
+  return out;
+}
+
+/* ------------------------------------------- the cards (launch review)
+
+   The card predicates of the phone-surfaces suite
+   (test/launch-phone-surfaces.test.ts), self-contained for page.evaluate,
+   kept here beside `phoneAuditInPage` so a later caller reads one ruler:
+
+   - TAPS. A card's tap target is the row's MAIN link: the first link of its
+     main cell — the first cell of the first tier (`mainTiers`) holding a link
+     that is not a receipt. Its renderer marks it, and only it, with
+     `rowLinkAttr`, and a tap on the card's free area (a point no other
+     target, and no nested table, covers) lands on it. A row with no main link
+     marks none, and a tap on it opens nothing. A tap never opens a receipt.
+     The signal cards (`.si-card`) follow the same rule with `.si-card-open`,
+     and a Named-moves receipt (`.mv-item > .mv-src`) stays on its row's
+     summary line, inside the row (launch review M1).
+   - LABELS. Every visible body `.c-num` cell of a card table (not the feed,
+     which keeps its own grid) carries a non-empty `data-label` and prints it
+     through its ::before: a bare "12" means nothing once the head folds.
+   - OVERFLOW. The boxes that reach past the viewport's right edge with no
+     clipping or scrolling ancestor — what names a page that scrolls sideways. */
+
+export interface PhoneCardArg {
+  /** the main cells, one selector per tier, highest priority first */
+  mainTiers: readonly string[];
+  /** the containers a receipt sits in */
+  receipt: string;
+  /** the attribute a renderer marks the row's main link with */
+  rowLinkAttr: string;
+  /** the tap floor, px (44): a target's square, which a "free" point avoids */
+  hit: number;
+}
+
+export interface PhoneCardAudit {
+  rows: number;
+  tapChecked: number;
+  tapProblems: string[];
+  numCells: number;
+  labelProblems: string[];
+  siCards: number;
+  siCardProblems: string[];
+  receipts: number;
+  receiptProblems: string[];
+  overflow: string[];
+}
+
+export function phoneCardAuditInPage(arg: PhoneCardArg): PhoneCardAudit {
+  const out: PhoneCardAudit = { rows: 0, tapChecked: 0, tapProblems: [], numCells: 0, labelProblems: [], siCards: 0, siCardProblems: [], receipts: 0, receiptProblems: [], overflow: [] };
+  /* the layout viewport (see phoneAuditInPage: innerWidth grows to the content) */
+  const vw = document.documentElement.clientWidth;
+  /* rendered: a box, and no hiding ancestor — display:none, visibility, or the
+     content-visibility of a closed <details> (whose rows still report boxes) */
+  const vis = (el: Element): boolean => {
+    const r = el.getBoundingClientRect();
+    if (r.width <= 1 || r.height <= 1) return false;
+    const he = el as HTMLElement;
+    if (typeof he.checkVisibility === "function") return he.checkVisibility({ visibilityProperty: true } as CheckVisibilityOptions);
+    const s = getComputedStyle(el);
+    return s.visibility !== "hidden" && s.display !== "none";
+  };
+  const text = (el: Element | null): string => ((el as HTMLElement | null)?.innerText ?? el?.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, 40);
+  const tag = (el: Element | null): string => {
+    if (!el) return "nothing";
+    const cls = typeof (el as HTMLElement).className === "string" && (el as HTMLElement).className ? "." + (el as HTMLElement).className.trim().split(/\s+/).slice(0, 2).join(".") : "";
+    const href = el.getAttribute("href");
+    return `${el.tagName.toLowerCase()}${cls}${href ? `[href=${href.slice(0, 48)}]` : ""} "${text(el)}"`;
+  };
+  const isReceipt = (a: Element): boolean => a.closest(arg.receipt) !== null;
+  const shown = (a: Element): boolean => a.getClientRects().length > 0 && !a.closest("[hidden], [popover]");
+  const TARGETS = 'a[href], button, summary, input, select, textarea, label, [tabindex], [role="button"], table';
+  /** a point of `box` outside every target's tap square — each target's box
+      grown to the `hit` floor on each axis (+2px), the square the hit rule
+      gives it (layout.css), a neighbour's included — and outside any nested
+      table, in the viewport. Only a STRETCHED link can answer a tap there. */
+  const allTargets = Array.from(document.querySelectorAll(TARGETS));
+  const freePoint = (root: Element, box: DOMRect): { x: number; y: number } | null => {
+    const near = (q: DOMRect): boolean => q.right >= box.left - arg.hit && q.left <= box.right + arg.hit && q.bottom >= box.top - arg.hit && q.top <= box.bottom + arg.hit;
+    const blockers = allTargets
+      .filter((el) => el !== root && !el.contains(root))
+      .flatMap((el) => Array.from(el.getClientRects()).filter(near))
+      .map((r) => {
+        const dx = Math.max(0, (arg.hit - r.width) / 2) + 2;
+        const dy = Math.max(0, (arg.hit - r.height) / 2) + 2;
+        return { l: r.left - dx, r: r.right + dx, t: r.top - dy, b: r.bottom + dy };
+      });
+    const vh = document.documentElement.clientHeight;
+    for (let y = box.top + 3; y <= box.bottom - 3; y += 4) {
+      if (y < 1 || y > vh - 1) continue;
+      for (let x = box.left + 4; x <= box.right - 4; x += 6) {
+        if (x < 1 || x > vw - 1) continue;
+        if (blockers.some((q) => x >= q.l && x <= q.r && y >= q.t && y <= q.b)) continue;
+        return { x, y };
+      }
+    }
+    return null;
+  };
+  const where = (table: Element, i: number): string => {
+    const cap = table.querySelector(":scope > caption");
+    const sec = table.closest("[id], [aria-label]");
+    const name = cap ? text(cap) : sec ? (sec.id ? `#${sec.id}` : sec.getAttribute("aria-label") ?? "") : "";
+    return `table[data-card=${table.getAttribute("data-card")}] "${name}" row ${i + 1}`;
+  };
+
+  for (const table of Array.from(document.querySelectorAll('table[data-card]:not([data-card="feed"])'))) {
+    if (!vis(table)) continue;
+    const rows = Array.from(table.querySelectorAll(":scope > tbody > tr")).filter(vis);
+    rows.forEach((tr, i) => {
+      out.rows += 1;
+      const at = where(table, i);
+      /* LABELS */
+      for (const cell of Array.from(tr.children)) {
+        if (!cell.matches(".c-num") || !vis(cell)) continue;
+        if ((Number.parseInt(cell.getAttribute("colspan") ?? "1", 10) || 1) > 1) continue;
+        out.numCells += 1;
+        const label = (cell.getAttribute("data-label") ?? "").trim();
+        const before = getComputedStyle(cell, "::before");
+        if (!label) out.labelProblems.push(`${at}: the number "${text(cell)}" names no column (no data-label)`);
+        else if (before.content === "none" || before.content === "normal" || before.display === "none") out.labelProblems.push(`${at}: the number "${text(cell)}" does not print its label "${label}"`);
+      }
+      /* TAPS */
+      let main: Element | null = null;
+      for (const tier of arg.mainTiers) {
+        for (const cell of Array.from(tr.children)) {
+          if (!cell.matches(tier)) continue;
+          main = Array.from(cell.querySelectorAll("a[href]")).find((a) => shown(a) && !isReceipt(a)) ?? null;
+          if (main) break;
+        }
+        if (main) break;
+      }
+      const marked = Array.from(tr.querySelectorAll(`a[${arg.rowLinkAttr}]`)).filter((a) => a.closest("tr") === tr);
+      for (const m of marked) if (isReceipt(m)) out.tapProblems.push(`${at}: a receipt is marked as the row link: ${tag(m)}`);
+      if (main && (marked.length !== 1 || marked[0] !== main)) {
+        out.tapProblems.push(`${at}: the main link ${tag(main)} is not the one marked row link (marked: ${marked.map(tag).join(", ") || "none"})`);
+      }
+      if (!main && marked.length > 0) out.tapProblems.push(`${at}: marks ${marked.map(tag).join(", ")} but its main cell holds no main link`);
+      tr.scrollIntoView({ block: "center", inline: "nearest" });
+      const p = freePoint(tr, tr.getBoundingClientRect());
+      if (!p) return;
+      out.tapChecked += 1;
+      const hit = document.elementFromPoint(p.x, p.y);
+      const link = hit?.closest("a[href]") ?? null;
+      if (link && isReceipt(link)) out.tapProblems.push(`${at}: a tap on the card opens the receipt ${tag(link)}`);
+      else if (main && link !== main) out.tapProblems.push(`${at}: a tap on the card lands on ${tag(hit)}, not the main link ${tag(main)}`);
+      else if (!main && link) out.tapProblems.push(`${at}: the row has no main link, yet a tap on the card opens ${tag(link)}`);
+    });
+  }
+
+  for (const card of Array.from(document.querySelectorAll(".si-card"))) {
+    /* the card's rendered open link (a card shows one of its variants) */
+    const open = Array.from(card.querySelectorAll(".si-card-open")).find((a) => a.getClientRects().length > 0) ?? null;
+    if (!open || !vis(card)) continue;
+    out.siCards += 1;
+    card.scrollIntoView({ block: "center", inline: "center" });
+    const p = freePoint(card, card.getBoundingClientRect());
+    if (!p) {
+      out.siCardProblems.push(`${tag(card)}: no free point to tap`);
+      continue;
+    }
+    const hit = document.elementFromPoint(p.x, p.y);
+    const link = hit?.closest("a[href]") ?? null;
+    if (link !== open) out.siCardProblems.push(`${tag(card)}: a tap on the card lands on ${tag(hit)}, not ${tag(open)}`);
+  }
+
+  for (const item of Array.from(document.querySelectorAll(".mv-item"))) {
+    const src = item.querySelector(":scope > .mv-src");
+    const sum = item.querySelector(":scope > details > summary");
+    if (!src || !sum || !vis(item) || src.getClientRects().length === 0) continue;
+    out.receipts += 1;
+    const r = src.getBoundingClientRect();
+    const s = sum.getBoundingClientRect();
+    const it = item.getBoundingClientRect();
+    if (r.top >= s.bottom - 1 || r.right > it.right + 0.5 || r.left < it.left - 0.5) {
+      out.receiptProblems.push(`${tag(src)} is off its row's summary line: ${Math.round(r.left)}..${Math.round(r.right)} at y ${Math.round(r.top)}; the summary ends at y ${Math.round(s.bottom)}, the row spans ${Math.round(it.left)}..${Math.round(it.right)}`);
+    }
+  }
+  window.scrollTo(0, 0);
+
+  /* OVERFLOW: the widest unclipped boxes past the right edge */
+  const past: { right: number; d: string }[] = [];
+  for (const el of Array.from(document.querySelectorAll("body *"))) {
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.right <= vw + 0.5 || getComputedStyle(el).position === "fixed") continue;
+    let clipped = false;
+    for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
+      if (getComputedStyle(a).overflowX !== "visible") {
+        clipped = true;
+        break;
+      }
+    }
+    if (!clipped) past.push({ right: r.right, d: `${tag(el)} reaches ${Math.round(r.right)}px` });
+  }
+  out.overflow = past.sort((a, b) => b.right - a.right).slice(0, 3).map((x) => x.d);
   return out;
 }
 

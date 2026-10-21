@@ -314,6 +314,11 @@ test.describe("phone predicate controls", () => {
     expect(a.sidewaysTables.length).toBeGreaterThan(0);
     expect(a.scrollerProblems.some((p) => /table inside/.test(p))).toBe(true);
   });
+  test("a planted 720px table in a visible wrapper makes the document scroll sideways, and R4 says so (launch review B1: innerWidth grows with the page in a mobile context, so the predicate reads clientWidth)", async ({ browser }) => {
+    const a = await controlAudit(browser, `<div class="shell"><div class="table-scroll" style="overflow-x:visible"><table data-card="generic" role="table" style="display:block;min-width:720px"><tbody role="rowgroup"><tr role="row"><td role="cell">wide</td></tr></tbody></table></div></div>`);
+    expect(a.vw, "the predicate reads the 390px layout viewport, not the grown innerWidth").toBe(390);
+    expect(a.sidewaysTables.some((p) => /document scrolls sideways/.test(p))).toBe(true);
+  });
   test("a planted 10px label fails R6", async ({ browser }) => {
     const a = await controlAudit(browser, `${COMPLIANT}<p><span style="font-size:10px">tiny label</span></p>`);
     expect(a.smallText.length).toBeGreaterThan(0);
