@@ -703,7 +703,7 @@ function loadRows(dbPath: string): {
   try {
     const txnRows = db
       .prepare(
-        `SELECT t.txn_id, t.filed_date, t.transaction_date, t.bioguide_id, t.chamber,
+        `SELECT t.txn_id, t.filing_id, t.filed_date, t.transaction_date, t.bioguide_id, t.chamber,
                 t.ticker, ${exchangedTickerSelect(db)}, t.asset_name, t.asset_type, t.side, t.owner,
                 t.amount_low, t.amount_high,
                 t.days_to_file, t.is_late, t.flags,
@@ -769,66 +769,62 @@ function loadRows(dbPath: string): {
       doc: String(r.doc_url),
     }));
 
-    // Member metadata + per-member filing counts for the entity pages: one
-    // query each, grouped in memory — no per-entity SQL.
+    // Member metadata + per-member filing counts for the entity pages.
+    //
+    // launch gate (holders lane): the member set and each member's distinct
+    // transaction-filing count are derived from the `v_default_transactions`
+    // rows read above, NOT by scanning the view twice more. The view's
+    // superseding-amendment test is a correlated NOT EXISTS over `filings`
+    // with no index on `supersedes`, so every rescan driven from
+    // `transactions` costs transactions × filings row visits — measured on the
+    // data repo's 906 MB release db (58,059 rows × 9,455 filings): 51 s for the
+    // membership subquery alone, ~147 s for getBuildData at load 20, past the
+    // holders lane's 180 s webServer wait under load. Same rows, same counts:
+    // the view is read once.
+    const txnBioguides = new Map<string, Set<string>>();
+    for (const r of txnRows) {
+      if (r.bioguide_id == null) continue;
+      const b = String(r.bioguide_id);
+      let filings = txnBioguides.get(b);
+      if (!filings) txnBioguides.set(b, (filings = new Set()));
+      filings.add(String(r.filing_id));
+    }
+    const paperCounts = new Map<string, number>(
+      (
+        db
+          .prepare(
+            `SELECT bioguide_id, COUNT(*) AS c
+             FROM filings
+             WHERE parse_status = 'needs_ocr' AND lifecycle = 'active'
+               AND bioguide_id IS NOT NULL
+             GROUP BY bioguide_id`,
+          )
+          .all() as Record<string, unknown>[]
+      ).map((r) => [String(r.bioguide_id), Number(r.c)]),
+    );
     const memberMeta = new Map<string, MemberDbMeta>();
     const metaRows = db
       .prepare(
         `SELECT m.bioguide_id, m.full_name, m.party, m.state, m.district,
                 m.chamber, m.terms
          FROM members m
-         WHERE m.bioguide_id IN (
-           SELECT DISTINCT bioguide_id FROM v_default_transactions
-            WHERE bioguide_id IS NOT NULL
-           UNION
-           SELECT DISTINCT bioguide_id FROM filings
-            WHERE parse_status = 'needs_ocr' AND lifecycle = 'active'
-              AND bioguide_id IS NOT NULL)`,
+         ORDER BY m.bioguide_id`,
       )
       .all() as Record<string, unknown>[];
     for (const r of metaRows) {
-      memberMeta.set(String(r.bioguide_id), {
+      const b = String(r.bioguide_id);
+      if (!txnBioguides.has(b) && !paperCounts.has(b)) continue;
+      memberMeta.set(b, {
         name: r.full_name == null ? null : String(r.full_name),
         party: r.party == null ? null : String(r.party),
         state: r.state == null ? null : String(r.state),
         district: r.district == null ? null : String(r.district),
         chamber: r.chamber == null ? null : String(r.chamber),
         terms: r.terms == null ? null : String(r.terms),
-        txnFilingCount: 0,
-        paperFilingCount: 0,
+        txnFilingCount: txnBioguides.get(b)?.size ?? 0,
+        paperFilingCount: paperCounts.get(b) ?? 0,
       });
     }
-    const bump = (
-      rows: Record<string, unknown>[],
-      field: "txnFilingCount" | "paperFilingCount",
-    ) => {
-      for (const r of rows) {
-        const meta = memberMeta.get(String(r.bioguide_id));
-        if (meta) meta[field] = Number(r.c);
-      }
-    };
-    bump(
-      db
-        .prepare(
-          `SELECT bioguide_id, COUNT(DISTINCT filing_id) AS c
-           FROM v_default_transactions WHERE bioguide_id IS NOT NULL
-           GROUP BY bioguide_id`,
-        )
-        .all() as Record<string, unknown>[],
-      "txnFilingCount",
-    );
-    bump(
-      db
-        .prepare(
-          `SELECT bioguide_id, COUNT(*) AS c
-           FROM filings
-           WHERE parse_status = 'needs_ocr' AND lifecycle = 'active'
-             AND bioguide_id IS NOT NULL
-           GROUP BY bioguide_id`,
-        )
-        .all() as Record<string, unknown>[],
-      "paperFilingCount",
-    );
 
     return { txns, paper, memberMeta };
   } finally {
