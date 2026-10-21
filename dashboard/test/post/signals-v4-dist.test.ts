@@ -337,6 +337,29 @@ test("signals-v4 T2.9 controls: the independent recount reads the quarter, liste
 import { getOverlap, getPlaybookTriggers, getTriage } from "../../src/lib/data.ts";
 import { ROSTER } from "../../src/lib/leadership-roster.ts";
 import { independentOverlap } from "../lib/overlap-recount.ts";
+import { overlapRowId } from "../../src/lib/ui/signals-overlap.ts";
+
+/** The Overlap names the built panel carries — the DOM's `article.ov-item`s
+    and (launch review weight item 6) the held names in the `ov-list` island,
+    which the DOM regex alone never counted. Each: id, the core relation (""
+    when not in core), the broad-inclusive relation, and both ordinals. */
+export function carriedOverlap(panel: string): { id: string; core: string; all: string; oc: string; oa: string; held: boolean }[] {
+  const out = [...panel.matchAll(/<article class="ov-item" id="([^"]+)" data-core="([^"]*)" data-all="([^"]*)" data-oc="([^"]*)" data-oa="([^"]*)"/g)].map((m) => ({ id: m[1]!, core: m[2]!, all: m[3]!, oc: m[4]!, oa: m[5]!, held: false }));
+  type HeldItem = { id: string; core: { rel: string } | null; all: { rel: string }; ord: { core: number | null; all: number } };
+  for (const it of heldIsland<{ rows: HeldItem[] }>(panel, "ov-list")?.rows ?? []) {
+    out.push({ id: it.id, core: it.core?.rel ?? "", all: it.all.rel, oc: it.ord.core === null ? "" : String(it.ord.core), oa: String(it.ord.all), held: true });
+  }
+  return out;
+}
+
+test("signals-v4 T3.7 controls (weight item 6): the Overlap recount reads the island's held names as well as the DOM's", () => {
+  const panel =
+    `<div class="ov-list" id="ov-list"><article class="ov-item" id="ov-a" data-core="same" data-all="same" data-oc="0" data-oa="0"></article></div>` +
+    `<script type="application/json" data-held-for="ov-list" data-held-render="overlap-names">${JSON.stringify({ v: 1, offset: 1, shared: {}, rows: [{ id: "ov-b", core: null, all: { rel: "opposite" }, ord: { core: null, all: 1 } }] })}</script>`;
+  assert.deepEqual(carriedOverlap(panel).map((x) => [x.id, x.core, x.all, x.oc, x.oa, x.held]), [["ov-a", "same", "same", "0", "0", false], ["ov-b", "", "opposite", "", "1", true]]);
+  // re-planted control: the DOM-only count the review found misses the held name
+  assert.equal([...panel.matchAll(/<article class="ov-item"/g)].length, 1);
+});
 
 test("signals-v4 T3.7 (R18, criterion 6): the built Overlap — every carried row and both variants' counts equal an independent recount; or, with no 13F change in the build, its absence is stated", (t) => {
   const html = readFileSync(path.join(DIST, "signals", "index.html"), "utf-8");
@@ -360,13 +383,16 @@ test("signals-v4 T3.7 (R18, criterion 6): the built Overlap — every carried ro
     const attr = rel === "same" ? "data-ov-same" : "data-ov-opp";
     assert.equal(n(new RegExp(`${attr}="([^"]+)"`)), `${want.core.filter((x) => x.endsWith(`:${rel}`)).length} ${want.all.filter((x) => x.endsWith(`:${rel}`)).length}`, rel);
   }
-  const items = [...panel.matchAll(/<article class="ov-item" id="([^"]+)" data-core="([^"]*)" data-all="([^"]*)" data-oc="([^"]*)" data-oa="([^"]*)"/g)];
+  /* launch review weight item 6: the DOM's names AND the island's held names */
+  const items = carriedOverlap(panel);
+  assert.equal(new Set(items.map((x) => x.id)).size, items.length, "every carried name once, across the DOM and the island");
   for (const it of items) {
-    const oa = Number(it[5]);
-    assert.equal(`${want.all[oa]!.split(":")[1]}`, it[3], `${it[1]}: its broad-inclusive relation`);
-    if (it[4] !== "") assert.equal(want.core[Number(it[4])]!.split(":")[1], it[2], `${it[1]}: its relation`);
+    const oa = Number(it.oa);
+    assert.equal(`${want.all[oa]!.split(":")[1]}`, it.all, `${it.id}: its broad-inclusive relation`);
+    assert.equal(overlapRowId(want.all[oa]!.split(":")[0]!), it.id, `${it.id}: the name at its ordinal`);
+    if (it.oc !== "") assert.equal(want.core[Number(it.oc)]!.split(":")[1], it.core, `${it.id}: its relation`);
   }
-  t.diagnostic(`Overlap ${o.period}: core ${want.core.length}, all ${want.all.length}, carried ${items.length}`);
+  t.diagnostic(`Overlap ${o.period}: core ${want.core.length}, all ${want.all.length}, carried ${items.length} (${items.filter((x) => x.held).length} held in the island)`);
 });
 
 test("signals-v4 T3.7 (R20, R21, criterion 7): the Playbooks filter's counts equal the built rows carrying each token, and the triggers recomputed", (t) => {
