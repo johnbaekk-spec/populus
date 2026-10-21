@@ -432,8 +432,9 @@ function congressBankHtml(q: CongressQuarter | null, keys: readonly { ticker: st
   const tickers = new Set<string>();
   for (const b of held) if (ctx.cutTickers?.has(b.lines[0]?.ticker ?? b.ticker)) tickers.add(b.lines[0]?.ticker ?? b.ticker);
   return (
-    /* copy item signals-18: the label is the noun and its count */
-    `<details class="mv-bank" id="mv-bank"><summary>Congress lines · ${fmtInt(total)}</summary>` +
+    /* copy item signals-18: the label is the noun and its count; launch
+       review H6: the count is of (ticker, side) blocks, so it says so */
+    `<details class="mv-bank" id="mv-bank"><summary>Congress lines · ${plural(total, "name and side", "names and sides")}</summary>` +
     inPage.map((b) => congressBankBlockFrom(b, ctx)).join("") +
     (held.length > 0
       ? `<p class="section-note">${plural(held.length, "more name and side opens", "more names and sides open")} with ${held.length === 1 ? "its row" : "their rows"}; each ticker page lists every line.</p>` +

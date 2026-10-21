@@ -354,3 +354,17 @@ test("H5: a held move row's opened body links its Overlap row from the server's 
     }
   }
 });
+
+/* Launch review H6: the bank's count is of (ticker, side) blocks. */
+test("H6: 'Congress lines · N names and sides' — the count equals the bank's blocks, in the page and in its island", () => {
+  const model = fixtureInstitutional({ moves: fixtureMoves(200, { broadOnly: 10 }) });
+  const html = signalsInstitutionalHtml(model, CTX);
+  const m = /<summary>Congress lines · ([\d,]+) (names and sides|name and side)<\/summary>/.exec(html);
+  assert.ok(m, "the bank names what it counts");
+  const bank = html.slice(html.indexOf('id="mv-bank"'));
+  const inPage = (bank.slice(0, bank.indexOf("</details>")).match(/data-cong="/g) ?? []).length;
+  const held = island<{ rows: unknown[] }>(html, "mv-bank")?.rows.length ?? 0;
+  assert.equal(Number(m[1]!.replace(/,/g, "")), inPage + held, `${inPage} in the page + ${held} held`);
+  // re-planted control: the bare count the review found is gone
+  assert.doesNotMatch(html, /<summary>Congress lines · [\d,]+<\/summary>/);
+});

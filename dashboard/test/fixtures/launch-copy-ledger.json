@@ -890,7 +890,7 @@
       "shipped": null,
       "replaced": null,
       "reason": "honesty-pin:dashboard/test/signals-institutional.test.ts",
-      "note": "Bank label 'Congress lines · N'; the provenance strip stays, pinned by signals-institutional.test.ts T2.4 (M7a)."
+      "note": "Bank label 'Congress lines · N names and sides' (the count is of ticker-and-side blocks; launch review H6, pinned by launch-signals.test.ts); the provenance strip stays, pinned by signals-institutional.test.ts T2.4 (M7a)."
     },
     {
       "id": "ticker-01",
