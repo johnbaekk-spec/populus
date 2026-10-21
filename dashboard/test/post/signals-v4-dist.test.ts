@@ -23,6 +23,9 @@ import path from "node:path";
 
 const DIST = path.resolve(import.meta.dirname, "../../dist");
 const DOC = path.resolve(import.meta.dirname, "../../../docs/frontend/signals-v4.md");
+/** launch redesign (LD34, R35, T7.7): the decision record whose
+    `launch-routes` block declares the file families the redesign adds. */
+const LAUNCH_DOC = path.resolve(import.meta.dirname, "../../../docs/frontend/launch-redesign.md");
 
 interface Baseline {
   buildId: string;
@@ -41,6 +44,43 @@ export function parseBaseline(doc: string): Baseline {
   const artifacts = new Map([...body.matchAll(/^([0-9a-f]{64})\s{2}(\S+)$/gm)].map((x) => [x[2]!, x[1]!]));
   if (!buildId || !routes || artifacts.size === 0) throw new Error("the t0-baseline block is incomplete");
   return { buildId, routes: { count: Number(routes[1]), sha256: routes[2]! }, artifacts };
+}
+
+/** One declared route family: a `./path` pattern whose `{n}` is a
+    non-negative integer, and the most files it may add. */
+export interface RouteAddition {
+  pattern: string;
+  re: RegExp;
+  max: number;
+}
+
+/** The `launch-routes` block in launch-redesign.md: `added: <pattern> max <n>
+    (<reason>)` lines between the markers. A line of any other shape inside the
+    block is refused, so a typo cannot silently declare nothing. */
+export function parseRouteAdditions(doc: string): RouteAddition[] {
+  const m = /<!-- launch-routes:begin -->([\s\S]*?)<!-- launch-routes:end -->/.exec(doc);
+  if (!m) throw new Error("launch-redesign.md carries no launch-routes block");
+  const out: RouteAddition[] = [];
+  for (const line of m[1]!.split("\n").map((l) => l.trim()).filter(Boolean)) {
+    const x = /^added: (\.\/\S+) max (\d+) \(.+\)$/.exec(line);
+    if (!x) throw new Error(`a launch-routes line is malformed: ${line}`);
+    const src = x[1]!.replace(/[.*+?^$()|[\]\\]/g, "\\$&").replace(/\{n\}/g, "(?:0|[1-9]\\d*)");
+    out.push({ pattern: x[1]!, re: new RegExp(`^${src}$`), max: Number(x[2]) });
+  }
+  if (out.length === 0) throw new Error("the launch-routes block declares nothing");
+  return out;
+}
+
+/** Split a route list into the declared additions (by family) and the rest. */
+export function splitDeclared(routes: readonly string[], adds: readonly RouteAddition[]): { rest: string[]; families: Map<string, string[]> } {
+  const families = new Map(adds.map((a) => [a.pattern, [] as string[]]));
+  const rest: string[] = [];
+  for (const r of routes) {
+    const a = adds.find((x) => x.re.test(r));
+    if (a) families.get(a.pattern)!.push(r);
+    else rest.push(r);
+  }
+  return { rest, families };
 }
 
 const sha = (buf: Buffer | string): string => createHash("sha256").update(buf).digest("hex");
@@ -76,7 +116,20 @@ test("T1.1 controls: the baseline parser reads the block and refuses an incomple
   assert.throws(() => parseBaseline("no block"), /no t0-baseline block/);
 });
 
-test("T1.1 (R23): signals.v1.json and every notable-moves shard are byte-identical to T0's, and the dist route set equals T0's apart from _astro chunks", (t) => {
+test("T1.1 controls (LD34, T7.7): the declared route additions parse, match only their family, and refuse a malformed block", () => {
+  const adds = parseRouteAdditions(readFileSync(LAUNCH_DOC, "utf-8"));
+  assert.deepEqual(adds.map((a) => [a.pattern, a.max]), [["./institutional/data/directory/{n}.v1.json", 8]], "the decision record declares the directory family, at most INST_DIRECTORY_SHARDS_MAX files");
+  const routes = ["./index.html", "./institutional/data/directory/0.v1.json", "./institutional/data/directory/7.v1.json", "./institutional/data/directory/x.v1.json", "./institutional/data/directory/01.v1.json", "./institutional/data/directoryX0.v1.json"];
+  const { rest, families } = splitDeclared(routes, adds);
+  assert.deepEqual(families.get(adds[0]!.pattern), ["./institutional/data/directory/0.v1.json", "./institutional/data/directory/7.v1.json"]);
+  // re-planted control: an undeclared look-alike stays in the remainder, so T1.1 sees it as a new route
+  assert.deepEqual(rest, ["./index.html", "./institutional/data/directory/x.v1.json", "./institutional/data/directory/01.v1.json", "./institutional/data/directoryX0.v1.json"]);
+  assert.throws(() => parseRouteAdditions("no block"), /no launch-routes block/);
+  assert.throws(() => parseRouteAdditions("<!-- launch-routes:begin -->\nadded ./x max 1\n<!-- launch-routes:end -->"), /malformed/);
+  assert.throws(() => parseRouteAdditions("<!-- launch-routes:begin -->\n<!-- launch-routes:end -->"), /declares nothing/);
+});
+
+test("T1.1 (R23; launch R35, T7.7): signals.v1.json and every notable-moves shard are byte-identical to T0's, and the dist route set equals T0's plus the declared launch additions, apart from _astro chunks", (t) => {
   assert.ok(existsSync(DIST), "dist/ must exist — this suite runs post-build");
   const base = parseBaseline(readFileSync(DOC, "utf-8"));
   const id = builtId();
@@ -93,10 +146,18 @@ test("T1.1 (R23): signals.v1.json and every notable-moves shard are byte-identic
   for (const [rel, want] of base.artifacts) {
     assert.equal(sha(readFileSync(path.join(DIST, rel))), want, `${rel} is byte-identical to T0`);
   }
-  const routes = routeList(DIST);
+  /* launch redesign (LD34, T7.7): the families the decision record declares
+     come out first, each within its stated maximum; the rest is T0's */
+  const adds = parseRouteAdditions(readFileSync(LAUNCH_DOC, "utf-8"));
+  const { rest: routes, families } = splitDeclared(routeList(DIST), adds);
+  for (const a of adds) {
+    const n = families.get(a.pattern)!.length;
+    t.diagnostic(`declared addition ${a.pattern}: ${n} files (max ${a.max})`);
+    assert.ok(n >= 1 && n <= a.max, `${a.pattern}: ${n} files, declared 1..${a.max}`);
+  }
   const listed = routes.join("\n") + "\n";
-  assert.equal(routes.length, base.routes.count, "no route or public file added or removed");
-  assert.equal(sha(listed), base.routes.sha256, "the route set is T0's, file for file");
+  assert.equal(routes.length, base.routes.count, "no undeclared route or public file added, none removed");
+  assert.equal(sha(listed), base.routes.sha256, "the route set is T0's plus the declared additions, file for file");
 });
 
 /** launch M7a (D5, LD27): a held list's island on the built page, parsed —
