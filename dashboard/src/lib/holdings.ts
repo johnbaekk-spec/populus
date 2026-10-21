@@ -240,6 +240,11 @@ export interface IssuerShard {
     Python constant the MCP envelope and the ingest CLI carry — by
     `test/activity.test.ts`, so the two cannot drift.
 
+    Launch copy item signals-14 shortened only what no pinned qualifier needs
+    (the field name, the repeated staleness sentence); the internal document
+    references and `unit_basis` stay because activity.test.ts lists them as
+    substance, and the Python constant is published data (not edited).
+
     QA M2-8 M6: three divergent texts shipped, two of them on the SAME page. This
     list had silently dropped three substantive qualifiers present in the Python
     constant ("so managers below that threshold are absent entirely", "with
@@ -260,10 +265,11 @@ export const INSTITUTIONAL_DATA_NOTE_CLAUSES: readonly { id: string; text: strin
   },
   {
     id: "snapshot-lag",
+    /* launch copy item signals-14 (adapted): one sentence; "since the quarter
+       ended" carries both the filing lag and the time since */
     text:
-      "Positions are quarter-end snapshots filed up to 45 days late — not current holdings. A" +
-      " position may have been changed or closed before you ever see it, and is older still by" +
-      " however long ago that quarter ended.",
+      "Positions are quarter-end snapshots filed up to 45 days late — not current holdings: a" +
+      " position may have changed or closed since the quarter ended.",
   },
   {
     id: "era-units",
@@ -274,9 +280,10 @@ export const INSTITUTIONAL_DATA_NOTE_CLAUSES: readonly { id: string; text: strin
   },
   {
     id: "affiliates",
+    /* launch copy item signals-14: the field name (otherManager) left the reader's copy */
     text:
-      "Affiliated managers may report the same position (otherManager), so one position can appear" +
-      " under more than one filer.",
+      "Affiliated managers may report the same position, so one position can appear under more" +
+      " than one filer.",
   },
   {
     id: "confidential",
