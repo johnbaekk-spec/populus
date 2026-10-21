@@ -299,6 +299,16 @@ export async function renderParitySurfaces(): Promise<Record<string, string>> {
   out["flowCellHtml.undisclosed"] = ui.flowCellHtml({ kind: "undisclosed" });
 
   out["memberBody"] = ui.memberBody(MEMBER, STAMPS, CTX, 0);
+  /* launch M4b (R23): the fixture member has three trades and reads the
+     compact layout, so the active layout (four trades, two filings) and a
+     paper-only member (zero transactions) are surfaces of their own */
+  out["memberBody.active"] = ui.memberBody(
+    { ...MEMBER, txns: [...MEMBER.txns, { ...MEMBER.txns[0]!, txnId: "t-active-4", ticker: "XOM", filed: "2026-05-02", doc: "https://efdsearch.senate.gov/x/active-4" }] },
+    STAMPS,
+    CTX,
+    0,
+  );
+  out["memberBody.paper-only"] = ui.memberBody({ ...MEMBER, txns: [], filingCount: MEMBER.paper.length }, STAMPS, CTX, 0);
   out["memberPaperBlock"] = ui.memberPaperBlock(MEMBER);
   out["memberV2Sections.absent-deps"] = ui.memberV2Sections(MEMBER, STAMPS, CTX, {
     resolveSector: null,
