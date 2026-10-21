@@ -36,9 +36,9 @@ const HREF = (cik: string): string => `/institutional/filers/${cik}/`;
     decoded, popover tips INCLUDED (a tip is still reader copy). */
 function readerText(html: string): string {
   return html
-    .replace(/<script\b[\s\S]*?<\/script>/g, "")
+    .replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, " ")
     .replace(/<[^>]*>/g, " ")
-    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&")
     .replace(/\s+/g, " ");
 }
 
@@ -209,7 +209,7 @@ function joinedAcrossBreaks(astro: string): string[] {
   const body = astro
     .replace(/^---\n[\s\S]*?\n---\n/, "")
     .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
-    .replace(/<(script|style)\b[\s\S]*?<\/\1>/g, "");
+    .replace(/<(script|style)\b[\s\S]*?<\/\1>/g, " ");
   const hits = [
     ...body.matchAll(new RegExp(`[A-Za-z0-9.,;:)\\]][ \\t]*\\n[ \\t]*<${INLINE}\\b`, "g")),
     ...body.matchAll(new RegExp(`</${INLINE}>[ \\t]*\\n[ \\t]*[A-Za-z0-9(]`, "g")),
