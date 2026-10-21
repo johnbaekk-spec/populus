@@ -631,8 +631,11 @@ export function moveRowFrom(r: MoveRowData, sec: MoveSection, hidden = false, tv
     ticker: r.ticker, verified: r.tv, filerPage: r.fp, congress: r.counted, overlap: r.ov,
   };
   const detail = `<div class="mv-det">${lean ? "" : broad === null ? moveDetailHtml(d) : moveFactsHtml(d) + broad + overlapLinkHtml(d.ticker, d.overlap)}</div>`;
+  /* launch review H5: a lean row carries the server's Overlap anchor, so its
+     opened body links the name's Overlap row even when that row is held in
+     the Overlap island (not in the DOM) */
   const held = lean
-    ? ` data-fp="${esc(r.fp)}"${r.ticker && r.tv !== tvDefault ? ` data-tv="${esc(r.tv ?? "")}"` : ""}${r.counted > 0 ? ` data-cg="${r.counted}"` : ""}`
+    ? ` data-fp="${esc(r.fp)}"${r.ticker && r.tv !== tvDefault ? ` data-tv="${esc(r.tv ?? "")}"` : ""}${r.counted > 0 ? ` data-cg="${r.counted}"` : ""}${r.ov ? ` data-ov="${esc(r.ov)}"` : ""}`
     : "";
   return (
     `<article class="mv-item" id="${esc(r.id)}" data-kind="${r.kind}" data-type="${esc(r.type)}" data-ikey="${esc(r.ikey)}"${held}${hidden ? " hidden" : ""}>` +

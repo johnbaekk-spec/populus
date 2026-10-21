@@ -321,3 +321,36 @@ test("weight item 9 (LD26): beforeprint draws and shows every held hit line, mov
     restore();
   }
 });
+
+/* Launch review H5: a held Named-moves row keeps "See X in Overlap →" when
+   the name's Overlap row is itself held in the Overlap island. */
+import { overlapAnchorFor } from "../src/lib/ui/signals-institutional.ts";
+
+test("H5: a held move row's opened body links its Overlap row from the server's answer (data-ov), even with that row absent from the DOM", () => {
+  const model = fixtureInstitutional({ moves: fixtureMoves(200, { broadOnly: 10 }) });
+  const tickers = [...new Set(model.domSet.map((m) => m.ticker).filter((t): t is string => !!t))];
+  const overlapIds = new Set(tickers.map((t) => overlapAnchorFor(t)!).filter(Boolean));
+  const html = signalsInstitutionalHtml(model, CTX, { overlapIds });
+  const held = island<HeldMoves>(html, "mv-list")!;
+  const at = held.rows.findIndex((r) => r.ov !== null && r.ticker);
+  assert.ok(at >= 0, "precondition: a held row whose name is in the Overlap");
+  const r = held.rows[at]!;
+  assert.match(moveRowFrom(r, held.shared.sec, true, held.shared.tv), new RegExp(`data-ov="${r.ov}"`), "the lean row carries the server's anchor");
+  for (const strip of [false, true]) {
+    // the Overlap rows are not in this DOM at all: held in their island, as on a page with more names than the first view
+    const { doc, restore } = installDom(html);
+    try {
+      const pager = initNamedMoves()!;
+      const row = pager.materialize(r.id)!;
+      assert.ok(row, "the held row renders");
+      assert.equal(doc.getElementById(r.ov!), null, "its Overlap row is not in the DOM");
+      if (strip) row.removeAttribute("data-ov");
+      pager.fill(row);
+      const link = row.querySelector(".mv-ov-link a");
+      if (strip) assert.equal(link, null, "re-planted control: without data-ov the DOM-only check drops the link (the reviewed defect)");
+      else assert.equal(link?.getAttribute("href"), `#${r.ov}`, "the opened body links the Overlap row");
+    } finally {
+      restore();
+    }
+  }
+});

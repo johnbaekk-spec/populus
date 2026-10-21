@@ -476,8 +476,15 @@ export function initNamedMoves(): MovesPager | null {
       filerPage: row.getAttribute("data-fp") ?? "",
       congress: Number(row.getAttribute("data-cg")) || 0,
       /* M3 (R21, D8): the name's Overlap row, where the page carries it — the
-         server's one predicate, never gated on the side's Congress count */
-      overlap: section!.hasAttribute("data-mv-ov") ? overlapLinkFor(tk, (id) => document.getElementById(id)?.classList.contains("ov-item") === true) : null,
+         server's one predicate, never gated on the side's Congress count.
+         Launch review H5: the server's answer travels on the lean row
+         (`data-ov`), because the Overlap row may itself be held in its island
+         and absent from the DOM; the DOM check stays for a row without it. */
+      overlap: row.hasAttribute("data-ov")
+        ? row.getAttribute("data-ov") || null
+        : section!.hasAttribute("data-mv-ov")
+          ? overlapLinkFor(tk, (id) => document.getElementById(id)?.classList.contains("ov-item") === true)
+          : null,
     };
   };
   /** LD10: an opened row's (or a shown name's) Congress side lists its lines:
