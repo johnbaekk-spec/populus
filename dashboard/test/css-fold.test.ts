@@ -1299,6 +1299,8 @@ const NEW_RENDERER_CLASSES = [
   "home-ledger", "home-sec-link", "si-card-iss",
   "home-lead", "home-pair", "home-tile", "home-13f-note",
   "home-trust", "home-trust-k", "home-trust-v", "home-trust-s",
+  /* launch M5 (R28): the Playbooks "Triggers now" table */
+  "pb-tg",
 ];
 
 /* DESIGN-POLISH M2: classes a renderer emits as HOOKS — a root the period

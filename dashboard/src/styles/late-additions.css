@@ -1255,17 +1255,29 @@ details.si-tier > summary > .si-tier-h { display: inline; }
 .pb-verdict { max-width: 820px; margin: 8px 0 0; font: 400 var(--fs-body)/1.55 var(--sans); color: var(--amber); }
 .pb-sec { margin-top: 16px; }
 .pb-k { margin: 0 0 4px; font: 500 var(--fs-meta)/1.5 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-meta); }
-.pb-row { padding: 2px 0; border-bottom: 1px solid var(--rule-row); }
-.pb-row-open, .pb-line { font: 400 var(--fs-note)/1.5 var(--sans); }
-.pb-line { margin: 6px 0 0; }
+/* R28 (launch M5): "Triggers now" is a table — ticker, member · owner, side,
+   range, its own dates column (traded → filed, the lag, late in amber) and
+   its own receipt column. Its heads fold through the clip pattern (each cell
+   reads on its own, as in the approved board); the phone card is M1's, keyed
+   on the role classes and `data-card`. */
+.pb-tg { width: 100%; border-collapse: collapse; font: 400 var(--fs-small)/1.5 var(--sans); color: var(--ink2); }
+.pb-tg thead th { padding: 0; border: 0; }
+.pb-row > td { padding: 7px 14px 7px 0; border-bottom: 1px solid var(--rule-row); vertical-align: baseline; text-align: left; }
+.pb-row > td:last-child { padding-right: 0; text-align: right; }
+.pb-tg .cl-amt { font: 400 var(--fs-control)/1.5 var(--mono); white-space: nowrap; }
+.pb-tg .cl-dates { font: 400 var(--fs-control)/1.5 var(--mono); color: var(--ink3); }
+.pb-tg .si-row-traded, .pb-tg .si-row-filed { white-space: nowrap; }
+.pb-row-open { font: 600 var(--fs-small)/1.5 var(--mono); white-space: nowrap; }
+.pb-line { margin: 6px 0 0; font: 400 var(--fs-note)/1.5 var(--sans); }
 .pb-needs { margin: 0; padding-left: 18px; font: 400 var(--fs-small)/1.55 var(--sans); color: var(--ink2); }
 .pb-ev { list-style: none; margin: 0; padding: 0; }
-.ev { display: grid; grid-template-columns: 76px minmax(0,1fr) auto; grid-template-areas: "d c src" "d v v" "d f f"; gap: 2px 12px; align-items: baseline; padding: 9px 0; border-bottom: 1px solid var(--rule-row); }
+.ev { display: grid; grid-template-columns: 76px minmax(0,1fr) auto; grid-template-areas: "d c src" "d f f"; gap: 2px 12px; align-items: baseline; padding: 9px 0; border-bottom: 1px solid var(--rule-row); }
 .ev-d { grid-area: d; font: 600 var(--fs-label)/1.5 var(--mono); letter-spacing: .1em; text-transform: uppercase; }
 .ev-supports { color: var(--buy); } .ev-against { color: var(--sell); } .ev-indirect { color: var(--ink2); }
 .ev-c { grid-area: c; font: 500 var(--fs-small)/1.5 var(--sans); color: var(--ink); }
 .ev-src { grid-area: src; font: 400 var(--fs-control)/1.5 var(--mono); white-space: nowrap; }
-.ev-v { grid-area: v; font: 400 var(--fs-note)/1.5 var(--sans); color: var(--ink3); }
+/* R28: a study's venue and sample read in its tip */
+.ev-v { display: block; }
 .ev-f { grid-area: f; font: 400 var(--fs-small)/1.55 var(--sans); color: var(--ink2); }
 .mv-ov-link { margin: 6px 0 0; font: 400 var(--fs-small)/1.5 var(--sans); }
 @media (max-width: 1080px) {
@@ -1285,7 +1297,7 @@ details.si-tier > summary > .si-tier-h { display: inline; }
   .pbi { flex: 0 0 auto; border: 1px solid var(--rule2); border-radius: 3px; padding: 8px 12px; }
   .pbi[aria-current="true"] { box-shadow: none; border-color: var(--amber); }
   .pbi-n { white-space: nowrap; }
-  .ev { grid-template-columns: minmax(0,1fr) auto; grid-template-areas: "d src" "c c" "v v" "f f"; }
+  .ev { grid-template-columns: minmax(0,1fr) auto; grid-template-areas: "d src" "c c" "f f"; }
 }
 @media print {
   .pb-main[hidden] { display: block !important; }

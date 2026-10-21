@@ -5,11 +5,14 @@
    - The tab: "Published research on the patterns these rows show. Not
      advice." visible first; a list of the seven playbooks (anchors to
      `#pb-{id}`, so without script every article shows and the list jumps to
-     it; the client shows one at a time); each article its source and status,
-     pattern, verdict, rule and horizon (tips), what triggers it now — the
-     Congress rows through the one `congressLineHtml`, a panel's qualifying
-     count, or what it needs — and its evidence for and against, each with
-     its link. The numbers are the papers' own.
+     it; the client shows one at a time — never a tablist); each article its
+     source and status, pattern, verdict, rule and horizon (tips), what
+     triggers it now — a table of the Congress rows with their own dates
+     column (traded → filed, the lag, late in amber) and receipt column, built
+     from the one Congress line's fields (`congressLineFields`), a panel's
+     qualifying count, or what it needs — and its evidence for and against,
+     each with its link, its venue and sample a study tip (launch M5, R28).
+     The numbers are the papers' own.
    - A Congress row that triggers one carries a dashed chip on its first line
      (`data-pb` tokens on the row) and, opened, the playbook's name, verdict,
      why it triggered and a link to it; a Playbooks filter above Filings to
@@ -38,9 +41,9 @@ import {
 } from "../playbooks.ts";
 import { LEADERSHIP_POSTS, ROSTER, ROSTER_CHECKED, ROSTER_FROM, ROSTER_PRECISION_TEXT, ROSTER_STUDY, ROSTER_VERSION } from "../leadership-roster.ts";
 import { BROAD_ACCOUNT_NAMES } from "../congress-quarter.ts";
-import type { TriageResult } from "../signal-triage.ts";
+import type { TriageResult, TriageRow } from "../signal-triage.ts";
 import { disclosureLedger, type LedgerItem } from "./shared.ts";
-import { COMMITTEE_CAVEAT, congressLineHtml, triageRowId } from "./signals.ts";
+import { COMMITTEE_CAVEAT, congressLineFields, triageRowId } from "./signals.ts";
 import { CONVICTION_LABEL_HTML } from "./signals-institutional.ts";
 
 /** What the tab and the playbook surfaces read: the triggers over the
@@ -83,6 +86,18 @@ export function playbookStatusText(p: Playbook, model: PlaybooksModel | null): s
   if (p.id === "best-ideas") return model.bestIdeas === null ? "Live · not computed in this view" : `Live · ${plural(model.bestIdeas, "manager qualifies", "managers qualify")}`;
   if (p.id === "consensus") return model.consensus === null ? "Live · not computed in this view" : `Live · ${plural(model.consensus, "name qualifies", "names qualify")}`;
   return `Live · ${plural(model.triggers.counts[p.id as CongressPlaybookId], "row", "rows")}`;
+}
+
+/** An article's status line (R28): the status word, and for a live playbook
+    that cannot trigger this build, why — the count itself is the list's and
+    the article's "Triggers now". */
+export function articleStatusText(p: Playbook, model: PlaybooksModel | null): string {
+  /* "Form 4 · Needs data": the source already names the form */
+  if (p.status === "needs-data") return "Needs data";
+  if (p.status !== "live") return STATUS_WORD[p.status];
+  if (model === null) return "Live · not computed in this view";
+  if (p.id === "cmte" && !model.triggers.cmteAvailable) return "Live · unavailable this build";
+  return "Live";
 }
 
 /* ---------------------------------------------------------------- strips, chips, the row's section */
@@ -210,29 +225,58 @@ function triggersNowHtml(p: Playbook, model: PlaybooksModel | null, ctx: RenderC
   if (id === "cmte" && !model.triggers.cmteAvailable) {
     return sec(
       "Triggers now",
-      `<p class="section-note">Unavailable this build: committee data is not in this build (${esc(model.cmteUnavailableReason ?? "inputs-not-in-build")}), so no row reads Cmte medium.</p>`,
+      `<p class="section-note">Committee data is not in this build (${esc(model.cmteUnavailableReason ?? "inputs-not-in-build")}), so no row reads Cmte medium.</p>`,
     );
   }
   const rows = triggeredRows(model, id);
-  if (rows.length === 0) return sec("Triggers now", `<p class="section-note">No row in Filings to read triggers it this build — a computed answer over every ranked row.</p>`);
+  /* copy item signals-12: the empty state is one short computed line */
+  if (rows.length === 0) return sec("Triggers now", `<p class="section-note">No ranked row triggers it.</p>`);
   const shown = rows.slice(0, PLAYBOOK_TRIGGER_ROWS);
   return sec(
     "Triggers now",
-    shown
-      .map(
-        (r) =>
-          `<div class="pb-row"><ul class="cl-list">${congressLineHtml(r.lead.txn, ctx, { ticker: true })}</ul>` +
-          (to.triageRows ? `<a class="pb-row-open" href="#${esc(triageRowId(r))}">Show the row in Filings to read →</a>` : "") +
-          `</div>`,
-      )
-      .join("") +
+    triggerTableHtml(p, shown, ctx, to) +
       (rows.length > shown.length
         ? to.triageRows
-          ? `<p class="pb-line"><a class="pb-all" href="#triage" data-pb-filter="${id}">All ${fmtInt(rows.length)} in Filings to read →</a></p>`
-          : `<p class="pb-line">${fmtInt(rows.length)} rows trigger it this build.</p>`
+          ? `<p class="pb-line"><a class="pb-all" href="#triage" data-pb-filter="${id}">All ${fmtInt(rows.length)} rows<span class="visually-hidden"> in Filings to read</span> →</a></p>`
+          : `<p class="pb-line">${fmtInt(rows.length)} rows trigger it.</p>`
         : ""),
   );
 }
+
+/** The column heads of "Triggers now" (R28). They name each column for
+    assistive technology and fold through the clip pattern at every width:
+    each cell reads on its own (the mock's rows carry no head), and the tab's
+    served words are the gate (SC5). */
+export const TRIGGER_COLUMNS = ["Ticker", "Member · owner", "Side", "Range", "Traded → filed", "Receipt"] as const;
+
+/** "Triggers now" as a table (R28): one row per triggered row's lead line,
+    its cells the one Congress line's fields — the ticker (a link to the row
+    in Filings to read where the page renders it), the member with party,
+    state and owner, the side, the range, its own dates column (traded →
+    filed, the lag, late in amber, "late" in words for assistive technology)
+    and its own receipt column. Explicit table roles at every width (R40) and
+    the ledger role classes, so the phone card (M1) keys on them. */
+export function triggerTableHtml(p: Playbook, rows: readonly TriageRow[], ctx: RenderCtx, to: PlaybooksTargets = FULL_PAGE): string {
+  const head = TRIGGER_COLUMNS.map((c, i) => `<th scope="col" role="columnheader" class="${TRIGGER_CELL_CLASSES[i]}"><span class="visually-hidden">${esc(c)}</span></th>`).join("");
+  const body = rows
+    .map((r) => {
+      const f = congressLineFields(r.lead.txn, ctx);
+      const tk = to.triageRows
+        ? `<a class="pb-row-open mono-ticker cl-tk" href="#${esc(triageRowId(r))}">${f.ticker}<span class="visually-hidden">, show the row in Filings to read</span></a>`
+        : `<span class="mono-ticker cl-tk">${f.ticker}</span>`;
+      const cells = [tk, `<span class="cl-who">${f.who}</span>`, f.side, f.amt, f.dates + (f.late ? `<span class="visually-hidden">, late</span>` : ""), f.src];
+      return `<tr class="pb-row" role="row">${cells.map((c, i) => `<td class="${TRIGGER_CELL_CLASSES[i]}" role="cell">${c}</td>`).join("")}</tr>`;
+    })
+    .join("");
+  return (
+    `<table class="pb-tg" data-card="generic" role="table">` +
+    `<caption class="visually-hidden">Rows that trigger the ${esc(p.name)} playbook</caption>` +
+    `<thead role="rowgroup"><tr role="row">${head}</tr></thead>` +
+    `<tbody role="rowgroup">${body}</tbody></table>`
+  );
+}
+/** Each column's ledger role class (LD6) and the honesty class its cell carries. */
+const TRIGGER_CELL_CLASSES = ["c-ticker", "c-flex c-member", "c-kind", "c-num cl-amt", "c-filed cl-dates", "c-src si-row-src"] as const;
 
 function playbookArticleHtml(p: Playbook, model: PlaybooksModel | null, ctx: RenderCtx, to: PlaybooksTargets): string {
   const rule = noteFromHtml(
@@ -244,24 +288,29 @@ function playbookArticleHtml(p: Playbook, model: PlaybooksModel | null, ctx: Ren
     { trigger: "mark", name: "The trigger rule" },
   );
   const horizon = note(p.horizon, { scope: "signals-pb" }, `${p.id}-horizon`, { trigger: "mark", name: "The horizon studied" });
+  /* R28: each study's venue and sample open as a tip on its citation; the
+     finding and the link stay on the line */
   const evidence =
     p.evidence.length === 0
       ? `<p class="section-note">No published study found.</p>`
       : `<ul class="pb-ev">` +
         p.evidence
           .map(
-            (e) =>
+            (e, i) =>
               `<li class="ev"><span class="ev-d ev-${e.dir}">${esc(DIR_WORD[e.dir] ?? e.dir)}</span>` +
-              `<span class="ev-c">${esc(e.cite)}</span>` +
+              `<span class="ev-c">${esc(e.cite)}` +
+              noteFromHtml(`<span class="ev-v">${esc(e.venue)} · ${esc(e.sample)}</span>`, { scope: "signals-pb" }, `${p.id}-study-${i + 1}`, { trigger: "mark", name: "Study details" }) +
+              `</span>` +
               `<a class="ev-src" href="${esc(e.url)}" rel="noopener" target="_blank">source ↗</a>` +
-              `<span class="ev-v">${esc(e.venue)} · ${esc(e.sample)}</span>` +
               `<span class="ev-f">${esc(e.finding)}</span></li>`,
           )
           .join("") +
         `</ul>`;
   return (
     `<article class="pb-main" id="pb-${p.id}" aria-labelledby="pb-${p.id}-h">` +
-    `<p class="pbi-s"><span class="pbi-src">${esc(p.source)}</span> <span class="pb-st pb-st-${p.status}">${esc(playbookStatusText(p, model))}</span></p>` +
+    /* the article states its status word; the counts are the list's and the
+       article's own "Triggers now" (R28: one statement, not two) */
+    `<p class="pbi-s"><span class="pbi-src">${esc(p.source)}</span> <span class="pb-st pb-st-${p.status}">${esc(articleStatusText(p, model))}</span></p>` +
     `<div class="pb-h"><h3 class="pb-name" id="pb-${p.id}-h">${esc(p.name)}</h3><span class="pb-chip">${esc(p.short)}</span>` +
     `<span class="pb-meta">Rule ${rule}</span><span class="pb-meta">Horizon ${horizon}</span></div>` +
     `<p class="pb-p">${playbookTextHtml(p.pattern)}</p>` +
@@ -294,8 +343,6 @@ export function signalsPlaybooksHtml(model: PlaybooksModel | null, ctx: RenderCt
     { trigger: "mark", name: "How to read a playbook" },
   );
   const live = PLAYBOOKS.filter((p) => p.status === "live").length;
-  const descriptive = PLAYBOOKS.filter((p) => p.status === "descriptive").length;
-  const needs = PLAYBOOKS.filter((p) => p.status === "needs-data").length;
   /* anchors: without script each jumps to its article (all of them show);
      the client shows one and marks its link `aria-current` */
   const list = PLAYBOOKS.map(
@@ -308,14 +355,15 @@ export function signalsPlaybooksHtml(model: PlaybooksModel | null, ctx: RenderCt
     `<section class="panel sig-pb" id="pb-section" aria-labelledby="playbooks-h">` +
     `<div class="panel-head"><h2 class="section-h" id="playbooks-h">Playbooks</h2></div>` +
     `<p class="pb-disc">Published research on the patterns these rows show. Not advice.${tip}</p>` +
-    `<p class="section-note pb-count">${plural(PLAYBOOKS.length, "playbook", "playbooks")}: ${fmtInt(live)} live, ${fmtInt(descriptive)} descriptive, ${fmtInt(needs)} needs data (Form 4).` +
-    (model === null ? "" : ` ${plural(model.triggers.byRow.size, "Congress row triggers", "Congress rows trigger")} a live one this build.`) +
+    /* copy item signals-16: the list below shows each status */
+    `<p class="section-note pb-count">${plural(PLAYBOOKS.length, "playbook", "playbooks")} · ${fmtInt(live)} live` +
+    (model === null ? "" : ` · ${plural(model.triggers.byRow.size, "Congress row triggers", "Congress rows trigger")} one`) +
     `</p>` +
     `<div class="pbg">` +
     `<nav class="pb-nav" aria-label="Playbooks"><div class="pb-list" data-scroll-region="Playbooks · swipe for more">${list}</div></nav>` +
     `<div class="pb-arts">${PLAYBOOKS.map((p) => playbookArticleHtml(p, model, ctx, targets)).join("")}</div>` +
     `</div>` +
-    `<p class="si-foot"><a href="/methodology/#signals-playbooks">The playbooks' rules, citations and the leadership roster ↗</a></p>` +
+    `<p class="si-foot"><a href="/methodology/#signals-playbooks">Rules, citations and the leadership roster ↗</a></p>` +
     `</section>`
   );
 }

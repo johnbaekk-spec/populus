@@ -92,7 +92,7 @@ function states(): { name: string; html: string; check?: (html: string) => void 
     {
       name: "committee data absent",
       html: signalsBody(f.artifact, CTX, deps(noCmte, f.rows, inst, overlap)),
-      check: (html) => assert.match(html, /Unavailable this build: committee data is not in this build/, "precondition: the committee playbook states it"),
+      check: (html) => assert.match(html, /Live · unavailable this build<\/span><\/p>[\s\S]*?Committee data is not in this build/, "precondition: the committee playbook states it"),
     },
     {
       name: "artifact-only view",
@@ -103,7 +103,7 @@ function states(): { name: string; html: string; check?: (html: string) => void 
          are never linked */
       name: "Playbooks model without the page's triage",
       html: signalsBody(f.artifact, CTX, { ...deps(tr, f.rows, inst, overlap), triage: null }),
-      check: (html) => assert.doesNotMatch(html, /class="pb-row-open"|class="pb-all"/),
+      check: (html) => assert.doesNotMatch(html, /class="pb-row-open[ "]|class="pb-all"/),
     },
   ];
 }
@@ -123,7 +123,8 @@ test("codex M3 r1 F2 coverage: the states exercise every kind of in-page link th
     ["the playbook list", /class="pbi" href="#pb-opp-buy"/],
     ["a strip", /class="pb-strip" href="#pb-consensus"/],
     ["a row chip's Playbook →", /<a href="#pb-[a-z-]+">Playbook →<\/a>/],
-    ["Triggers now", /class="pb-row-open" href="#si-row-/],
+    /* launch M5 (R28): the ticker cell of the "Triggers now" table */
+    ["Triggers now", /class="pb-row-open mono-ticker cl-tk" href="#si-row-/],
     ["the panels' lines", /<a href="#new-position-leaders">/],
     ["the absent panels' line", /<a href="#institutional">The Institutional tab says why →<\/a>/],
     ["See in Overlap", /class="mv-ov-link"><a href="#ov-/],

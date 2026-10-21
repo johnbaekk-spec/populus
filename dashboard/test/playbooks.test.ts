@@ -24,9 +24,9 @@ import { scanBannedWording } from "../src/lib/activity.ts";
 import { BANNED_PATTERNS, RULE3_PATTERNS, redactFiledNames, visibleText as visibleCopy } from "./lib/banned-scan.ts";
 import { signalsBody, signalsOverlapHtml, signalsPlaybooksHtml, signalsPlaybooksMethodHtml, triageRowHtml } from "../src/lib/ui/index.ts";
 import { fixtureOverlap } from "./lib/overlap-fixture.ts";
-import { playbookFilterHtml, playbookTextHtml, type PlaybooksModel } from "../src/lib/ui/signals-playbooks.ts";
+import { TRIGGER_COLUMNS, playbookFilterHtml, playbookTextHtml, triggerTableHtml, type PlaybooksModel } from "../src/lib/ui/signals-playbooks.ts";
 import { signalsInstitutionalHtml } from "../src/lib/ui/signals-institutional.ts";
-import { congressLineHtml, triageRowId } from "../src/lib/ui/signals.ts";
+import { congressLineFields, congressLineHtml, triageRowId } from "../src/lib/ui/signals.ts";
 import { buildTriage, type TriageResult, type TriageRow } from "../src/lib/signal-triage.ts";
 import type { TxnRow } from "../src/lib/format.ts";
 import { ROSTER_CHECKED, ROSTER_VERSION } from "../src/lib/leadership-roster.ts";
@@ -70,28 +70,42 @@ test("T3.2 (LD15): seven playbooks — ids, sources, statuses and grades as LD15
   assert.deepEqual(PLAYBOOKS.find((p) => p.id === "insider-opp")!.needs?.length, 3);
 });
 
-test("T3.2 (LD15): the texts are the mock's playbooks.py word for word, except the † edits and the two the build needs", () => {
+test("T3.2 (LD15) + launch M5 (R28): the texts are pinned word for word — the launch mock's cut of the v4 texts, the † edits and the build's two kept", () => {
+  /* Reversal record (launch M5, R28): this test pinned the signals-v4 mock's
+     playbooks.py texts verbatim. The approved launch mock cut the tab's
+     visible words by 28%, so the pinned texts are now that cut (lib/
+     playbooks.ts). Property kept: every text is pinned word for word, and the
+     research qualifiers ("we found", "average", "abnormal") and the † edits
+     survive; the citations, samples, numbers and links are pinned by the
+     content test above and the evidence test below. */
   const by = Object.fromEntries(PLAYBOOKS.map((p) => [p.id, p]));
-  // verbatim, a sample of every field
-  assert.equal(by["opp-buy"]!.pattern, "Strip out routine traders — people who trade in the same calendar month year after year, for pay or liquidity — and what is left carries the information. Proven for corporate insiders; adapted here to members of Congress.");
-  assert.equal(by["opp-buy"]!.trigger, "A listed-stock purchase in Filings to read by a member who traded in each of the 3 prior years but never in one fixed month each year (the CMP routine test). Members with under 3 years of history are unclassified. Broad accounts (more than 25 names in the 90 days before the trade) are left out.");
-  assert.equal(by["opp-buy"]!.verdict, "Split. The routine filter is proven for corporate insiders and untested on Congress; studies after the STOCK Act find no average edge for member purchases.");
-  assert.equal(by["opp-buy"]!.evidence[4]!.finding, "No outperformance in aggregate. Over six months, stocks House members bought underperformed by 26 bp.");
-  assert.equal(by["leader"]!.evidence[0]!.finding, "Similar to matched peers before taking the post, then ahead of them by 47 percentage points a year after. The authors point to political influence and corporate access.");
+  assert.equal(by["opp-buy"]!.pattern, "Set aside members who trade in the same month every year; the rest may carry information.");
+  assert.equal(by["opp-buy"]!.trigger, "A listed-stock purchase in Filings to read by a member who traded in each of the 3 prior years but never in one fixed month each year (the Cohen–Malloy–Pomorski routine test, adapted from corporate insiders). Members with under 3 years of history are unclassified. Broad accounts (more than 25 names in the 90 days before the trade) are left out.");
+  assert.equal(by["opp-buy"]!.verdict, "Split: proven for corporate insiders, untested on Congress; studies since the STOCK Act find no average edge.");
+  assert.equal(by["opp-buy"]!.evidence[0]!.finding, "Opportunistic trades earned abnormal returns of 82 bp a month value-weighted (180 bp equal-weighted); routine ones, about zero.");
+  assert.equal(by["opp-buy"]!.evidence[4]!.finding, "No outperformance in aggregate; over six months, House members’ purchases underperformed by 26 bp.");
+  assert.equal(by["leader"]!.evidence[0]!.finding, "Level with matched peers before the post; 47 percentage points a year ahead of them after.");
   assert.equal(by["leader"]!.evidence[0]!.url, "https://www.nber.org/papers/w34524");
   assert.equal(by["cmte"]!.trigger, "Cmte reads medium: a direct match in the committee table (v1). Context, never an allegation.");
-  assert.equal(by["consensus"]!.verdict, "Weak. No study we found shows that names several hedge funds bought go on to outperform.");
-  assert.equal(by["overlap"]!.verdict, "No published evidence found. It stays descriptive: Public Filings uses no prices, so it cannot test the pairing itself.");
-  assert.equal(by["insider-opp"]!.verdict, "The strongest evidence of the set, and Public Filings cannot trigger it: there is no Form 4 data here yet.");
+  assert.equal(by["cmte"]!.verdict, "Thin: no study we found tests a jurisdiction match like this one.");
+  assert.equal(by["consensus"]!.verdict, "Weak: no study we found shows such names outperform.");
+  assert.equal(by["overlap"]!.verdict, "Descriptive only: the site uses no prices to test it.");
+  assert.equal(by["insider-opp"]!.verdict, "The strongest evidence of the set, but there is no Form 4 data here yet.");
+  // the research's qualifiers survive the cut
+  assert.match(by["opp-buy"]!.verdict, /no average edge/);
+  assert.match(by["opp-buy"]!.evidence[0]!.finding, /abnormal returns/);
+  for (const id of ["cmte", "consensus"]) assert.match(by[id]!.verdict, /no study we found/, `${id}: "we found" stays`);
   // † edits
-  assert.equal(by["best-ideas"]!.pattern, "A manager’s best idea — the position tilted furthest from its market weight — beat the rest of the book in the research below.");
+  assert.equal(by["best-ideas"]!.pattern, "A manager’s biggest tilt from market weight.");
+  assert.doesNotMatch(PLAYBOOKS.map((p) => `${p.pattern} ${p.verdict} ${p.trigger}`).join(" "), /highest-conviction/);
   assert.equal(by["insider-opp"]!.name, "Opportunistic insider purchases");
   assert.match(playbookTextHtml(by["best-ideas"]!.trigger), /\(<span class="ref-label">Conviction leaders<\/span>\)\.$/, "the section is named through the markup-bound label");
   assert.match(playbookTextHtml(by["best-ideas"]!.verdict), /; <span class="ref-label">Conviction leaders<\/span> ranks by raw share of book\.$/);
   // the build's two: the leadership roster is no longer a draft, and the Overlap rule is not one
   assert.match(by["leader"]!.trigger, /^Any trade by a member holding one of the 12 leadership posts the study uses: the Speaker, and the floor leaders, whips and conference or caucus chairs in both chambers\. Matched by congressional identifier against a dated roster from 2023-01-03 \(roster v1/);
   assert.doesNotMatch(by["leader"]!.trigger, /draft|bioguide|119th Congress/);
-  assert.equal(by["overlap"]!.trigger, "The Overlap tab’s rule.");
+  assert.match(by["overlap"]!.trigger, /^The Overlap tab’s rule: .*a co-occurrence in public filings, never coordination\.$/);
+  assert.doesNotMatch(by["overlap"]!.trigger, /draft/);
 });
 
 test("T3.2 (R25): every playbook text, rendered, passes BANNED_WORDING, the raw-bytes banned scan and the visible-copy terms; a planted word is caught", () => {
@@ -329,9 +343,34 @@ function model(over: Partial<PlaybooksModel> = {}): PlaybooksModel {
   for (const hs of byRow.values()) for (const h of hs) counts[h.id]++;
   return { triggers: { byRow, counts, cmteAvailable: tr.cmteAvailable, cmp: new Map() }, triage: tr, bestIdeas: 3, consensus: 7, cmteUnavailableReason: null, ...over };
 }
+/** A golden triage row whose lead line was filed more than 45 days after
+    its trade, or null. */
+function triageLateRow(m: PlaybooksModel): TriageRow | null {
+  return m.triage.rows.find((r) => r.lead.txn.traded !== null && (r.lead.txn.lag ?? 0) > 45) ?? null;
+}
 function page(m: PlaybooksModel | null = model()): string {
   const { tr, artifact } = golden();
   return signalsBody(artifact, CTX, { rowsEvaluated: 2051, triage: tr, institutional: fixtureInstitutional(), playbooks: m });
+}
+
+/** A "Triggers now" table row's honesty fields (R28, from LD10's line):
+    ticker, member, party and state, owner, side, range, traded and filed
+    dates in their own column, receipt in its own column. */
+function triggerRowProblems(tr: MiniElement): string[] {
+  const out: string[] = [];
+  const cell = (cls: string) => tr.querySelectorAll("td").find((td) => (td.getAttribute("class") ?? "").split(" ").includes(cls)) ?? null;
+  if (!cell("c-ticker")?.querySelector(".cl-tk")) out.push("ticker");
+  if (!cell("c-member")?.querySelector(".cl-who")) out.push("member");
+  if (!cell("c-member")?.querySelector(".aff")) out.push("party and state");
+  if (!cell("c-member")?.querySelector(".owner-note")) out.push("owner");
+  if (!cell("c-kind")?.querySelector(".si-chip")) out.push("side");
+  if (!cell("cl-amt") || !/\$/.test(text(cell("cl-amt")))) out.push("range");
+  const dates = cell("cl-dates");
+  if (!dates?.querySelector(".si-row-filed time")) out.push("filed date");
+  if (!dates?.querySelector(".si-row-traded time") && !/trade date not disclosed/.test(text(dates?.querySelector(".si-row-traded")))) out.push("traded date");
+  if (!cell("si-row-src")?.querySelector("a")) out.push("receipt");
+  if (tr.getAttribute("role") !== "row" || tr.querySelectorAll("td").some((td) => td.getAttribute("role") !== "cell")) out.push("roles");
+  return out;
 }
 
 /** A Congress line's honesty fields (LD10): ticker, member, party and state,
@@ -369,24 +408,32 @@ test("T3.4 (R19): the Playbooks tab — the visible 'Not advice' line, seven art
     p.evidence.forEach((e, i) => {
       assert.equal(ev[i]!.querySelector("a.ev-src")!.getAttribute("href"), e.url);
       assert.equal(text(ev[i]!.querySelector(".ev-f")), e.finding);
-      assert.equal(text(ev[i]!.querySelector(".ev-v")), `${e.venue} · ${e.sample}`);
+      /* R28: venue and sample open as the citation's "Study details" tip */
+      assert.equal(text(ev[i]!.querySelector(".ev-c .note-pop .ev-v")), `${e.venue} · ${e.sample}`);
+      assert.equal(ev[i]!.querySelector(".ev-c .note-btn")!.getAttribute("aria-label"), "Study details, explain");
     });
     if (p.evidence.length === 0) assert.match(text(a), /No published study found\./);
     assert.ok(a.querySelectorAll(".pb-meta .note-btn").length === 2, `${p.id}: the rule and horizon tips`);
   }
-  // statuses: rows, panels, unavailable, descriptive, needs data
-  const st = (id: string) => text(root.querySelector(`#pb-${id} .pb-st`));
+  // statuses: rows, panels, unavailable, descriptive, needs data — the
+  // list carries each count; an article states its status word (R28: the
+  // count is said once, in the list and the article's "Triggers now")
+  const st = (id: string) => text(root.querySelector(`a.pbi[data-pb-pick="${id}"] .pb-st`));
   assert.equal(st("opp-buy"), "Live · 7 rows");
   assert.equal(st("best-ideas"), "Live · 3 managers qualify");
   assert.equal(st("consensus"), "Live · 7 names qualify");
   assert.equal(st("overlap"), "Descriptive");
   assert.equal(st("insider-opp"), "Needs Form 4");
+  const ast = (id: string) => text(root.querySelector(`#pb-${id} .pb-st`));
+  assert.deepEqual(PLAYBOOKS.map((p) => ast(p.id)), ["Live", "Live", "Live", "Live", "Live", "Descriptive", "Needs data"]);
   assert.deepEqual(root.querySelectorAll("#pb-insider-opp .pb-needs li").length, 3);
-  assert.match(text(root.querySelector(".pb-count")), /^7 playbooks: 5 live, 1 descriptive, 1 needs data \(Form 4\)\. \d+ Congress rows trigger a live one this build\.$/);
-  // the committee playbook unavailable this build
+  // copy item signals-16
+  assert.match(text(root.querySelector(".pb-count")), /^7 playbooks · 5 live · \d+ Congress rows trigger one$/);
+  // the committee playbook unavailable this build: the list and the article say so
   const off = domOf(signalsPlaybooksHtml(model({ triggers: { ...model().triggers, cmteAvailable: false }, cmteUnavailableReason: "inputs-not-in-build" }), CTX));
+  assert.equal(text(off.querySelector('a.pbi[data-pb-pick="cmte"] .pb-st')), "Live · unavailable this build");
   assert.equal(text(off.querySelector("#pb-cmte .pb-st")), "Live · unavailable this build");
-  assert.match(text(off.querySelector("#pb-cmte")), /Unavailable this build: committee data is not in this build \(inputs-not-in-build\), so no row reads Cmte medium\./);
+  assert.match(text(off.querySelector("#pb-cmte")), /Committee data is not in this build \(inputs-not-in-build\), so no row reads Cmte medium\./);
   // the artifact-only view states the tab is computed on the server, keeping "Not advice" and the way to the research
   const none = domOf(signalsPlaybooksHtml(null, CTX));
   assert.equal(none.querySelectorAll("article.pb-main").length, 0);
@@ -395,25 +442,45 @@ test("T3.4 (R19): the Playbooks tab — the visible 'Not advice' line, seven art
   assert.ok(none.querySelector('a[href="/methodology/#signals-playbooks"]'));
 });
 
-test("T3.4 (R19, LD16): 'Triggers now' lists up to five rows, each the row's lead line through congressLineHtml with every honesty field, a link to its row, and 'All n' past five; a removal control fails", () => {
+test("T3.4 (R19, LD16) + launch M5 (R28): 'Triggers now' is a table of up to five rows — the row's lead line's fields as cells, its own dates and receipt columns, a link to its row, and 'All n' past five; a removal control fails", () => {
   const m = model();
   const root = domOf(signalsPlaybooksHtml(m, CTX));
-  const rows = root.querySelectorAll("#pb-opp-buy .pb-row");
+  const table = root.querySelector("#pb-opp-buy table.pb-tg")!;
+  assert.ok(table, "a table, not a list");
+  assert.equal(table.getAttribute("role"), "table");
+  assert.equal(table.getAttribute("data-card"), "generic");
+  assert.deepEqual(table.querySelectorAll("thead th").map((th) => [th.getAttribute("role"), text(th)]), TRIGGER_COLUMNS.map((c) => ["columnheader", c]));
+  assert.ok(table.querySelectorAll("thead th").every((th) => th.querySelector(".visually-hidden")), "the heads fold through the clip pattern, still announced");
+  const rows = table.querySelectorAll("tbody tr.pb-row");
   assert.equal(rows.length, PLAYBOOK_TRIGGER_ROWS);
   const triggered = m.triage.rows.filter((r) => m.triggers.byRow.get(r.key)?.some((h) => h.id === "opp-buy"));
   rows.forEach((r, i) => {
-    const li = r.querySelector("li.cl-line")!;
-    assert.deepEqual(lineProblems(li), [], `row ${i}`);
+    assert.deepEqual(triggerRowProblems(r), [], `row ${i}`);
     assert.equal(r.querySelector("a.pb-row-open")!.getAttribute("href"), `#${triageRowId(triggered[i]!)}`);
+    assert.match(text(r.querySelector("a.pb-row-open")), /, show the row in Filings to read$/, "the ticker link names where it goes");
   });
   assert.equal(root.querySelector("#pb-opp-buy a.pb-all")!.getAttribute("href"), "#triage");
-  assert.match(text(root.querySelector("#pb-opp-buy a.pb-all")), /^All 7 in Filings to read →$/);
-  // the same renderer the Overlap detail and the moves use
-  assert.equal(rows[0]!.querySelector("ul.cl-list")!.innerHTML, congressLineHtml(triggered[0]!.lead.txn, CTX, { ticker: true }));
-  // removal controls: a line without its owner, dates or receipt is caught
-  for (const [cls, want] of [["owner-note", "owner"], ["si-row-filed", "filed date"], ["si-row-src", "receipt"]] as const) {
-    const cut = domOf(rows[0]!.innerHTML.replace(new RegExp(`<span class="${cls}[^"]*">[\\s\\S]*?</span>(?:</span>)?`), ""));
-    assert.ok(lineProblems(cut.querySelector("li.cl-line")!).includes(want), `control: ${cls}`);
+  assert.match(text(root.querySelector("#pb-opp-buy a.pb-all")), /^All 7 rows in Filings to read →$/);
+  // the cells are the one Congress line's fields — the same source as congressLineHtml
+  const f = congressLineFields(triggered[0]!.lead.txn, CTX);
+  const cells = rows[0]!.querySelectorAll("td");
+  assert.equal(cells[1]!.querySelector(".cl-who")!.innerHTML, f.who);
+  assert.equal(cells[2]!.innerHTML, f.side);
+  assert.equal(cells[3]!.innerHTML, f.amt);
+  assert.ok(cells[4]!.innerHTML.startsWith(f.dates), "its own dates column");
+  assert.equal(cells[5]!.innerHTML, f.src, "its own receipt column");
+  assert.equal(congressLineHtml(triggered[0]!.lead.txn, CTX, { ticker: true }), `<li class="cl-line"><span class="mono-ticker cl-tk">${f.ticker}</span><span class="cl-who">${f.who}</span>${f.side}<span class="cl-amt">${f.amt}</span><span class="cl-dates">${f.dates}</span><span class="si-row-src cl-src">${f.src}</span></li>`);
+  // late in amber, and in words for assistive technology
+  const late = triageLateRow(m);
+  assert.ok(late, "the golden rows carry a lead line filed past 45 days");
+  const lt = domOf(triggerTableHtml(PLAYBOOKS[0]!, [late!], CTX)).querySelector("tr.pb-row")!;
+  assert.ok(lt.querySelector("td.c-filed .si-late"), "the lag in amber past 45 days");
+  assert.match(text(lt.querySelector("td.c-filed")), /, late$/);
+  assert.doesNotMatch(text(rows.find((r) => !r.querySelector(".si-late"))?.querySelector("td.c-filed")), /, late$/, "an on-time row says nothing");
+  // removal controls: a row without its owner, dates or receipt is caught
+  for (const [cut, want] of [[/<span class="owner-note">[^<]*<\/span>/, "owner"], [/<span class="si-row-filed">[\s\S]*?<\/time><\/span>/, "filed date"], [/<td class="c-src si-row-src" role="cell">[\s\S]*?<\/td>/, "receipt"]] as const) {
+    const planted = domOf(`<table><tbody>${rows[0]!.outerHTML.replace(cut, "")}</tbody></table>`);
+    assert.ok(triggerRowProblems(planted.querySelector("tr")!).includes(want), `control: ${want}`);
   }
   // panel playbooks state their count and link their panel; overlap links its tab
   assert.match(text(root.querySelector("#pb-best-ideas .pb-sec")), /3 managers qualify this quarter\./);
@@ -422,7 +489,9 @@ test("T3.4 (R19, LD16): 'Triggers now' lists up to five rows, each the row's lea
   assert.ok(root.querySelector('#pb-overlap a[href="#overlap"]'));
   // a live Congress playbook with no row this build says so
   const empty = domOf(signalsPlaybooksHtml(model({ triggers: { byRow: new Map(), counts: { "opp-buy": 0, leader: 0, cmte: 0 }, cmteAvailable: true, cmp: new Map() } }), CTX));
-  assert.match(text(empty.querySelector("#pb-leader")), /No row in Filings to read triggers it this build — a computed answer over every ranked row\./);
+  /* copy item signals-12: the empty state is one short computed line */
+  assert.match(text(empty.querySelector("#pb-leader")), /Triggers nowNo ranked row triggers it\./);
+  assert.equal(empty.querySelectorAll("#pb-leader table").length, 0, "no empty table");
 });
 
 test("T3.5 (R21): a triggered row carries data-pb tokens and a dashed chip per playbook leading line 2's reason (never beside the filer's name), and opened, each playbook's name, verdict, why and link; an untriggered row carries none", () => {

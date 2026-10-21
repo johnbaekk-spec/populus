@@ -1219,6 +1219,35 @@ function triageHtml(triage: TriageResult | null, artifact: SignalArtifact, ctx: 
     `.si-row-filed`, `.si-row-src`) and the range's `.cl-amt`, so the fold
     sweep binds them here too. */
 export function congressLineHtml(t: TxnRow, ctx: RenderCtx, opts: { ticker?: boolean } = {}): string {
+  const c = congressLineFields(t, ctx);
+  return (
+    `<li class="cl-line">` +
+    (opts.ticker ? `<span class="mono-ticker cl-tk">${c.ticker}</span>` : "") +
+    `<span class="cl-who">${c.who}</span>` +
+    c.side +
+    `<span class="cl-amt">${c.amt}</span>` +
+    `<span class="cl-dates">${c.dates}</span>` +
+    `<span class="si-row-src cl-src">${c.src}</span>` +
+    `</li>`
+  );
+}
+
+/** The fields of the one Congress line, each as escaped markup: the ticker
+    text, the member (linked where a page exists) with party and state and the
+    owner word, the side chip, the range, both dates with the lag (amber past
+    45 days), and the receipt. `congressLineHtml` lays them out as a line; the
+    Playbooks "Triggers now" table (launch M5, R28) as cells — one source, so
+    the two cannot drift. `late` is the lag's amber state. */
+export interface CongressLineFields {
+  ticker: string;
+  who: string;
+  side: string;
+  amt: string;
+  dates: string;
+  src: string;
+  late: boolean;
+}
+export function congressLineFields(t: TxnRow, ctx: RenderCtx): CongressLineFields {
   const side = sideLabel(t.side, t.flags);
   const lag = lagOf(t);
   const who = t.bioguide ? `<a href="${memberHrefFor(t.bioguide, ctx)}">${esc(t.name)}</a>` : esc(t.name);
@@ -1226,16 +1255,15 @@ export function congressLineHtml(t: TxnRow, ctx: RenderCtx, opts: { ticker?: boo
     ? `<span class="si-row-traded">traded <time datetime="${esc(t.traded)}">${esc(t.traded)}</time></span> → <span class="si-row-filed">filed <time datetime="${esc(t.filed)}">${esc(t.filed)}</time></span>` +
       (lag != null ? ` · <span class="${lag > 45 ? "si-late" : "si-lag"}">${fmtInt(lag)}d</span>` : "")
     : `<span class="si-row-traded">trade date not disclosed</span> · <span class="si-row-filed">filed <time datetime="${esc(t.filed)}">${esc(t.filed)}</time></span>`;
-  return (
-    `<li class="cl-line">` +
-    (opts.ticker ? `<span class="mono-ticker cl-tk">${esc(t.ticker ?? "no ticker")}</span>` : "") +
-    `<span class="cl-who">${who} <span class="aff ${partyClass(t.party)}">${esc(affTextOf(t))}</span> · ${ownerWordHtml(t.owner)}</span>` +
-    `<span class="si-chip si-side-${side.cls}">${esc(side.text)}</span>` +
-    `<span class="cl-amt">${esc(amountText(t))}</span>` +
-    `<span class="cl-dates">${dates}</span>` +
-    `<span class="si-row-src cl-src">${signalReceiptHtml(t.doc, t.chamber)}</span>` +
-    `</li>`
-  );
+  return {
+    ticker: esc(t.ticker ?? "no ticker"),
+    who: `${who} <span class="aff ${partyClass(t.party)}">${esc(affTextOf(t))}</span> · ${ownerWordHtml(t.owner)}`,
+    side: `<span class="si-chip si-side-${side.cls}">${esc(side.text)}</span>`,
+    amt: esc(amountText(t)),
+    dates,
+    src: signalReceiptHtml(t.doc, t.chamber),
+    late: t.traded !== null && lag != null && lag > 45,
+  };
 }
 
 /* ---------- R11: the lead cards ---------- */
@@ -1498,7 +1526,7 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
 
   return (
     `<div class="page-head">` +
-    `<div class="page-head-copy"><div class="kicker">Public record / Signals · rule-based · no price data</div>` +
+    `<div class="page-head-copy"><div class="kicker">Rule-based · no price data</div>` +
     `<div class="page-title-row"><h1 class="page-title">Signals</h1>${how}</div>` +
     `<p class="page-lede">What stands out in Congress trades and 13F moves.</p></div>` +
     `<div class="sig-ledger" data-tab-for="congress">${ledger}</div>` +
