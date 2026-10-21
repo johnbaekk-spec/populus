@@ -280,3 +280,44 @@ test("R31 / SC3 (D6 record): the first-load elements the islands save on the fix
   assert.equal([...body.matchAll(/<article class="si-row" id="/g)].length, tr.rows.length);
   assert.equal([...body.matchAll(/<div class="si-row-det">/g)].length, tr.rows.length, "every row's opened body is server-rendered");
 });
+
+/* Launch review weight item 9 (LD26): paper gets every held Signals row. */
+import { initHitPager, initOverlap, signalsPrintAll } from "../src/scripts/signals-client.ts";
+
+test("weight item 9 (LD26): beforeprint draws and shows every held hit line, move row and Overlap name; afterprint hides exactly what it showed", () => {
+  const f = loadTriageFixture();
+  const inst = fixtureInstitutional({ moves: fixtureMoves(200, { broadOnly: 10 }) });
+  const body = signalsBody(f.artifact, CTX, { rowsEvaluated: 2051, triage: triage(), institutional: inst, overlap: fixtureOverlap(), playbooks: stressModel() });
+  const lists = [
+    ["signal-hits-body", "tr.si-hit"],
+    ["mv-list", "article.mv-item"],
+    ["ov-list", "article.ov-item"],
+  ] as const;
+  const carried = Object.fromEntries(lists.map(([id, sel]) => {
+    const dom = (body.match(new RegExp(`<${sel.split(".")[0]} class="${sel.split(".")[1]}[ "]`, "g")) ?? []).length;
+    return [id, dom + (island<{ rows: unknown[] }>(body, id)?.rows.length ?? 0)];
+  }));
+  const { doc, restore } = installDom(body);
+  try {
+    initHitPager();
+    initNamedMoves();
+    initOverlap();
+    const visible = (id: string, sel: string): string[] => doc.getElementById(id)!.querySelectorAll(sel).filter((el) => !el.hidden).map((el, i) => el.getAttribute("id") ?? `#${i}`);
+    const before = Object.fromEntries(lists.map(([id, sel]) => [id, visible(id, sel)]));
+    // re-planted control: without the handler, each list shows fewer rows than it carries
+    for (const [id] of lists) assert.ok(before[id]!.length < carried[id]!, `${id}: ${before[id]!.length} shown of ${carried[id]} carried before print`);
+    const undo = signalsPrintAll();
+    for (const [id, sel] of lists) {
+      const all = doc.getElementById(id)!.querySelectorAll(sel);
+      assert.equal(all.length, carried[id], `${id}: every carried row is in the DOM for paper`);
+      assert.ok(all.every((el) => !el.hidden), `${id}: and every one is shown`);
+    }
+    undo();
+    for (const [id, sel] of lists) assert.deepEqual(visible(id, sel), before[id], `${id}: afterprint restores the reader's view`);
+    // a second print draws nothing twice
+    signalsPrintAll()();
+    for (const [id, sel] of lists) assert.equal(doc.getElementById(id)!.querySelectorAll(sel).length, carried[id], `${id}: no row twice`);
+  } finally {
+    restore();
+  }
+});

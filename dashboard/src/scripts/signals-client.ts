@@ -1052,6 +1052,61 @@ export function initInPageLinks(): void {
    `scripts/scroll-regions.ts`, which `Base.astro` runs (launch integration:
    the home carries scroll regions too). */
 
+/* Launch review weight item 9 (LD26 "print renders every held row"): the
+   Signals islands — the hit lines past the first ten, the Named moves past
+   the first fifteen, the Overlap names past the first view — get the same
+   paper rule as every other held list. `beforeprint` draws every row an
+   island still holds (as the pagers would, hidden) and unhides every row of
+   the three lists; `afterprint` hides exactly the rows it unhid. The drawn
+   rows stay drawn: each pager counts drawn rows as carried, so its next view
+   is unchanged. */
+const PRINT_LISTS: readonly (readonly [string, string])[] = [
+  ["signal-hits-body", "tr.si-hit"],
+  ["mv-list", "article.mv-item"],
+  ["ov-list", "article.ov-item"],
+];
+
+/** Draw and show every held Signals row; returns the restore step. */
+export function signalsPrintAll(): () => void {
+  const unhid: HTMLElement[] = [];
+  for (const [id, sel] of PRINT_LISTS) {
+    const root = document.getElementById(id);
+    if (!root) continue;
+    const held = heldRows<{ id?: string }>(id);
+    if (held) {
+      if (id === "ov-list") {
+        /* the Overlap draws its names by id, out of island order */
+        drawHeldRows(id, held.flatMap((it, i) => (it.id && document.getElementById(it.id) === null ? [i] : [])), "");
+      } else {
+        drawHeldRun(id, held.length);
+      }
+    }
+    for (const el of Array.from(root.querySelectorAll<HTMLElement>(sel))) {
+      if (!el.hidden) continue;
+      el.hidden = false;
+      unhid.push(el);
+    }
+  }
+  return () => {
+    for (const el of unhid) el.hidden = true;
+  };
+}
+
+let signalsPrintBound = false;
+function bindSignalsPrint(): void {
+  if (signalsPrintBound || typeof window === "undefined" || typeof window.addEventListener !== "function") return;
+  signalsPrintBound = true;
+  let restore: (() => void) | null = null;
+  window.addEventListener("beforeprint", () => {
+    restore?.();
+    restore = signalsPrintAll();
+  });
+  window.addEventListener("afterprint", () => {
+    restore?.();
+    restore = null;
+  });
+}
+
 let fit: FitBinding | null = null;
 let movesFit: FitBinding | null = null;
 
@@ -1068,6 +1123,7 @@ export function initSignalsPage(opts: { tabsEnv?: TabsEnv } = {}): void {
   initPaneSwitches();
   initInPageLinks();
   initRowLinks();
+  bindSignalsPrint();
   /* LD6 (Congress): the hits fill to the height of "Filings to read" */
   const ref = document.getElementById("triage");
   const col = document.getElementById("signals-side");
