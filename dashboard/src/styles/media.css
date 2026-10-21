@@ -365,6 +365,7 @@
      (entities.css); every cell stays in the DOM and on its card. */
 
   .rb-track { gap: 8px; }
+  .rb-labels { gap: 8px; } /* the labels keep the track's columns (launch review M3) */
   .rb-bar { width: 12px; }
 
   .search-panel {
