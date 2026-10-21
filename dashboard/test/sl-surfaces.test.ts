@@ -424,8 +424,13 @@ test("SL-R10: the terminus inventory partitions EXACTLY — five deleted, eight 
   // Launch copy audit filer-07 retired the filer period "terminus": nothing is
   // truncated there, so its comparability sentence is a caveat line now
   // (`filerPeriodSectionHtml`, asserted in sl-filer.test.ts).
+  // Launch review H1 adds ONE standalone terminus: the holders page's cap
+  // line ("Top 500 of 5,662 holders shown; the rest are on EDGAR."), where
+  // the reviewed-mapping list keeps the top TICKER_HOLDERS_RANK_CAP holders
+  // of a larger class — the same line the ticker tab's terminus states. It
+  // says where the rest live, which the held list's summary does not.
   const files = {
-    "ui-modules": 3,
+    "ui-modules": 4,
     "../src/lib/activity.ts": 1,
     "../src/lib/holdings.ts": 2,
     "../src/pages/institutional/index.astro": 0,
@@ -438,7 +443,7 @@ test("SL-R10: the terminus inventory partitions EXACTLY — five deleted, eight 
     total += calls;
     assert.ok(!/syncTerminusFor/.test(src.replace(/\/\*[\s\S]*?\*\//g, "")), `${f} still calls syncTerminusFor`);
   }
-  assert.equal(total, 6, "six standalone terminus rows are KEPT — R10 deleted the five duplicates, R17 the signals cap, the launch copy audit (filer-07) the filer comparability line");
+  assert.equal(total, 7, "seven standalone terminus rows are KEPT — R10 deleted the five duplicates, R17 the signals cap, the launch copy audit (filer-07) the filer comparability line; launch review H1 added the holders cap line");
 
   const fmt = readFileSync(new URL("../src/lib/format.ts", import.meta.url), "utf8");
   assert.match(fmt, /export function terminusRow\(/, "the primitive itself stays");
