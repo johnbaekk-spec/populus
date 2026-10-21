@@ -10,8 +10,8 @@
    refactor changes no observable behaviour. `inst-index-client.test.ts` pins
    that: it captures this island's output and asserts it is unchanged. */
 
-import { type InstIndexRow, type InstSortKey } from "../lib/inst-index.ts";
-import { COMPACT_ROWS, compactBoundCountFor, esc, parseDataColumns, syncCompactDisclosure } from "../lib/format.ts";
+import { parseDirectoryShard, parseDirectoryShardList, type InstIndexRow, type InstSortKey } from "../lib/inst-index.ts";
+import { COMPACT_ROWS, compactBoundCountFor, esc, fmtInt, parseDataColumns, rangeOfTotal, syncCompactDisclosure } from "../lib/format.ts";
 import { initSortableTable } from "./table-sort.ts";
 import {
   addsBoundNoun,
@@ -23,7 +23,7 @@ import {
   type AddsRow,
   type AddsSortKey,
 } from "../lib/inst-adds.ts";
-import { addsRowsHtml } from "../lib/inst-adds-render.ts";
+import { addsBoundHtml, addsRowsHtml } from "../lib/inst-adds-render.ts";
 import { parseHeldIsland } from "../lib/held-rows.ts";
 
 /* `instIndexBodyHtml` and `instDefaultDir` MOVED to `lib/inst-index.ts`.
@@ -41,20 +41,44 @@ import { parseHeldIsland } from "../lib/held-rows.ts";
 export { instIndexBodyHtml, instDefaultDir } from "../lib/inst-index.ts";
 import { instIndexBodyHtml, instDefaultDir } from "../lib/inst-index.ts";
 
+/* Launch M7b (R32, LD28): the directory's rows are no longer in the page.
+   The server renders the default view (the first rows, Hedge funds pressed,
+   by value); the page inlines only the list of the directory shard family
+   (`#inst-index-shards`), and the rows are fetched on the FIRST search, chip,
+   sort or "Show all". Until they arrive nothing the reader sees changes —
+   no header, chip or count claims an order or a filter the rows do not show
+   — and a failed fetch is stated in place, visibly, while the server's rows
+   stay as they are (they are correct for the default view). */
+
+type FetchLike = (href: string) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
+
+/** Fetch and validate every shard of the family, in order. Resolves to the
+    whole directory or rejects with a reason; never a partial directory. */
+export async function loadDirectoryRows(list: { total: number; shards: string[] }, fetcher: FetchLike): Promise<InstIndexRow[]> {
+  const bodies = await Promise.all(
+    list.shards.map(async (href) => {
+      const res = await fetcher(href);
+      if (!res.ok) throw new Error(`directory shard ${href}: HTTP ${res.status}`);
+      return res.json();
+    }),
+  );
+  const rows = bodies.flatMap((b, i) => parseDirectoryShard(b, i, list.shards.length, list.total));
+  if (rows.length !== list.total) throw new Error(`directory: ${rows.length} rows, expected ${list.total}`);
+  return rows;
+}
+
 export function initInstIndex(): void {
-  const dataEl = document.getElementById("inst-index-data");
+  const listEl = document.getElementById("inst-index-shards");
   const bodyEl = document.getElementById("inst-managers-tbody");
   const searchEl = document.getElementById("inst-index-q") as HTMLInputElement | null;
   const countEl = document.getElementById("inst-index-count");
   const statusEl = document.getElementById("inst-index-status");
-  if (!dataEl || !bodyEl) return;
-
-  let rows: InstIndexRow[];
-  try {
-    rows = JSON.parse(dataEl.textContent ?? "[]") as InstIndexRow[];
-  } catch {
-    return; // SSR table stays — the island is a convenience, never load-bearing
-  }
+  const loadEl = document.getElementById("inst-index-load");
+  if (!listEl || !bodyEl) return;
+  // A missing or foreign-shaped list leaves the server's table alone: the
+  // controls then never claim anything they cannot show.
+  const list = parseDirectoryShardList(listEl.textContent);
+  if (!list) return;
 
   /* ONE state machine for the directory.
 
@@ -63,9 +87,10 @@ export function initInstIndex(): void {
      `<tbody>` — the sort/search island rebuilt it, and a separate chip island
      hid rows in it afterwards — so any sort silently un-hid every manager the
      chips had filtered out while the chip stayed pressed. */
+  let rows: InstIndexRow[] | null = null;
   let q = "";
   let lastNote = "";
-  /* R14: the server pressed *Hedge funds* by default; the island starts from
+  /* R14: the server pressed *Hedge funds* by default; the client starts from
      the pressed chips so its first render equals the server's, for every
      visitor. */
   const types = new Set<string>(
@@ -75,40 +100,103 @@ export function initInstIndex(): void {
   );
   let notableOnly = false;
   let expanded = false;
+  /* The sort the server rendered, and the one the reader has asked for while
+     the rows are loading — committed to the headers only with the rows. */
+  let sort: { key: string; dir: "asc" | "desc" } = { key: "value", dir: "desc" };
+  let rerender: (() => void) | null = null;
 
   const disclosure = document.querySelector<HTMLElement>(
     '.compact-disclosure[data-compact-for="inst-managers-tbody"]',
   );
   const disclosureBtn = disclosure?.querySelector("button") ?? null;
   const noun = disclosure?.dataset.compactNoun ?? "managers";
+  const headers = Array.from(document.querySelectorAll<HTMLElement>("[data-inst-sort]"));
+  const keyOf = (th: { dataset?: DOMStringMap }): string | undefined => th.dataset?.instSort;
+  // The headers keep the server's `aria-sort` until the rows arrive; the
+  // shared helper becomes their one owner from then on (F27).
 
-  const rerender = initSortableTable({
-    root: bodyEl,
-    headers: Array.from(document.querySelectorAll<HTMLElement>("[data-inst-sort]")),
-    keyOf: (th) => (th as HTMLElement).dataset.instSort,
-    initial: { key: "value", dir: "desc" },
-    defaultDir: instDefaultDir,
-    render: (state) => {
-      const out = instIndexBodyHtml(
-        rows,
-        q,
-        state.key as InstSortKey,
-        state.dir,
-        { types, notableOnly },
-        expanded ? undefined : COMPACT_ROWS,
-        // R12 (review R2-6): the column set the server decided, read back
-        parseDataColumns(bodyEl!.closest?.("table")?.getAttribute("data-columns")),
-      );
-      lastNote = out.note;
-      if (countEl) countEl.textContent = out.note;
-      // The disclosure describes THIS render. Updating it in the same pass is
-      // what keeps its hidden count from describing a previous filter.
-      syncDisclosure(out.total, out.shown);
-      return out.html;
-    },
-    announce: () => lastNote,
-    statusEl,
-  });
+  function setLoad(text: string): void {
+    if (!loadEl) return;
+    loadEl.textContent = text;
+    loadEl.hidden = text === "";
+  }
+
+  let pending: Promise<boolean> | null = null;
+  /** The rows, fetched once; a failure is stated and the next interaction
+      retries. Resolves true once `rows` holds the whole directory. */
+  function ensureRows(): Promise<boolean> {
+    if (rows) return Promise.resolve(true);
+    if (pending) return pending;
+    setLoad(`Loading all ${fmtInt(list!.total)} filers…`);
+    const fetcher: FetchLike = (href) => fetch(href);
+    pending = loadDirectoryRows(list!, fetcher).then(
+      (loaded) => {
+        rows = loaded;
+        setLoad("");
+        return true;
+      },
+      (err: unknown) => {
+        console.error("populus: directory shards failed", err);
+        pending = null;
+        setLoad(
+          "Couldn't load the full filer directory, so search, filters and sorting are unavailable right now. " +
+            "The rows shown are this page's default view, unchanged.",
+        );
+        return false;
+      },
+    );
+    return pending;
+  }
+
+  function start(): void {
+    if (rerender) return;
+    rerender = initSortableTable({
+      root: bodyEl!,
+      headers,
+      keyOf: (th) => keyOf(th as HTMLElement),
+      initial: sort,
+      defaultDir: instDefaultDir,
+      render: (state) => {
+        sort = { key: state.key, dir: state.dir };
+        const out = instIndexBodyHtml(
+          rows ?? [],
+          q,
+          state.key as InstSortKey,
+          state.dir,
+          { types, notableOnly },
+          expanded ? undefined : COMPACT_ROWS,
+          // R12 (review R2-6): the column set the server decided, read back
+          parseDataColumns(bodyEl!.closest?.("table")?.getAttribute("data-columns")),
+        );
+        lastNote = out.note;
+        if (countEl) countEl.textContent = out.note;
+        // The disclosure describes THIS render. Updating it in the same pass is
+        // what keeps its hidden count from describing a previous filter.
+        syncDisclosure(out.total, out.shown);
+        return out.html;
+      },
+      announce: () => lastNote,
+      statusEl,
+    });
+  }
+
+  /** Run `commit` with the rows: at once when they are here, otherwise after
+      they load — and not at all if they cannot, so no control changes state
+      over rows that never changed. */
+  function withRows(commit: () => void): void {
+    if (rows) {
+      commit();
+      start();
+      rerender!();
+      return;
+    }
+    void ensureRows().then((ok) => {
+      if (!ok) return;
+      commit();
+      start();
+      rerender!();
+    });
+  }
 
   function syncDisclosure(total: number, _shown: number): void {
     // The label and the omission rule are derived from the COMPACT LIMIT,
@@ -131,28 +219,51 @@ export function initInstIndex(): void {
     });
   }
 
+  /* Before the rows arrive, a header press is ANSWERED here: it requests a
+     sort (the same toggle rule the shared helper applies) and the table
+     starts at that sort once the rows are in. After they arrive the shared
+     helper owns every header press and this listener stands aside. */
+  for (const th of headers) {
+    th.addEventListener("click", (ev?: { target?: unknown }) => {
+      if (rerender) return;
+      const t = ev?.target as { closest?: (sel: string) => unknown } | undefined;
+      if (t && typeof t.closest === "function" && t.closest(".note-btn")) return;
+      const key = keyOf(th);
+      if (!key) return;
+      const next = key === sort.key ? { key, dir: sort.dir === "desc" ? ("asc" as const) : ("desc" as const) } : { key, dir: instDefaultDir(key) };
+      withRows(() => {
+        sort = next;
+      });
+    });
+  }
+
+  // A DIRECTORY with nothing held back has no button to press; with one, the
+  // press waits for the rows like every other control.
   disclosureBtn?.addEventListener("click", () => {
-    expanded = !expanded;
-    rerender();
+    withRows(() => {
+      expanded = !expanded;
+    });
   });
 
   searchEl?.addEventListener("input", () => {
-    q = searchEl.value;
-    rerender();
+    withRows(() => {
+      q = searchEl.value;
+    });
   });
 
   document.querySelectorAll<HTMLElement>("#mgr-chips [data-mgr-type],#mgr-chips [data-mgr-notable]")
     .forEach((btn) => {
       btn.addEventListener("click", () => {
-        const t = btn.dataset.mgrType;
-        if (t) {
-          if (types.has(t)) types.delete(t);
-          else types.add(t);
-        } else {
-          notableOnly = !notableOnly;
-        }
-        btn.setAttribute("aria-pressed", String(t ? types.has(t) : notableOnly));
-        rerender();
+        withRows(() => {
+          const t = btn.dataset.mgrType;
+          if (t) {
+            if (types.has(t)) types.delete(t);
+            else types.add(t);
+          } else {
+            notableOnly = !notableOnly;
+          }
+          btn.setAttribute("aria-pressed", String(t ? types.has(t) : notableOnly));
+        });
       });
     });
 }
@@ -179,24 +290,24 @@ export function initAddsControls(): void {
   // Monotonic request token: only the NEWEST request may commit. Without it a
   // slow first click can land after a fast second one and repaint stale rows.
   let token = 0;
-  // The rows currently on the page. SSR seeds this via the embedded payload so
-  // sorting and expanding work before any fetch happens.
-  let rows: AddsRow[] = [];
+  /* The rows currently on the page. Launch M7b (R32, LD28): they no longer
+     travel inside the page — the server renders the compact slice, and the
+     whole bounded payload for this quarter is fetched from the SAME published
+     file its no-JS link names (`addsPayloadHref`) the first time the drawer
+     opens, or the first time a control needs it. `null` until then. */
+  let rows: AddsRow[] | null = null;
   let sort: { key: AddsSortKey; dir: "asc" | "desc" } = { key: "value", dir: "desc" };
   let expanded = false;
-
-  const dataEl = document.getElementById("inst-adds-data");
-  try {
-    rows = JSON.parse(dataEl?.textContent ?? "[]") as AddsRow[];
-  } catch {
-    rows = [];
-  }
 
   const disclosure = section.querySelector<HTMLElement>(
     '.compact-disclosure[data-compact-for="inst-adds-tbody"]',
   );
   const disclosureBtn = disclosure?.querySelector("button") ?? null;
   const statusEl = document.getElementById("inst-adds-status");
+  const headers = [...section.querySelectorAll<HTMLElement>("[data-adds-sort]")];
+  const keyOf = (th: { dataset?: DOMStringMap }): string | undefined => th.dataset?.addsSort;
+  const dirOf = (key: string): "asc" | "desc" =>
+    ((section!.querySelector<HTMLElement>(`[data-adds-sort="${key}"]`)?.dataset.addsDir as "asc" | "desc") ?? "desc");
 
   function setStatus(text: string): void {
     if (statusEl) statusEl.textContent = text;
@@ -206,38 +317,43 @@ export function initAddsControls(): void {
      `aria-sort` and the announcement — the same helper every other sortable
      table on the site uses. Only the ORDERING stays here, in `sortAddsRows`,
      because only this module knows a null value means "undisclosed" rather
-     than zero.
-
-     This was a hand-rolled second sort state machine, and it had already
-     drifted: two text columns displayed descending while announcing ascending.
-     One owner of `aria-sort` is the fix. */
-  const repaint = initSortableTable({
-    root: tbody,
-    headers: [...section.querySelectorAll<HTMLElement>("[data-adds-sort]")],
-    keyOf: (th) => (th as unknown as HTMLElement).dataset.addsSort,
-    initial: { key: "value", dir: "desc" },
-    defaultDir: (key) =>
-      ((section!.querySelector<HTMLElement>(`[data-adds-sort="${key}"]`)?.dataset
-        .addsDir as "asc" | "desc") ?? "desc"),
-    render: (st) => {
-      sort = { key: st.key as AddsSortKey, dir: st.dir };
-      // The disclosure describes THIS render, so it updates in the same pass.
-      queueMicrotask(syncDisclosure);
-      return addsRowsHtml(
-        sortAddsRows(rows, sort.key, sort.dir),
-        expanded ? undefined : COMPACT_ROWS,
-      );
-    },
-    announce: (st) =>
-      `Sorted by ${st.key}, ${st.dir === "desc" ? "descending" : "ascending"}.`,
-    statusEl: document.getElementById("inst-adds-status"),
-  });
+     than zero. It starts once rows exist, at the sort the reader asked for. */
+  let repaint: (() => void) | null = null;
+  /** A sort the reader asked for before the rows arrived; the table starts
+      at it. */
+  let requested: { key: AddsSortKey; dir: "asc" | "desc" } | null = null;
+  function start(): void {
+    if (repaint) return;
+    if (requested) sort = requested;
+    requested = null;
+    repaint = initSortableTable({
+      root: tbody!,
+      headers,
+      keyOf: (th) => keyOf(th as unknown as HTMLElement),
+      initial: sort,
+      defaultDir: dirOf,
+      render: (st) => {
+        sort = { key: st.key as AddsSortKey, dir: st.dir };
+        // The disclosure describes THIS render, so it updates in the same pass.
+        queueMicrotask(syncDisclosure);
+        return addsRowsHtml(
+          sortAddsRows(rows ?? [], sort.key, sort.dir),
+          expanded ? undefined : COMPACT_ROWS,
+        );
+      },
+      announce: (st) =>
+        `Sorted by ${st.key}, ${st.dir === "desc" ? "descending" : "ascending"}.`,
+      statusEl: document.getElementById("inst-adds-status"),
+    });
+  }
 
   function paint(): void {
-    repaint();
+    start();
+    repaint!();
   }
 
   function syncDisclosure(): void {
+    if (rows === null) return; // the server's statement stands until rows exist
     // Derived from the LIMIT, not from the rendered count.
     const hidden = Math.max(0, rows.length - COMPACT_ROWS);
     if (hidden === 0) expanded = false;
@@ -252,15 +368,12 @@ export function initAddsControls(): void {
       expanded,
       noun: "issuers",
       count: { text: compactBoundCountFor(disclosure, rows.length - hidden, rows.length, "issuers") },
-      extra: {
-        html:
-          `Every issuer in this quarter's bounded payload remains in ` +
-          `<a href="${esc(addsPayloadHref(period, mode))}">the published JSON</a>.`,
-      },
+      extra: { html: addsBoundHtml(addsPayloadHref(period, mode)) },
     });
   }
 
   disclosureBtn?.addEventListener("click", () => {
+    if (rows === null) return; // hidden until the rows exist
     expanded = !expanded;
     paint();
   });
@@ -273,9 +386,9 @@ export function initAddsControls(): void {
     });
   }
 
-  async function select(nextPeriod: string, nextMode: AddsMode): Promise<void> {
+  async function select(nextPeriod: string, nextMode: AddsMode, first = false): Promise<boolean> {
     const mine = ++token;
-    setStatus(`Loading the quarter ended ${nextPeriod}…`);
+    setStatus(first ? `Loading every issuer for the quarter ended ${nextPeriod}…` : `Loading the quarter ended ${nextPeriod}…`);
     let payload: AddsPayload;
     try {
       // Through `addsPayloadHref`, the SAME builder the section's no-JS
@@ -286,20 +399,22 @@ export function initAddsControls(): void {
       if (!res.ok) throw new Error(`adds payload ${res.status}`);
       payload = (await res.json()) as AddsPayload;
     } catch (err) {
-      if (mine !== token) return; // superseded — say nothing about a stale request
+      if (mine !== token) return false; // superseded — say nothing about a stale request
       console.error("populus: adds payload failed", err);
       // A VISIBLE failure. The rows on screen are untouched and still correctly
       // labelled, because nothing was relabelled.
       setStatus(
-        `Couldn't load the quarter ended ${nextPeriod}. The quarter shown below is unchanged.`,
+        first
+          ? `Couldn't load the rest of the quarter ended ${nextPeriod}. The rows shown are unchanged; the published JSON link below has every issuer.`
+          : `Couldn't load the quarter ended ${nextPeriod}. The quarter shown below is unchanged.`,
       );
-      return;
+      return false;
     }
-    if (mine !== token) return; // a newer selection already committed
+    if (mine !== token) return false; // a newer selection already committed
 
     // --- commit: rows, controls, caption, window and note, together ---------
     rows = payload.rows;
-    expanded = false;
+    if (!first) expanded = false;
     /* The count's noun moves with the quarter: a truncated payload's total is
        the leaderboard's bound (review R-4). Written onto the element the
        server rendered, where the shared reader takes it from. */
@@ -332,10 +447,47 @@ export function initAddsControls(): void {
         addsNoteHtml(payload) || `<div class="caveat-line" id="inst-adds-note"></div>`;
     }
     setStatus(
-      `Showing the quarter ended ${payload.period}, ${
-        mode === "new" ? "new positions only" : "new and added positions"
-      }.`,
+      first
+        ? ""
+        : `Showing the quarter ended ${payload.period}, ${
+            mode === "new" ? "new positions only" : "new and added positions"
+          }.`,
     );
+    return true;
+  }
+
+  let firstLoad: Promise<boolean> | null = null;
+  /** The shown quarter's whole bounded payload, fetched once (the first open
+      of the drawer, or the first control that needs rows); a failure is
+      stated and the next request retries. */
+  function ensureRows(): Promise<boolean> {
+    if (rows !== null) return Promise.resolve(true);
+    if (firstLoad) return firstLoad;
+    firstLoad = select(period, mode, true).then((ok) => {
+      if (!ok) firstLoad = null;
+      return ok;
+    });
+    return firstLoad;
+  }
+
+  /* A header press before the rows arrive requests the sort (the shared
+     helper's toggle rule) and the table starts at it with the rows; after
+     that the shared helper owns every press and this listener stands aside. */
+  for (const th of headers) {
+    th.addEventListener("click", (ev?: { target?: unknown }) => {
+      if (repaint) return;
+      const t = ev?.target as { closest?: (sel: string) => unknown } | undefined;
+      if (t && typeof t.closest === "function" && t.closest(".note-btn")) return;
+      const key = keyOf(th) as AddsSortKey | undefined;
+      if (!key) return;
+      const cur = requested ?? sort;
+      requested = key === cur.key ? { key, dir: cur.dir === "desc" ? "asc" : "desc" } : { key, dir: dirOf(key) };
+      // The first load paints at `requested` (start() reads it); a failed
+      // load drops the request, so no header claims an order it never drew.
+      void ensureRows().then((ok) => {
+        if (!ok) requested = null;
+      });
+    });
   }
 
   section.querySelectorAll<HTMLElement>("[data-adds-period]").forEach((btn) => {
@@ -345,7 +497,15 @@ export function initAddsControls(): void {
     btn.addEventListener("click", () => void select(period, btn.dataset.addsMode as AddsMode));
   });
 
-  syncDisclosure();
+  // The first OPEN of the drawer fetches the shown quarter; a section that is
+  // not inside a drawer fetches on its first control instead.
+  const drawer = section.closest?.("details") ?? null;
+  if (drawer) {
+    if ((drawer as HTMLDetailsElement).open) void ensureRows();
+    else drawer.addEventListener("toggle", () => {
+      if ((drawer as HTMLDetailsElement).open) void ensureRows();
+    });
+  }
 }
 
 /* ---------- the ONE named binder for DOM-backed compact tables (R36) ----------
@@ -596,4 +756,161 @@ export function expandDomDisclosureFor(el: Element): boolean {
     changed = true;
   }
   return changed;
+}
+
+/* ---------- held rows: the island carrier of LD26 (launch M7b, R33) ----------
+
+   A held list shows its first N rows; rows N+1.. are NOT in the DOM. They
+   travel once, as an inert JSON island
+   (`<script type="application/json" data-held-for="<tbody id>"
+   data-held-render="<name>">`), and this binder draws them through the SAME
+   row function the server used — registered by name by the page's own script,
+   so no page bundles a renderer it never shows. The island carries every input
+   that function reads (the rows and, in `ctx`, the shared inputs such as the
+   flags hoisted over all N), so a drawn row is byte-identical to the server's
+   no-JS copy of it. The binder never turns DOM text back into HTML: it reads
+   JSON and writes rows the row function escaped.
+
+   Controls, all keyed by the held tbody's id and all server-rendered hidden
+   until this binder proves it can work: the `<details data-held-more>` that
+   states "Show all N holders", the search (`data-held-search`), the count
+   (`data-held-count`), the table wrapper (`data-held-wrap`) and the step
+   button (`data-held-step`). Opening the disclosure draws the first step; each
+   press draws the next; a search filters the held rows by name and shows the
+   first step of the result. `beforeprint` draws EVERY held row and opens the
+   disclosure; `afterprint` restores the reader's state.
+
+   NOTE FOR THE INTEGRATOR: LD26 assigns the one held-rows binder to M4a
+   (`initDomDisclosures`, extended). This is that interface, built in parallel
+   at the same path for the holders surfaces; fold the two into one binder. */
+
+export interface HeldRenderer {
+  /** the server's row function: `(row, ctx) => row html` */
+  row: (row: unknown, ctx: unknown) => string;
+  /** the text a local search matches (the filer name) */
+  text: (row: unknown) => string;
+}
+
+interface HeldIslandData {
+  shown: number;
+  step: number;
+  total: number;
+  noun: string;
+  ctx: unknown;
+  rows: unknown[];
+}
+
+/** The count line for one state of a held list. Plain text. */
+export function heldCountText(s: { shown: number; total: number; held: number; rendered: number; matches: number | null; query: string }): string {
+  if (s.matches === null) {
+    return s.rendered === 0 ? "" : rangeOfTotal(s.shown + 1, s.shown + s.rendered, s.total, "holders");
+  }
+  const scope = `holders ${fmtInt(s.shown + 1)}–${fmtInt(s.total)}`;
+  if (s.matches === 0) return `No filer among ${scope} matches "${s.query}".`;
+  return `${fmtInt(s.matches)} of ${scope} ${s.matches === 1 ? "matches" : "match"} "${s.query}"` + (s.rendered < s.matches ? ` · ${fmtInt(s.rendered)} shown` : "");
+}
+
+/** The step button's label for what is still held back; "" when nothing is. */
+export function heldStepLabel(remaining: number, step: number): string {
+  if (remaining <= 0) return "";
+  return remaining > step ? `Show ${fmtInt(step)} more` : `Show the last ${fmtInt(remaining)}`;
+}
+
+export function initHeldRows(renderers: Record<string, HeldRenderer>): void {
+  bindHeldRows(renderers);
+  if (typeof document.addEventListener === "function") {
+    // A client re-render (/e/) can bring new islands; bound once each.
+    document.addEventListener("populus:rerender", () => bindHeldRows(renderers));
+  }
+}
+
+function bindHeldRows(renderers: Record<string, HeldRenderer>): void {
+  document.querySelectorAll<HTMLElement>('script[type="application/json"][data-held-for]').forEach((island) => {
+    if (island.getAttribute("data-held-bound") === "1") return;
+    const id = island.getAttribute("data-held-for") ?? "";
+    const renderer = renderers[island.getAttribute("data-held-render") ?? ""];
+    const tbody = document.getElementById(id);
+    if (!renderer || !tbody) return;
+    let data: HeldIslandData;
+    try {
+      data = JSON.parse(island.textContent ?? "") as HeldIslandData;
+    } catch {
+      return; // the no-JS copy is inert; the disclosure keeps its count
+    }
+    if (!Array.isArray(data.rows)) return;
+    island.setAttribute("data-held-bound", "1");
+    const sel = (attr: string): HTMLElement | null => document.querySelector<HTMLElement>(`[${attr}="${id}"]`);
+    const more = sel("data-held-more") as HTMLDetailsElement | null;
+    const tools = sel("data-held-tools");
+    const search = sel("data-held-search") as HTMLInputElement | null;
+    const wrap = sel("data-held-wrap");
+    const count = sel("data-held-count");
+    const stepBtn = sel("data-held-step");
+    const step = data.step > 0 ? data.step : 25;
+    let query = "";
+    let limit = 0;
+
+    function current(): unknown[] {
+      if (query === "") return data.rows;
+      const q = query.toLowerCase();
+      return data.rows.filter((r) => renderer!.text(r).toLowerCase().includes(q));
+    }
+
+    function draw(): void {
+      const list = current();
+      const rendered = Math.min(limit, list.length);
+      tbody!.innerHTML = list.slice(0, rendered).map((r) => renderer!.row(r, data.ctx)).join("\n");
+      if (wrap) wrap.hidden = rendered === 0;
+      const text = heldCountText({ shown: data.shown, total: data.total, held: data.rows.length, rendered, matches: query === "" ? null : list.length, query });
+      if (count) {
+        count.textContent = text;
+        count.hidden = text === "";
+      }
+      if (stepBtn) {
+        const label = heldStepLabel(list.length - rendered, step);
+        stepBtn.textContent = label;
+        stepBtn.hidden = label === "";
+      }
+      document.dispatchEvent?.(new CustomEvent("populus:rerender", { detail: { root: id } }));
+    }
+
+    if (tools) tools.hidden = false;
+    // Opening the disclosure draws the first step; closing keeps the state.
+    more?.addEventListener("toggle", () => {
+      if (more.open && limit === 0) {
+        limit = step;
+        draw();
+      }
+    });
+    stepBtn?.addEventListener("click", () => {
+      limit += step;
+      draw();
+    });
+    search?.addEventListener("input", () => {
+      query = search.value.trim();
+      limit = step;
+      draw();
+    });
+    /* Paper gets every holder: draw all of them and open the disclosure, then
+       put the reader's state back. */
+    let saved: { query: string; limit: number; open: boolean } | null = null;
+    window.addEventListener?.("beforeprint", () => {
+      saved = { query, limit, open: !!more?.open };
+      query = "";
+      limit = data.rows.length;
+      if (more) more.open = true;
+      draw();
+    });
+    window.addEventListener?.("afterprint", () => {
+      if (!saved) return;
+      ({ query, limit } = saved);
+      if (more) more.open = saved.open;
+      saved = null;
+      draw();
+    });
+    if (more?.open) {
+      limit = step;
+      draw();
+    }
+  });
 }

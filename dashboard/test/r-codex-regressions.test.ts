@@ -367,7 +367,13 @@ test("F12: the section renders the live-status node its failure handler targets"
   );
   assert.match(html, /id="inst-adds-status"[^>]*role="status"/,
     "a failure that reaches only the console is invisible to the reader");
-  assert.match(html, /id="inst-adds-data"/, "and the rows travel so expansion needs no fetch");
+  /* launch M7b (R32, LD28) — reversal of "the rows travel so expansion needs
+     no fetch": the ~510 KB island left the page. The property kept is that the
+     compact slice is never a one-way door — with scripting on, the client
+     fetches this quarter's whole payload on first open (inst-index-client
+     tests), and the bound links that same file for every reader. */
+  assert.doesNotMatch(html, /id="inst-adds-data"/, "no inline rows island ships");
+  assert.match(html, /<span class="compact-bound-extra">[^<]*<a href="\/institutional\/data\/adds\/2026-03-31\.all\.v1\.json">/, "the bound links the payload the client fetches");
 });
 
 test("F2: the activity feed keeps every row in the DOM and marks the extras", () => {
@@ -698,7 +704,8 @@ test("F6: the leaderboard and the directory carry a NAMED terminus beside the co
     path.resolve(import.meta.dirname, "..", "src", "pages", "institutional", "index.astro"),
     "latin1",
   );
-  assert.match(page, /compactDisclosure\(\{[\s\S]{0,400}Every filer in this build has its own page/,
+  // launch M7b (copy item inst-03): the remainder is shortened, the fact kept
+  assert.match(page, /compactDisclosure\(\{[\s\S]{0,400}Every filer has its own page/,
     "the directory states its bound too, and keeps the fact its terminus carried");
 });
 

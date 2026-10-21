@@ -116,15 +116,16 @@ test("W-3: the ticker page's holders note and terminus are true of the mapped pa
   const mapped = tickerInstSectionHtml({ state: "data", name: "NVIDIA CORP", period: "2026-03-31", latestFiled: "2026-05-20", topn: 2, holdersPage: true, mapped: { issuer: "NVIDIA CORP", titleOfClass: "COM", holderCount: 700 }, holders }, "NVDA");
   assert.match(mapped, /that list carries each holder's share count, share change and filed date \(the full holders view shows them\), but no document links/);
   assert.doesNotMatch(mapped, /per-filer filed dates, share counts and document links are not in that list/, "control: the entity-path sentence, false here");
-  assert.match(mapped, /The 2 largest of the 700 13F filers reporting this share class for the quarter are listed/);
+  // launch M7b (ticker-10): one line, both numbers kept
+  assert.match(mapped, /Top 2 of 700 holders shown; the rest are on EDGAR\./);
   assert.doesNotMatch(mapped, /a build parameter of the Public Filings aggregation/, "control: the top-N claim, false on the mapped path");
   const complete = tickerInstSectionHtml({ state: "data", name: "NVIDIA CORP", period: "2026-03-31", latestFiled: "2026-05-20", topn: 2, holdersPage: false, mapped: { issuer: "NVIDIA CORP", titleOfClass: "COM", holderCount: 2 }, holders }, "NVDA");
-  assert.match(complete, /Every one of the 2 13F filers reporting this share class for the quarter is listed\./);
+  assert.match(complete, /All 2 13F filers reporting this share class are listed\./);
   assert.match(complete, /share change and filed date, which this table does not show/);
   // the entity-keyed path keeps its own, true, sentences
   const entity = tickerInstSectionHtml({ state: "data", name: "NVIDIA CORP", period: "2026-03-31", latestFiled: "2026-05-20", topn: 25, holders: [holders[0]!] }, "NVDA");
   assert.match(entity, /per-filer filed dates, share counts and document links are not in that list/);
-  assert.match(entity, /ranks the top 25 holders per issuer/);
+  assert.match(entity, /Top 25 holders per issuer, set by the site — not a census/);
 });
 
 test("honesty §3: an undisclosed mapped holder value is NULL and renders \"—\", never \"$0\"", async () => {

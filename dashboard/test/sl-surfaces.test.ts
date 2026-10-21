@@ -275,9 +275,10 @@ test("SL-R10: the five deleted termini took NOTHING with them — every clause s
 
   // The directory's clause is on an Astro page, so it is read from source.
   const page = readFileSync(new URL("../src/pages/institutional/index.astro", import.meta.url), "utf8");
-  assert.match(page, /Every filer in this build has its own page/);
+  // launch M7b (copy item inst-03): the remainder is shortened, the fact kept
+  assert.match(page, /Every filer has its own page/);
   assert.ok(
-    page.indexOf("Every filer in this build has its own page") >
+    page.indexOf("Every filer has its own page") >
       page.indexOf("compactDisclosure({"),
     "…and it travels INSIDE the control, which is what makes it survive with no script",
   );

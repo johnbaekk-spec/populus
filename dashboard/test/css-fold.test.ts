@@ -91,7 +91,10 @@ function goldenTickerBody(ticker: string): string {
   const txns = f.rows
     .filter((r) => r.ticker === ticker)
     .sort((a, b) => (a.filed !== b.filed ? (a.filed < b.filed ? 1 : -1) : a.txnId < b.txnId ? -1 : 1));
-  const holders = Array.from({ length: 12 }, (_, i) => ({ rank: i + 1, cik: String(1000 + i).padStart(10, "0"), name: `H${i}`, value: 12_000 - i, securities: 1, keySource: "entity", flags: [] }));
+  /* launch M7b (R33): 30 holders, so the list holds rows back (26..30) and the
+     "Show all N holders" disclosure is emitted — the property this fixture
+     carried at 12 holders under the old 10-row window. */
+  const holders = Array.from({ length: 30 }, (_, i) => ({ rank: i + 1, cik: String(1000 + i).padStart(10, "0"), name: `H${i}`, value: 30_000 - i, securities: 1, keySource: "entity", flags: [] }));
   return tickerUnifiedBody(
     { ticker, txns },
     { state: "data", name: "X", cik: "0000070858", period: "2026-06-30", latestFiled: null, topn: 25, holders },

@@ -387,6 +387,31 @@
 }
 .verify-line { margin-top: 14px; word-break: break-all; }
 .verify-cmd { color: var(--ink2); }
+/* launch M7b (R34, LD30): each section is a `<details open>` whose summary is
+   the section head. Open at every width without JavaScript; the page script
+   closes them at ≤720px under the sticky contents menu. Required notices
+   (`.metho-notices`) are not a fold. */
+.metho-summary { cursor: pointer; list-style: none; }
+.metho-summary::-webkit-details-marker { display: none; }
+.metho-summary .section-h2 { display: inline; }
+.metho-summary::after { content: "▾"; margin-left: auto; padding-left: 12px; color: var(--ink3); font: 400 var(--fs-body)/1 var(--sans); }
+.metho-fold:not([open]) > .metho-summary::after { content: "▸"; }
+.metho-summary:not(.metho-section-head) { display: flex; align-items: baseline; gap: 16px; }
+.metho-fold > .metho-summary { min-height: var(--hit-min); }
+@media (max-width: 720px) {
+  /* the contents menu sticks below the header and scrolls sideways as one
+     named chip row; anchors land below both */
+  .metho-toc { position: sticky; top: var(--masthead-h, 0px); z-index: 4; flex-wrap: nowrap; overflow-x: auto; gap: 8px; margin: 16px calc(-1 * var(--gutter)) 0; padding: 8px var(--gutter); background: var(--paper); border-bottom: 1px solid var(--rule2); scrollbar-width: none; }
+  .metho-toc a { flex: 0 0 auto; white-space: nowrap; }
+  .methodology [id] { scroll-margin-top: calc(var(--masthead-h, 0px) + 64px); }
+  .metho-section { margin-top: 24px; padding-top: 12px; }
+}
+/* Paper opens every section even if the page script never ran. */
+@media print {
+  .metho-fold::details-content { content-visibility: visible !important; }
+  .metho-toc { position: static; }
+  .metho-summary::after { content: none; }
+}
 
 /* ---------- module shells ---------- */
 

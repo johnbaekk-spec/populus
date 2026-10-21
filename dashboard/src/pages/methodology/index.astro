@@ -50,33 +50,32 @@ const description =
 
 <Base title="Methodology — Public Filings" description={description} active="methodology">
   <main class="shell page methodology">
-    <div class="kicker">/methodology</div>
-    <h1 class="metho-title">
-      Every number on this site is imperfect in a specific, knowable way. This
-      page is the ledger of those imperfections.
-    </h1>
-    <p class="metho-lede">
-      Public Filings republishes primary government records — nothing else. Below, per
-      module: sources and their license conditions, coverage measured against
-      the full corpus, known gaps, and the structural caveats that no amount of
-      engineering removes. Everything here is regenerated from <span class="mono-id">stats.json</span> on every build and is
-      byte-verifiable against the published snapshot.
-    </p>
-    <nav class="toc" aria-label="Sections">
+    {/* launch M7b (copy item meth-01): the kicker repeated the nav; the H1 is
+        the page's noun; the lede is one line. */}
+    <h1 class="metho-title">Methodology</h1>
+    <p class="metho-lede">Every number here is imperfect in a specific, knowable way.</p>
+    {/* launch M7b (R34, LD30): the contents menu. At ≤720px it sticks below
+        the header and every section below folds under it (a page script
+        closes the `<details open>` sections there; without JavaScript nothing
+        changes). A link here opens the section it names. */}
+    <nav class="toc metho-toc" aria-label="Sections">
       <a href="#m1">M1 · Congressional</a>
       <a href="#signals-method">Congress signals · rules &amp; ranking</a>
       <a href="#m2">M2 · Institutional 13F</a>
       <a href="#m3m4" class="toc-muted">M3 · Financials — planned</a>
       <a href="#m3m4" class="toc-muted">M4 · Macro — planned</a>
+      <a href="#principles">Principles</a>
       <a href="#publication">Publication &amp; verification</a>
       <a href="#privacy">Privacy</a>
+      <a href="#notices">Required notices</a>
     </nav>
 
     <section class="metho-section" id="m1">
-      <div class="metho-section-head">
+      <details class="metho-fold" open data-metho-fold>
+      <summary class="metho-summary metho-section-head">
         <h2 class="section-h2">M1 — Congressional trading</h2>
-        <div class="mono-note">build {build.buildId} · generated {build.generatedAtDate}</div>
-      </div>
+        <span class="mono-note">build {build.buildId} · generated {build.generatedAtDate}</span>
+      </summary>
       <blockquote class="standing-caveat">
         {/* The two facts this caveat carries are linked separately from the
             reader-facing surfaces, so each sentence gets its own stable anchor.
@@ -127,7 +126,8 @@ const description =
               of the page. This is the section it always meant. */}
           <h3 class="section-h" id="coverage">Known gaps — published, not hidden</h3>
           <div class="gaps-block" id="defaults">
-            <div>· {fmtInt(build.stats.totals.needs_ocr_filing_count_including_excluded)} paper filings <span class="flag dashed">needs OCR</span> — counted in totals labeled *_including_excluded</div>
+            {/* meth-02: the stats field name is not reader copy */}
+            <div>· {fmtInt(build.stats.totals.needs_ocr_filing_count_including_excluded)} paper filings <span class="flag dashed">needs OCR</span> — counted in totals</div>
             <div>· {fmtInt(build.stats.totals.unresolved_pair_count)} filer name-pairs not yet joined to members — the join is name × chamber × term, only on a unique candidate; the alias file is version-controlled and public</div>
             <div>· amendments carry <span class="flag amber">amendment pending</span> until amendment semantics are settled — the default view excludes the superseded original, and both readings are queryable</div>
             <div>· rows with defect flags are visible and flagged, never dropped</div>
@@ -166,30 +166,36 @@ const description =
           </div>
         </div>
       </div>
+      </details>
     </section>
 
     <section class="metho-section" id="signals-method">
-      <div class="metho-section-head">
+      <details class="metho-fold" open data-metho-fold>
+      <summary class="metho-summary metho-section-head">
         <h2 class="section-h2">Congress signals — rules, lag and ranking</h2>
-        <div class="mono-note">thresholds v{signalArtifact.thresholdVersion} · window {signalArtifact.coverageFrom} → {signalArtifact.coverageTo}</div>
-      </div>
+        <span class="mono-note">thresholds v{signalArtifact.thresholdVersion} · window {signalArtifact.coverageFrom} → {signalArtifact.coverageTo}</span>
+      </summary>
+      {/* meth-03: "a signal is a fact about a filing, not a forecast" is said
+          once, in its fuller form, by the rule book directly below. */}
       <p class="metho-body">
         The rule book every signal on <a href="/signals/">/signals</a> is computed by, the lag between
         trade and filing in the newest batch, how the page ranks the filings it lists, and the committee
-        direct-match table. A signal is a fact about a filing, not a forecast.
+        direct-match table.
       </p>
       <Fragment set:html={signalSections} />
+      </details>
     </section>
 
     <section class="metho-section" id="m2">
-      <div class="metho-section-head">
+      <details class="metho-fold" open data-metho-fold>
+      <summary class="metho-summary metho-section-head">
         <h2 class="section-h2">M2 — Institutional 13F</h2>
-        <div class="mono-note">
+        <span class="mono-note">
           {inst.present
             ? `in this build · latest period ${inst.watermarks.latest_period_of_report ?? "—"} · latest filing ${inst.watermarks.latest_filed_date ?? "—"}`
             : "not in this build"}
-        </div>
-      </div>
+        </span>
+      </summary>
       <blockquote class="standing-caveat" id="13f-scope">
         Standing caveat: 13F covers long positions in Section 13(f) securities —
         no shorts, no cash — as quarter-end snapshots filed up to 45 days late,
@@ -211,7 +217,7 @@ const description =
           <div class="mtile">
             <div class="tile-value">{fmtInt(inst.topn)}</div>
             <div class="tile-label">top-N ranking depth</div>
-            <div class="mtile-sub">a Public Filings build parameter</div>
+            <div class="mtile-sub">set by the site</div>
           </div>
           {window?.open && (
             <div class="mtile">
@@ -236,11 +242,12 @@ const description =
         <div>· Amendments are typed: a restatement supersedes; new-holdings merges. Originals are kept and marked superseded, never deleted.</div>
         <div>· A change with an undisclosed side is <strong>n/c</strong> — never coerced into add or trim.</div>
         <div>· EXIT is a fact about the filing sequence, not a sale: delisting, confidential treatment, and filer migration all look identical in the record.</div>
-        <div>· Cross-filer rankings stop at the aggregate's top-N slice, stated in place as a Public Filings build parameter.</div>
+        <div>· Cross-filer rankings stop at the aggregate's top-N slice, set by the site and stated in place.</div>
         <div id="13f-affiliates">· A manager that files its own 13F holdings report keeps its whole book, even when another manager's combination report names it: under the Form 13F instructions a holdings report carries all of that manager's holdings, and a position whose discretion is shared is reported by one manager only. Only a 13F notice — holdings reported entirely by someone else — is left out. Such pairs are marked <span class="mono-id">shared discretion</span> and are not netted against each other.</div>
         <div>· Concentration is computed only when the denominator is disclosed; otherwise the stat prints "n/a" with its reason <span class="mono-id">concentration_unavailable</span>.</div>
         <div id="13f-identity">· Ticker→issuer joins use the SEC's present-day ticker file against entity-keyed issuers only — never a name match, never a guessed identity.</div>
       </div>
+      </details>
     </section>
 
     <section class="metho-section" id="m3m4">
@@ -268,7 +275,8 @@ const description =
     </section>
 
     <section class="metho-section" id="principles">
-      <h2 class="section-h2">Principles — what this site is for</h2>
+      <details class="metho-fold" open data-metho-fold>
+      <summary class="metho-summary"><h2 class="section-h2">Principles — what this site is for</h2></summary>
       <p class="metho-body">
         The people's financial data, returned to the people. US financial-disclosure data —
         congressional trades, institutional holdings — pulled only from primary government
@@ -396,10 +404,12 @@ const description =
         file-count and per-file caps. A table whose complete set is larger than a page states how many
         rows it shows and links the full published file.
       </p>
+      </details>
     </section>
 
     <section class="metho-section" id="publication">
-      <h2 class="section-h2">Publication &amp; verification</h2>
+      <details class="metho-fold" open data-metho-fold>
+      <summary class="metho-summary"><h2 class="section-h2">Publication &amp; verification</h2></summary>
       <div class="pub-grid">
         <div class="pub-card"><div class="pub-h">Immutable snapshots</div><div class="pub-body">Each release is a content-addressed snapshot; the page you are reading names the build it was rendered from.</div></div>
         <div class="pub-card"><div class="pub-h">Signed pointer</div><div class="pub-body">A signed pointer names the current release; per-artifact digests let anyone verify a downloaded extract byte-for-byte.</div></div>
@@ -418,12 +428,12 @@ const description =
         <span id="build-stamp">build {build.buildId} · code {build.codeSha.slice(0, 7)}</span> ·
         verify this page: <span class="verify-cmd">populus verify --build {build.buildId}</span>
       </div>
+      </details>
     </section>
 
     <section class="metho-section" id="privacy">
-      <div class="metho-grid">
-        <div>
-          <h2 class="section-h2">Privacy — the reader is not the product</h2>
+      <details class="metho-fold" open data-metho-fold>
+      <summary class="metho-summary"><h2 class="section-h2">Privacy — the reader is not the product</h2></summary>
           <p class="metho-body">
             Public Filings measures page traffic with Cloudflare Web
             Analytics, and nothing else. It sets no cookie, writes no storage
@@ -445,8 +455,13 @@ const description =
             transparency site that paywalled the public record would contradict
             this page.
           </p>
-        </div>
-        <div>
+      </details>
+    </section>
+
+    {/* launch M7b (R34): Required notices never fold — no `<details>`, no
+        toggle, at any width — so the §13107(c) restriction, "not financial
+        advice" and the attribution are always on screen. */}
+    <section class="metho-section metho-notices">
           {/* `#notices` is the footer's "Legal" target. */}
           <h2 class="section-h2" id="notices">Required notices</h2>
           <p class="metho-body">
@@ -457,13 +472,55 @@ const description =
             disclosures; it recommends nothing. <strong>Attribution.</strong> Data remain U.S. government records; per-source conditions are
             recorded in the machine-readable conditions register and rendered in <a href="/legal/DATA-LICENSE.md">DATA-LICENSE ↗</a> and <a href="/legal/NOTICE.txt">NOTICE ↗</a>.
           </p>
-        </div>
-      </div>
     </section>
   </main>
   <script>
     import { initNotes } from "../../scripts/notes";
     // launch M1c (R12, LD30): tips open as bottom sheets at ≤720px here too
     initNotes();
+    /* launch M7b (R34, LD30): the phone fold. Every section ships `<details
+       open>`, so without JavaScript (and on paper) nothing changes. At ≤720px
+       this closes them under the sticky contents menu; an inbound anchor — on
+       load or on any later hash change, from the menu or any link — opens the
+       section holding its target; `beforeprint` opens every section and
+       `afterprint` restores the reader's state. Required notices are not a
+       fold and are never touched. */
+    const folds = Array.from(document.querySelectorAll<HTMLDetailsElement>("details[data-metho-fold]"));
+    const holding = (id: string): HTMLDetailsElement | null => {
+      const target = id ? document.getElementById(id) : null;
+      if (!target) return null;
+      return target.closest<HTMLDetailsElement>("details[data-metho-fold]") ?? target.querySelector<HTMLDetailsElement>(":scope > details[data-metho-fold]");
+    };
+    const reveal = (hash: string, scroll: boolean): void => {
+      let id = hash.replace(/^#/, "");
+      try {
+        id = decodeURIComponent(id);
+      } catch {
+        /* a malformed escape names no element */
+      }
+      const fold = holding(id);
+      if (!fold) return;
+      fold.open = true;
+      if (scroll) document.getElementById(id)?.scrollIntoView();
+    };
+    if (window.matchMedia("(max-width: 720px)").matches) {
+      for (const d of folds) d.open = false;
+    }
+    if (location.hash) reveal(location.hash, true);
+    window.addEventListener("hashchange", () => reveal(location.hash, true));
+    // A link to the hash already in the address bar fires no hashchange.
+    document.addEventListener("click", (ev) => {
+      const a = (ev.target as Element | null)?.closest?.('a[href^="#"]');
+      if (a) reveal(a.getAttribute("href") ?? "", false);
+    });
+    let printState: boolean[] | null = null;
+    window.addEventListener("beforeprint", () => {
+      printState = folds.map((d) => d.open);
+      for (const d of folds) d.open = true;
+    });
+    window.addEventListener("afterprint", () => {
+      if (printState) folds.forEach((d, i) => (d.open = printState![i] ?? d.open));
+      printState = null;
+    });
   </script>
 </Base>

@@ -72,3 +72,12 @@ export function addsRowsHtml(rows: readonly AddsRow[], compact?: number): string
   const shown = compact == null ? rows : rows.slice(0, compact);
   return shown.map((r, i) => addsRowHtml(r, i + 1)).join("\n");
 }
+
+/** The leaderboard bound's state-independent remainder — the no-JS route to
+    every issuer of the shown quarter and mode. ONE string for the server's
+    first render and every quarter the client loads (launch M7b: the rows are
+    fetched from this same file on first open, so the link and the fetch are
+    one route). Pre-escaped html. */
+export function addsBoundHtml(payloadHref: string): string {
+  return `Every issuer in this quarter's bounded payload remains in <a href="${esc(payloadHref)}">the published JSON</a>.`;
+}

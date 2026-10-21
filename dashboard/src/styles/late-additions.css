@@ -1373,8 +1373,15 @@ details.si-tier > summary > .si-tier-h { display: inline; }
 .tk-onsig .si-row { border-bottom: 0; }
 /* R19: a pinned row says so beside its member, on the row's own text line */
 .on-signals-mark { font: 600 var(--fs-label)/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--amber); white-space: nowrap; }
-/* R21: holders 11..N behind one disclosure, in the same HTML */
+/* R21 → launch M7b (R33): holders 26..N behind one disclosure — drawn from
+   the island 25 at a time, with a search over them; the no-JS copy is the
+   `<noscript>` second table inside it. Shared by the ticker tab and the
+   holders page. */
 .tk-holders-more > summary { cursor: pointer; display: flex; align-items: center; min-height: var(--hit-min); padding: 6px 0; font: 500 var(--fs-control)/1.2 var(--mono); color: var(--accent); }
+.tk-holders-more .held-tools { margin: 6px 0 8px; }
+.tk-holders-more .held-tools .filter-text { width: 100%; max-width: 320px; }
+.tk-holders-more .held-count { margin: 6px 0 0; font: 400 var(--fs-note)/1.5 var(--sans); color: var(--ink3); }
+.tk-holders-more [data-held-step] { display: inline-flex; align-items: center; min-height: var(--hit-min); }
 @media (max-width: 720px) {
   .tk-tab { padding: 10px 14px; }
 }
@@ -1384,6 +1391,7 @@ details.si-tier > summary > .si-tier-h { display: inline; }
   .tk-panel[hidden] { display: block !important; }
   .tk-tabs { position: static; }
   .tk-holders-more::details-content { content-visibility: visible !important; }
+  .tk-holders-more .held-tools, .tk-holders-more [data-held-step] { display: none; }
 }
 
 /* D1 (L10): Leaders and Tickers are ONE paired band (the 1.6fr/1fr

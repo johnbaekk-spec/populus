@@ -26,8 +26,9 @@ const description =
   </main>
   <script>
     import { runGenericRoute } from "../../scripts/entity-client";
-    import { initDomDisclosures, registerHeldRows } from "../../scripts/inst-index-client";
+    import { initDomDisclosures, initHeldRows, registerHeldRows } from "../../scripts/inst-index-client";
     import { memberNetRowHtml, memberHistoryRowHtml, MEMBER_NET_ROWS, MEMBER_HISTORY_ROWS } from "../../lib/ui/index.ts";
+    import { TICKER_HOLDER_HELD } from "../../lib/ui/ticker.ts";
     import { initNotes } from "../../scripts/notes";
     /* R15: a tail filer's Position changes "Show more" is a DOM-backed
        disclosure; the driver dispatches `populus:rerender` after each render.
@@ -36,6 +37,9 @@ const description =
     registerHeldRows(MEMBER_NET_ROWS, memberNetRowHtml);
     registerHeldRows(MEMBER_HISTORY_ROWS, memberHistoryRowHtml);
     initDomDisclosures();
+    /* launch M7b (R33): a tail ticker's holders 26..N, bound after the driver's
+       render announces itself */
+    initHeldRows({ "ticker-holder": TICKER_HOLDER_HELD });
     runGenericRoute();
     // launch M1c (R12): tips open as bottom sheets at ≤720px here too
     initNotes();

@@ -16,9 +16,11 @@ import { initInstIndex, instIndexBodyHtml, instDefaultDir } from "../src/scripts
 import {
   sortInstIndexRows,
   filterInstIndexRows,
+  planDirectoryShards,
   INST_INDEX_HEADS,
   type InstIndexRow,
 } from "../src/lib/inst-index.ts";
+import { fillShardsByBytes } from "../src/lib/shards.ts";
 
 function row(over: Partial<InstIndexRow> = {}): InstIndexRow {
   return {
@@ -127,17 +129,41 @@ function fakeEl(props: Record<string, unknown> = {}) {
   };
 }
 
-function mountIndex(payload: InstIndexRow[], opts: { pressedTypes?: string[] } = {}) {
+/* Launch M7b (R32, LD28): the rows are no longer an inline island. The page
+   inlines the shard LIST (`#inst-index-shards`) and the island fetches the
+   family on the first search, chip or sort. The mount builds that list and a
+   fetch double from the SAME planner the build uses, and counts each fetch, so
+   these tests also prove WHEN the rows load. */
+const flush = async (): Promise<void> => {
+  for (let i = 0; i < 12; i++) await Promise.resolve();
+};
+
+function mountIndex(payload: InstIndexRow[], opts: { pressedTypes?: string[]; failFetch?: boolean; list?: string } = {}) {
+  const family = planDirectoryShards(payload, fillShardsByBytes);
   const els: Record<string, ReturnType<typeof fakeEl>> = {
-    "inst-index-data": fakeEl({ textContent: JSON.stringify(payload) }),
+    "inst-index-shards": fakeEl({ textContent: opts.list ?? family.listJson }),
     "inst-managers-tbody": fakeEl(),
     "inst-index-q": fakeEl({ value: "" }),
     "inst-index-count": fakeEl(),
     "inst-index-status": fakeEl(),
+    "inst-index-load": fakeEl({ hidden: true }),
+  };
+  const fetched: string[] = [];
+  const g = globalThis as unknown as { fetch: unknown };
+  g.fetch = (href: string) => {
+    fetched.push(href);
+    if (opts.failFetch) return Promise.resolve({ ok: false, status: 503, json: () => Promise.reject(new Error("503")) });
+    const i = Number(/\/(\d+)\.v1\.json$/.exec(href)?.[1] ?? -1);
+    const shard = family.shards[i];
+    return shard
+      ? Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(JSON.parse(shard.body)) })
+      : Promise.resolve({ ok: false, status: 404, json: () => Promise.reject(new Error("404")) });
   };
   const ths = (["name", "value", "positions", "hhi"] as const).map((k) => {
     const th = fakeEl();
     (th as unknown as { dataset: Record<string, string> }).dataset = { instSort: k };
+    // the server's markup: `thHtml` renders the value column descending
+    th.setAttribute("aria-sort", k === "value" ? "descending" : "none");
     return th;
   });
   // STRICT on purpose (code review F2): an `includes()` match would let a
@@ -168,21 +194,27 @@ function mountIndex(payload: InstIndexRow[], opts: { pressedTypes?: string[] } =
       return sel === SELECTOR ? ths : sel === PRESSED ? pressed : [];
     },
   };
-  return { els, ths, asked, pressed };
+  return { els, ths, asked, pressed, fetched, family };
 }
 
-test("ENTRY POINT: initInstIndex binds headers and syncs aria without repainting", () => {
-  const { els, ths } = mountIndex(rows);
+test("ENTRY POINT: initInstIndex binds headers, fetches nothing and repaints nothing on load", async () => {
+  const { els, ths, fetched } = mountIndex(rows);
   initInstIndex();
+  await flush();
   assert.equal(els["inst-managers-tbody"].innerHTML, "SSR", "the SSR body is trusted on load");
-  assert.equal(ths[1].getAttribute("aria-sort"), "descending", "value column marked from initial state");
+  assert.equal(ths[1].getAttribute("aria-sort"), "descending", "the server's sort stays on the headers");
   assert.equal(ths[0].getAttribute("aria-sort"), "none");
+  assert.deepEqual(fetched, [], "no shard is fetched until the reader asks for something the server did not render");
 });
 
-test("ENTRY POINT: a header click re-renders the body and moves aria-sort", () => {
-  const { els, ths } = mountIndex(rows);
+test("ENTRY POINT: a header click re-renders the body and moves aria-sort", async () => {
+  const { els, ths, fetched, family } = mountIndex(rows);
   initInstIndex();
   ths[0].fire("click"); // Filer / name
+  assert.equal(els["inst-managers-tbody"].innerHTML, "SSR", "nothing changes before the rows arrive");
+  assert.equal(ths[0].getAttribute("aria-sort"), "none", "no header claims an order the rows do not show yet");
+  await flush();
+  assert.deepEqual(fetched, family.shards.map((_, i) => `/institutional/data/directory/${i}.v1.json`), "every shard, once");
   assert.notEqual(els["inst-managers-tbody"].innerHTML, "SSR", "body was re-rendered");
   assert.ok(els["inst-managers-tbody"].innerHTML.includes("/institutional/filers/"), "real rows rendered");
   assert.equal(ths[0].getAttribute("aria-sort"), "ascending");
@@ -191,30 +223,69 @@ test("ENTRY POINT: a header click re-renders the body and moves aria-sort", () =
   assert.ok(String(els["inst-index-count"].textContent).includes("of 4 managers"));
 });
 
-test("ENTRY POINT: clicking the active column toggles direction", () => {
-  const { ths } = mountIndex(rows);
+test("ENTRY POINT: clicking the active column toggles direction", async () => {
+  const { ths, fetched } = mountIndex(rows);
   initInstIndex();
   ths[1].fire("click"); // value is already active -> toggles to asc
+  await flush();
   assert.equal(ths[1].getAttribute("aria-sort"), "ascending");
   ths[1].fire("click");
   assert.equal(ths[1].getAttribute("aria-sort"), "descending");
+  assert.equal(fetched.length, 1, "the rows are fetched once; later sorts are local");
 });
 
-test("ENTRY POINT: typing in search re-renders at the current sort", () => {
+test("ENTRY POINT: typing in search re-renders at the current sort", async () => {
   const { els, ths } = mountIndex(rows);
   initInstIndex();
   ths[0].fire("click");
+  await flush();
   els["inst-index-q"].value = "bravo";
   els["inst-index-q"].fire("input");
   assert.ok(String(els["inst-index-count"].textContent).includes("1 of 4 managers"));
   assert.ok(String(els["inst-index-count"].textContent).includes("sorted by name asc"), "sort survives a search");
 });
 
-test("ENTRY POINT: malformed embedded JSON leaves the SSR table alone", () => {
-  const { els } = mountIndex(rows);
-  els["inst-index-data"].textContent = "{not json";
+test("ENTRY POINT: a malformed shard list leaves the SSR table alone and fetches nothing", async () => {
+  const { els, ths, fetched } = mountIndex(rows, { list: "{not json" });
   initInstIndex();
+  ths[0].fire("click");
+  await flush();
   assert.equal(els["inst-managers-tbody"].innerHTML, "SSR", "the island is a convenience, never load-bearing");
+  assert.deepEqual(fetched, []);
+});
+
+test("launch M7b (R32): a failed shard fetch is stated VISIBLY; the server rows, the chips and the headers stay as they were; the next press retries", async () => {
+  const typing = { cik: "0000002", display_name: "Bravo Partners", person: null, manager_type: "pension", notable: false };
+  const typed = [rows[0]!, { ...rows[1]!, typing } as InstIndexRow];
+  const { els, ths, pressed, fetched } = mountIndex(typed, { failFetch: true, pressedTypes: ["hedge_fund"] });
+  initInstIndex();
+  ths[0].fire("click");
+  await flush();
+  assert.equal(els["inst-managers-tbody"].innerHTML, "SSR", "the server's rows stay");
+  assert.equal(ths[0].getAttribute("aria-sort"), "none", "no header claims the order it could not draw");
+  assert.equal(ths[1].getAttribute("aria-sort"), "descending");
+  assert.equal(pressed[0]!.getAttribute("aria-pressed"), "true", "the chips are untouched");
+  const load = els["inst-index-load"] as unknown as { hidden: boolean; textContent: string };
+  assert.equal(load.hidden, false, "the failure line is visible");
+  assert.match(String(load.textContent), /Couldn't load the full filer directory/);
+  assert.match(String(load.textContent), /unchanged/);
+  const before = fetched.length;
+  ths[0].fire("click");
+  await flush();
+  assert.ok(fetched.length > before, "a later press retries");
+});
+
+test("launch M7b (R32): a shard whose envelope disagrees with the list fails closed — never a partial directory", async () => {
+  const many = Array.from({ length: 3 }, (_, i) => row({ cik: String(i + 1).padStart(7, "0"), value: 100 + i }));
+  const family = planDirectoryShards(many, fillShardsByBytes);
+  const list = JSON.parse(family.listJson) as { v: number; total: number; shards: string[] };
+  // the list claims one more filer than the family holds
+  const { els, ths } = mountIndex(many, { list: JSON.stringify({ ...list, total: list.total + 1 }) });
+  initInstIndex();
+  ths[0].fire("click");
+  await flush();
+  assert.equal(els["inst-managers-tbody"].innerHTML, "SSR");
+  assert.match(String((els["inst-index-load"] as unknown as { textContent: string }).textContent), /Couldn't load/);
 });
 
 test("the island queries EXACTLY the specified sort selector, not a near-miss", () => {
@@ -243,7 +314,7 @@ test("the island queries EXACTLY the specified sort selector, not a near-miss", 
   );
 });
 
-test("R14 (signals-v3 M1): Hedge funds is the default for EVERY visitor — legacy watch keys on the device change nothing, and the island reads no storage", () => {
+test("R14 (signals-v3 M1): Hedge funds is the default for EVERY visitor — legacy watch keys on the device change nothing, and the island reads no storage", async () => {
   const typing = (cik: string, display_name: string, manager_type: string) => ({ cik, display_name, person: null, manager_type, notable: false });
   const typed = [
     row({ cik: "0000001", name: "ALPHA CAPITAL", value: 100, typing: typing("0000001", "Alpha Capital", "hedge_fund") } as never),
@@ -265,6 +336,7 @@ test("R14 (signals-v3 M1): Hedge funds is the default for EVERY visitor — lega
     assert.equal(pressed[0]!.getAttribute("aria-pressed"), "true", "the server's default chip stays pressed");
     assert.deepEqual(reads, [], "the island reads nothing from the device");
     els["inst-index-q"].fire("input"); // a repaint at the default state
+    await flush();
     const body = String(els["inst-managers-tbody"].innerHTML);
     assert.ok(body.includes("Alpha Capital"), "the hedge fund is listed");
     assert.ok(!body.includes("Bravo Partners"), "the pension filer is filtered out by the default chip");

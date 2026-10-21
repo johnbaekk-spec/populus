@@ -98,6 +98,7 @@ __all__ = [
     "FILER_TAIL_SHARDS_RESERVED",
     "FILER_V1_TRANSITION_FILES",
     "GLOBAL_FILE_CAP",
+    "INST_DIRECTORY_SHARDS_MAX",
     "M1_MEASURED_PAGES",
     "M2_FILER_PAGES",
     "M3_RESERVED",
@@ -230,6 +231,21 @@ FILER_V1_TRANSITION_FILES = 3
 #: ``dashboard/test/post/file-budget.test.ts``.
 FILER_SHARD_BYTE_CEILING = 1024 * 1024
 
+# --- /institutional/ directory family — HARD MAXIMUM (launch redesign M7b) ---
+#: LD28/LD29 of the launch-redesign plan: the filer directory's rows left the
+#: /institutional/ page (a ~3.4 MB inline JSON island, 96% of the page) for a
+#: versioned shard family, `institutional/data/directory/{n}.v1.json`, each
+#: response cut by `fillShardsByBytes` at the FILER_SHARD_BYTE_CEILING above
+#: and fetched by the page on the first search, chip or sort. It is a NEW file
+#: class inside the `institutional/` reservation, so it is a REAL parameter of
+#: ``worst_case_file_count`` and a term of ``reserved_file_total`` from the day
+#: the route exists — the C5/N1 defect this module documents is precisely a
+#: file class a constant names and the sum omits. The dashboard walk FAILS past
+#: this maximum and never truncates (`lib/inst-index.ts::INST_DIRECTORY_SHARDS_MAX`
+#: mirrors it, pinned by `dashboard/test/post/file-budget.test.ts`). Eight 1 MiB
+#: responses carry more than twice the measured unslimmed island.
+INST_DIRECTORY_SHARDS_MAX = 8
+
 # Pagination: ONE byte-aware rule. A page closes at whichever binds
 # first. There is no second selection rule — `{500, 1000, 2000}` was a
 # contradictory alternative and is deleted.
@@ -296,8 +312,9 @@ SITE_CHROME_CLASSES: frozenset[str] = frozenset(
 ROOT_FILE_CLASS = "<root>"
 #: BUILT, and accounted for by reservations rather than by a measured constant:
 #: `M2_FILER_PAGES` + `ACTIVITY_SHARDS_MAX` + `FILER_TAIL_SHARDS_RESERVED` +
-#: `FILER_ROUTING_INDEX_FILES` + `FILER_V1_TRANSITION_FILES`. The reservation
-#: is the forward commitment; what is on disk today is a draw against it.
+#: `FILER_ROUTING_INDEX_FILES` + `FILER_V1_TRANSITION_FILES` +
+#: `INST_DIRECTORY_SHARDS_MAX`. The reservation is the forward commitment; what
+#: is on disk today is a draw against it.
 RESERVED_CLASSES: frozenset[str] = frozenset({"institutional"})
 
 
@@ -336,6 +353,7 @@ def reserved_file_total() -> int:
         + FILER_TAIL_SHARDS_RESERVED
         + FILER_ROUTING_INDEX_FILES
         + FILER_V1_TRANSITION_FILES
+        + INST_DIRECTORY_SHARDS_MAX
     )
 
 
@@ -466,6 +484,7 @@ def worst_case_file_count(
     filer_tail_shards: int = FILER_TAIL_SHARDS_RESERVED,
     routing_index_files: int = FILER_ROUTING_INDEX_FILES,
     filer_v1_transition_files: int = FILER_V1_TRANSITION_FILES,
+    inst_directory_shards: int = INST_DIRECTORY_SHARDS_MAX,
 ) -> int:
     """Projected total once every committed reservation lands, in file counts.
 
@@ -492,6 +511,10 @@ def worst_case_file_count(
     including M3's committed 2,064 — because both historical defects in this
     module were a real file class that a constant named and the sum omitted.
 
+    `inst_directory_shards` is the /institutional/ directory family (launch
+    redesign M7b, LD29): the one dist class that redesign adds, summed here
+    and in `reserved_file_total` for the same reason.
+
     NOT a gate. This is a forecast over modules that are not built; asserting a
     forecast is how the previous version shipped a proof that measured nothing.
     Compare it to `GLOBAL_FILE_CAP` and REPORT the result.
@@ -505,4 +528,5 @@ def worst_case_file_count(
         + filer_tail_shards
         + routing_index_files
         + filer_v1_transition_files
+        + inst_directory_shards
     )

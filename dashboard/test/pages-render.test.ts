@@ -231,7 +231,8 @@ test("unified ticker: data state — published columns only, stamp, terminus, �
   assert.ok(!html.includes(">Shares<"), "unpublished columns stay out");
   assert.ok(html.includes('data-terminus-author="populus"'));
   assert.ok(html.includes("derived&nbsp;·§"));
-  assert.ok(html.includes("full holders view ↗"));
+  // launch M7b (ticker-09): the link reads "All holders ↗"
+  assert.ok(html.includes("All holders ↗"));
   assert.ok(!html.toLowerCase().includes("current holdings"));
 });
 
@@ -246,7 +247,8 @@ test("R2: the unified ticker's holders link renders only when that page is built
     topn: 25,
     holders: [],
   });
-  assert.ok(html.includes("Institutional holders"), "the section still renders");
+  // launch M7b (ticker-09): the section head reads "13F holders"
+  assert.ok(html.includes("13F holders"), "the section still renders");
   assert.ok(!html.includes("/holders/"), "no link to an unbuilt holders page");
 });
 
@@ -769,7 +771,7 @@ test("T3.6 (R27): Methodology renders #signals-overlap and #signals-playbooks th
 
 import { tickerOnSignalsHtml } from "../src/lib/ui/index.ts";
 import { onSignalsLines, COMMITTEE_CAVEAT, COMMITTEE_CAVEAT_SHORT } from "../src/lib/ui/signals.ts";
-import { TICKER_HOLDERS_VISIBLE, TICKER_PREVIEW_ROWS, TIMELINE_GRIDLINES } from "../src/lib/ui/ticker.ts";
+import { TICKER_HOLDER_HELD, TICKER_HOLDERS_VISIBLE, TICKER_PREVIEW_ROWS, TIMELINE_GRIDLINES } from "../src/lib/ui/ticker.ts";
 import { amountText, sideLabel, universalFlags, effectiveFlagKeys } from "../src/lib/format.ts";
 import { affTextOf, excludeDateAnomalies, legacyTrailingMonthsBounds, windowMembership } from "../src/lib/derive.ts";
 import { loadTriageFixture } from "./lib/triage-fixture.ts";
@@ -1082,39 +1084,61 @@ test("T3.4 (R19, R20): the timeline draws the $15K, $250K and $5M gridlines and 
   assert.equal(domOf(goldenPage("AAPL", null)).querySelectorAll(".tl-ring").length, 0);
 });
 
-test("T3.5 (R21): holders 1–10 show; 11..N sit in 'Show all N holders'; the hoist and the terminus are computed over all N; the full holders link only with holdersPage", () => {
+test("T3.5 (R21) → launch M7b (R33): holders 1–25 show; 26..N are held — an island the binder draws and a no-JS second table inside 'Show all N holders'; the hoist and the terminus are computed over all N; the holders link only with holdersPage", () => {
+  /* Reversal record (launch M7b, LD30): the visible window moved from 10 to 25
+     and holders past it left the DOM for an island plus a `<noscript>` copy.
+     Property kept: every holder is reachable (with and without JavaScript),
+     the disclosure states all N, the hoist and the terminus read all N. */
   const holder = (i: number, flags: string[] = []) => ({ rank: i, cik: String(i).padStart(10, "0"), name: `HOLDER ${i}`, value: 100_000 - i, securities: 1, keySource: "entity", flags });
   const data = (n: number, over: Partial<TickerInstSection> = {}, flags: (i: number) => string[] = () => []): string =>
     unified({ state: "data", name: "Fixture Corp", cik: "0000320193", period: "2026-03-31", latestFiled: "2026-05-15", topn: 25, holders: Array.from({ length: n }, (_, i) => holder(i + 1, flags(i + 1))), ...over } as TickerInstSection);
-  const html = data(25);
+  const range = (a: number, b: number): string[] => Array.from({ length: b - a + 1 }, (_, i) => String(a + i));
+  const ranksIn = (html: string): string[] => [...html.matchAll(/<tr role="row"><td role="cell" class="c-num c-muted">(\d+)<\/td>/g)].map((m) => m[1]!);
+  const html = data(40);
   const sec = domOf(html).querySelector("#ticker-holders")!;
-  const tables = sec.querySelectorAll("table");
-  assert.equal(tables.length, 2);
+  const firstTable = sec.querySelector("table")!;
   const ranks = (el: MiniElement): string[] => el.querySelectorAll("tbody tr").map((tr) => visibleText(tr.querySelectorAll("td")[0]!).trim());
-  assert.deepEqual(ranks(tables[0]!), Array.from({ length: TICKER_HOLDERS_VISIBLE }, (_, i) => String(i + 1)), "holders 1–10 visible");
+  assert.deepEqual(ranks(firstTable), range(1, TICKER_HOLDERS_VISIBLE), "holders 1–25 visible");
+  assert.equal(TICKER_HOLDERS_VISIBLE, 25);
   const more = sec.querySelector("details.tk-holders-more")!;
   assert.ok(more && !more.hasAttribute("open"), "closed by default");
-  assert.equal(visibleText(more.querySelector("summary")!), "Show all 25 holders");
-  assert.deepEqual(ranks(more), Array.from({ length: 15 }, (_, i) => String(i + 11)), "holders 11..N inside, none lost");
-  assert.ok(tables.every((t) => t.getAttribute("data-paged") === "1"), "each part says it shows part of the collection");
-  assert.match(visibleText(sec), /ranks the top 25 holders per issuer/, "the terminus");
-  // ten or fewer: one table, no disclosure, nothing marked partial
-  const ten = domOf(data(10)).querySelector("#ticker-holders")!;
-  assert.equal(ten.querySelectorAll("table").length, 1);
-  assert.ok(!ten.querySelector("details.tk-holders-more") && !ten.querySelector("table[data-paged]"));
+  assert.equal(visibleText(more.querySelector("summary")!), "Show all 40 holders", "the disclosure keeps its count of ALL N");
+  // the no-JS copy: a SECOND table inside <noscript>, holding 26..N, never in a tbody
+  const noscript = /<noscript>([\s\S]*?)<\/noscript>/.exec(html.slice(html.indexOf("tk-holders-more")))![1]!;
+  assert.deepEqual(ranksIn(noscript), range(26, 40), "holders 26..N in the no-JS table, none lost");
+  for (const m of html.matchAll(/<noscript>/g)) {
+    const before = html.slice(0, m.index);
+    assert.ok(before.lastIndexOf("<tbody") <= before.lastIndexOf("</tbody>"), "no <noscript> opens inside a tbody");
+  }
+  // the island: rows 26..N with every input the row function reads; drawn byte-identically
+  const island = JSON.parse(/<script type="application\/json" data-held-for="ticker-holders-held" data-held-render="ticker-holder">([\s\S]*?)<\/script>/.exec(html)![1]!) as { shown: number; step: number; total: number; ctx: unknown; rows: unknown[] };
+  assert.deepEqual([island.shown, island.step, island.total, island.rows.length], [25, 25, 40, 15]);
+  const noscriptBody = /<tbody role="rowgroup">([\s\S]*?)<\/tbody>/.exec(noscript)![1]!;
+  assert.equal(island.rows.map((r) => TICKER_HOLDER_HELD.row(r, island.ctx)).join("\n"), noscriptBody, "the binder's rows are the server's rows, byte for byte");
+  // the rows past 25 are not in the DOM: the held table the binder fills is empty
+  assert.equal(domOf(html).querySelector("#ticker-holders-held")!.querySelectorAll("tr").length, 0);
+  assert.match(html, /data-paged="1"/, "each part says it shows part of the collection");
+  assert.match(visibleText(sec), /Top 25 holders per issuer, set by the site/, "the terminus");
+  // twenty-five or fewer: one table, no disclosure, no island, nothing marked partial
+  const few = data(25);
+  assert.equal(domOf(few).querySelector("#ticker-holders")!.querySelectorAll("table").length, 1);
+  assert.ok(!few.includes("tk-holders-more") && !few.includes("data-held-for") && !few.includes("data-paged") && !few.includes("<noscript>"));
   // the terminus counts ALL N on the mapped path
-  const mapped = data(25, { mapped: { issuer: "FIXTURE CORP", titleOfClass: "COM", holderCount: 700 } } as never);
-  assert.match(mapped, /The 25 largest of the 700 13F filers reporting this share class for the quarter are listed/);
-  // the hoist reads ALL N: a flag on every holder is stated once; one on the first ten only stays on their rows
+  const mapped = data(40, { mapped: { issuer: "FIXTURE CORP", titleOfClass: "COM", holderCount: 700 } } as never);
+  assert.match(mapped, /Top 40 of 700 holders shown; the rest are on EDGAR\./);
+  // the hoist reads ALL N: a flag on every holder is stated once; one on the first 25 only stays on their rows
   const flag = "security_not_in_mapping";
-  const every = data(25, {}, () => [flag]);
+  const every = data(40, {}, () => [flag]);
   assert.equal((every.match(/class="caveat-line table-caveat"/g) ?? []).length, 1, "every holder carries it: stated once");
   assert.ok(domOf(every).querySelectorAll("#ticker-holders td.c-flags").every((td) => visibleText(td).trim() === ""), "and on no row");
-  const topOnly = data(25, {}, (i) => (i <= TICKER_HOLDERS_VISIBLE ? [flag] : []));
-  assert.ok(!topOnly.includes("table-caveat"), "the first ten carry it, holders 11..25 do not: never hoisted from the visible ten");
-  const cells = domOf(topOnly).querySelectorAll("#ticker-holders td.c-flags").map((td) => visibleText(td).trim() !== "");
-  assert.deepEqual(cells, Array.from({ length: 25 }, (_, i) => i < TICKER_HOLDERS_VISIBLE), "it stays on the ten rows that carry it");
+  const topOnly = data(40, {}, (i) => (i <= TICKER_HOLDERS_VISIBLE ? [flag] : []));
+  assert.ok(!topOnly.includes("table-caveat"), "the first 25 carry it, holders 26..40 do not: never hoisted from the visible 25");
+  const firstCells = domOf(topOnly).querySelector("#ticker-holders table")!.querySelectorAll("td.c-flags").map((td) => visibleText(td).trim() !== "");
+  assert.deepEqual(firstCells, Array.from({ length: 25 }, () => true), "it stays on the 25 rows that carry it");
+  const heldIsland = JSON.parse(/data-held-render="ticker-holder">([\s\S]*?)<\/script>/.exec(topOnly)![1]!) as { ctx: { stated: string[] } };
+  assert.deepEqual(heldIsland.ctx.stated, [], "the held rows' renderer gets the same all-N hoist");
   // the full holders view: only when that page is built
-  assert.ok(data(25, { holdersPage: true }).includes("full holders view ↗"));
-  assert.ok(!data(25, { holdersPage: false }).includes("/holders/"));
+  assert.ok(data(40, { holdersPage: true }).includes("All holders ↗"));
+  assert.ok(!data(40, { holdersPage: false }).includes("/holders/"));
 });
+

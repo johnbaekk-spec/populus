@@ -74,7 +74,7 @@ import type { ConcentrationRow, QoqDeltaRow, TopHolderRow, TickerHolderRow, Tick
 import type { ClusterBoardResult, ClusterRow } from "../activity.ts";
 import type { ConcentrationBenchmark, NewPositionLeaders } from "../inst-analytics.ts";
 import { HOLDER_COLUMNS, HOLDER_ZERO_CAVEAT, holderSortNote, orderRankedHolders, type HolderSortKey } from "../holders-sort.ts";
-import { addsRowHtml } from "../inst-adds-render.ts";
+import { addsBoundHtml, addsRowHtml } from "../inst-adds-render.ts";
 import {
   ADDS_MODES,
   addsBoundNoun,
@@ -86,6 +86,7 @@ import {
 import { type CongressColumn } from "../congress-columns.ts";
 import { quarterLabel } from "../congress-quarter.ts";
 import { breadcrumb } from "./shared.ts";
+import { quarterLabel } from "../congress-quarter.ts";
 import { s7Banner } from "./states.ts";
 
 /** The institutional table time stamp. The published aggregate has
@@ -1278,10 +1279,10 @@ export function addsSectionHtml(payload: AddsPayload, opts: AddsSectionOpts): st
     `<section class="panel panel-wide" id="inst-adds-section" aria-label="Recently added issuers">` +
     `<div class="panel-head"><h2 class="section-h">Recently added issuers</h2>` +
     `<span class="panel-note" id="inst-adds-window">quarter ended ${esc(payload.period)}</span></div>` +
-    `<p class="section-note">Which issuers 13F managers reported <strong>adding</strong> in a closed ` +
-    `reporting quarter. The window is a <strong>quarter</strong>, never a rolling day count — ` +
-    `quarterly filings cannot support one — and only quarters whose 45-day filing deadline has ` +
-    `passed are offered, because an open quarter counts only the managers who filed early.` +
+    /* Launch M7b (copy item inst-09): the ~100-word intro becomes its one
+       load-bearing clause — closed quarters only, because an open quarter
+       undercounts. */
+    `<p class="section-note">Closed quarters only — an open quarter undercounts.` +
     /* This sentence used to end "the quarter shown above is rendered in
        full below", which the renderer directly contradicts — it slices to the
        compact bound like every other table. A reader with scripting off was
@@ -1330,9 +1331,7 @@ export function addsSectionHtml(payload: AddsPayload, opts: AddsSectionOpts): st
          quarter's count of issuers (review R-4); the island restates it from
          the same function for every quarter it loads */
       ...addsBoundNoun(payload.truncated),
-      bound:
-        `Every issuer in this quarter's bounded payload remains in ` +
-        `<a href="${esc(addsPayloadHref(opts.period, opts.mode))}">the published JSON</a>.`,
+      bound: addsBoundHtml(addsPayloadHref(opts.period, opts.mode)),
     }) +
     // The note container ALWAYS renders, even when empty: the client cannot
     // insert a container that was never there, so an initially-absent note
@@ -1344,10 +1343,11 @@ export function addsSectionHtml(payload: AddsPayload, opts: AddsSectionOpts): st
     // with no indication their request had failed. It is `role="status"` so a
     // screen reader is told too, and it renders in EVERY state.
     `<p class="caveat-line" id="inst-adds-status" role="status" aria-live="polite"></p>` +
-    // The bounded rows travel with the page so the island can sort and
-    // expand them WITHOUT a fetch. Without this the compact slice was a
-    // one-way door: rows past it were unreachable on the default view.
-    `<script type="application/json" id="inst-adds-data">${serializeInlineJson(payload.rows)}</script>` +
+    /* Launch M7b (R32, LD28): the bounded rows no longer travel inside the
+       page (≈510 KB on /institutional/). The client fetches this quarter's
+       published payload — the file the bound above links — the first time
+       the drawer opens, so the compact slice is never a one-way door with
+       scripting on, and the link is the route without it. */
     `</section>`
   );
 }
@@ -1399,6 +1399,113 @@ export function notableRailHtml(res: NotableRecentResult, ctx: RenderCtx): strin
   );
 }
 
+/* ---------- launch M7b (R33, LD26, LD30): holders held past the first 25 ----------
+
+   A holders list opens at its first 25 rows; rows 26..N are NOT in the DOM.
+   They travel ONCE as an inert JSON island (`data-held-for`) that the binder
+   (`initHeldRows`, scripts/inst-index-client.ts) draws in steps of 25 through
+   the SAME row function the server uses — registered by name — with a local
+   search over those rows. Readers without JavaScript keep every holder: a
+   `<noscript>` inside the "Show all N holders" disclosure holds a SECOND
+   table of rows 26..N, never inside a `tbody` (the parser would hoist it
+   out). With scripting on, that copy is inert raw text with no DOM cost.
+   `beforeprint` draws every held row, so paper still lists every holder. */
+
+/** Holders a list shows before its "Show all N holders" disclosure. */
+export const HOLDERS_VISIBLE = 25;
+/** Rows one "Show 25 more" press adds. */
+export const HOLDERS_STEP = 25;
+
+/** The JSON-safe inputs the island carries for one held list. */
+export interface HeldIsland<R> {
+  shown: number;
+  step: number;
+  total: number;
+  noun: string;
+  ctx: unknown;
+  rows: readonly R[];
+}
+
+export interface HeldHoldersOpts<R> {
+  /** id of the held tbody the binder fills (also keys every control) */
+  rootId: string;
+  /** the registered renderer name the page script binds */
+  render: string;
+  /** every holder, in rank order; rows past `HOLDERS_VISIBLE` are held */
+  rows: readonly R[];
+  rowHtml: (r: R) => string;
+  ctx: unknown;
+  /** the table around a body: `(bodyHtml, caption, tbodyId)` — called for
+      the no-JS copy and the held table, never as the primary table, so a
+      header note the primary table carries is not emitted twice */
+  table: (bodyHtml: string, caption: string, tbodyId: string | null) => string;
+  caption: string;
+  /** the whole collection's size N (the summary's count) */
+  total?: number;
+}
+
+/** The held part of a holders list: the disclosure, its no-JS second table,
+    the empty table the binder fills, the step control, the search, and the
+    island. "" when nothing is held. */
+export function heldHoldersHtml<R>(o: HeldHoldersOpts<R>): string {
+  const held = o.rows.slice(HOLDERS_VISIBLE);
+  if (held.length === 0) return "";
+  const total = o.total ?? o.rows.length;
+  const first = HOLDERS_VISIBLE + 1;
+  const island: HeldIsland<R> = { shown: HOLDERS_VISIBLE, step: HOLDERS_STEP, total, noun: "holders", ctx: o.ctx, rows: held };
+  return (
+    `<details class="tk-holders-more" data-held-more="${esc(o.rootId)}">` +
+    `<summary>Show all ${fmtInt(total)} holders</summary>` +
+    `<div class="held-tools" data-held-tools="${esc(o.rootId)}" hidden>` +
+    `<input class="filter-select filter-text" type="search" data-held-search="${esc(o.rootId)}" placeholder="filer name" ` +
+    `aria-label="filter holders ${fmtInt(first)} to ${fmtInt(total)} by filer name — on this device" /></div>` +
+    `<noscript>${o.table(held.map((r) => o.rowHtml(r)).join("\n"), `${o.caption}, ${rangeOfTotal(first, total, total, "holders")}`, null)}</noscript>` +
+    `<div class="held-wrap" data-held-wrap="${esc(o.rootId)}" hidden>${o.table("", `${o.caption}, holders ${fmtInt(first)} to ${fmtInt(total)}`, o.rootId)}</div>` +
+    `<p class="held-count" data-held-count="${esc(o.rootId)}" role="status" aria-live="polite" hidden></p>` +
+    `<button class="linklike compact-toggle" type="button" data-held-step="${esc(o.rootId)}" aria-controls="${esc(o.rootId)}" hidden></button>` +
+    `</details>` +
+    `<script type="application/json" data-held-for="${esc(o.rootId)}" data-held-render="${esc(o.render)}">${serializeInlineJson(island)}</script>`
+  );
+}
+
+/** One holders-page row's inputs (mapped path) — exactly what
+    `holdersPageRowHtml` reads, so the island carries nothing else. */
+export interface HoldersPageRow {
+  rank: number;
+  cik: string;
+  name: string;
+  value: number | null;
+  shares: number | null;
+  delta: number | null;
+  kind: QoqDeltaRow["change_kind"];
+  tier: FilerBudgetState;
+}
+
+/** One row of the holders page's ranked table (server, no-JS copy and the
+    binder alike). Explicit table roles (R40) ride every row and cell. */
+export function holdersPageRowHtml(h: HoldersPageRow): string {
+  const deltaCls = h.delta == null ? "c-muted" : h.delta < 0 ? "c-sell" : h.delta > 0 ? "c-buy" : "";
+  return (
+    `<tr role="row"${changeEdgeAttr(h.kind)}><td role="cell" class="c-rank c-num">${fmtInt(h.rank)}</td>` +
+    `<td role="cell" class="c-filer c-flex">${filerLinkHtml(h.cik, h.name, h.tier)}</td>` +
+    `<td role="cell" class="c-num">${h.value == null ? "—" : esc(fmtUsd(h.value))}</td>` +
+    `<td role="cell" class="c-num">${h.shares == null ? "—" : fmtInt(h.shares)}</td>` +
+    `<td role="cell" class="c-num ${deltaCls}">${h.delta == null ? "—" : `${h.delta < 0 ? "−" : h.delta > 0 ? "+" : ""}${fmtInt(Math.abs(h.delta))}`}</td>` +
+    `<td role="cell" class="c-chip c-kind">${kindWordHtml(h.kind)}</td></tr>`
+  );
+}
+
+/** The holders page's registered renderer (`initHeldRows`). */
+export const HOLDERS_PAGE_HELD = {
+  row: (r: unknown): string => holdersPageRowHtml(r as HoldersPageRow),
+  text: (r: unknown): string => (r as HoldersPageRow).name,
+};
+
+/** A present-day 13F class code a reader can say in words (copy item
+    holders-01: "CMN" is a code, not reader copy). Anything else is shown
+    exactly as filed. */
+const CLASS_WORDS: Record<string, string> = { CMN: "common stock", COM: "common stock", COMMON: "common stock", "COMMON STOCK": "common stock" };
+
 /* ---------- R20: the holders page for a REVIEWED (Tier C) ticker ---------- */
 
 export interface TickerHoldersPageInputs {
@@ -1432,17 +1539,33 @@ export function tickerHoldersBody(i: TickerHoldersPageInputs): string {
     ],
     { scope: "holders-tiles", label: "Holder statistics" },
   );
-  const rows = i.holders
-    .map(
-      (h) =>
-        `<tr${changeEdgeAttr(h.change_kind)}><td class="c-rank c-num">${fmtInt(h.rank)}</td>` +
-        `<td class="c-filer c-flex">${filerLinkHtml(h.cik, h.filer_name, i.tierOf(h.cik))}</td>` +
-        `<td class="c-num">${h.value_usd == null ? "—" : esc(fmtUsd(h.value_usd))}</td>` +
-        `<td class="c-num">${h.shares == null ? "—" : fmtInt(h.shares)}</td>` +
-        `<td class="c-num ${h.delta_shares == null ? "c-muted" : h.delta_shares < 0 ? "c-sell" : h.delta_shares > 0 ? "c-buy" : ""}">${h.delta_shares == null ? "—" : `${h.delta_shares < 0 ? "−" : h.delta_shares > 0 ? "+" : ""}${fmtInt(Math.abs(h.delta_shares))}`}</td>` +
-        `<td class="c-chip c-kind">${kindWordHtml(h.change_kind)}</td></tr>`,
-    )
-    .join("\n");
+  /* Launch M7b (R33): the first 25 holders render; 26..N are held (island +
+     no-JS second table) through `heldHoldersHtml`, every row through the one
+     `holdersPageRowHtml`. */
+  const list: HoldersPageRow[] = i.holders.map((h) => ({
+    rank: h.rank,
+    cik: h.cik,
+    name: h.filer_name,
+    value: h.value_usd,
+    shares: h.shares,
+    delta: h.delta_shares,
+    kind: h.change_kind,
+    tier: i.tierOf(h.cik),
+  }));
+  const caption = `13F holders of ${i.ticker} ranked by reported value`;
+  const paged = list.length > HOLDERS_VISIBLE;
+  const table = (bodyHtml: string, cap: string, tbodyId: string | null): string =>
+    `<div class="table-scroll"><table class="etable" role="table" data-card="holders" data-sticky-first${paged ? ' data-paged="1"' : ""}><caption class="visually-hidden">${esc(cap)}</caption>` +
+    `<thead role="rowgroup"><tr role="row">` +
+    thHtml({ label: "#", cls: "c-num" }) +
+    thHtml({ label: "Filer", cls: "c-filer c-flex" }) +
+    thHtml({ label: "Reported value", cls: "c-num" }) +
+    thHtml({ label: "Shares", cls: "c-num" }) +
+    thHtml({ label: "Δ shares", cls: "c-num" }) +
+    thHtml({ label: "Change", cls: "c-chip c-kind" }) +
+    `</tr></thead>` +
+    `<tbody role="rowgroup"${tbodyId ? ` id="${esc(tbodyId)}"` : ""}>${bodyHtml}</tbody></table></div>`;
+  const classText = CLASS_WORDS[t.title_of_class.trim().toUpperCase()];
   return (
     breadcrumb([
       { text: "/institutional", href: "/institutional/" },
@@ -1454,7 +1577,14 @@ export function tickerHoldersBody(i: TickerHoldersPageInputs): string {
     `<h1 class="entity-title">Who holds ` +
     noteFromHtml(`ticker verified against the SEC company list${verified ? ` on ${esc(verified)}` : ""} — a reviewed name-and-class mapping row, never an inferred symbol. <a href="/methodology/#ticker-mapping">how tickers are mapped ↗</a>`, { scope: "holders-ticker" }, "verified", { trigger: "label", textHtml: `<span class="mono-ticker">${esc(i.ticker)}</span>`, name: i.ticker }) +
     `</h1>` +
-    `<div class="entity-subline"><span class="filed-name">${esc(t.issuer_name)}</span> · <span class="filed-name">${esc(t.title_of_class)}</span> · quarter ended <span class="mono-id">${esc(t.period_of_report)}</span>` +
+    /* holders-01: the class code reads as words where it is a known code
+       (the code as filed stays in the accessible name), the quarter as its
+       label */
+    `<div class="entity-subline"><span class="filed-name">${esc(t.issuer_name)}</span> · ` +
+    (classText
+      ? `${esc(classText)}<span class="visually-hidden"> (filed as ${esc(t.title_of_class)})</span>`
+      : `<span class="filed-name">${esc(t.title_of_class)}</span>`) +
+    ` · <span class="mono-id">${esc(quarterLabel(t.period_of_report) ?? `quarter ended ${t.period_of_report}`)}</span>` +
     (i.congress ? ` · <a href="${esc(i.congress.href)}">${fmtInt(i.congress.members)} ${i.congress.members === 1 ? "member" : "members"} disclosed ${esc(i.ticker)} ↗</a>` : "") +
     `</div></div>` +
     ledger +
@@ -1463,13 +1593,12 @@ export function tickerHoldersBody(i: TickerHoldersPageInputs): string {
     `<section class="panel panel-wide" id="ticker-holders" aria-label="Holders ranked by value">` +
     `<div class="panel-head"><h2 class="section-h">Holders — quarter ended ${esc(t.period_of_report)}</h2>` +
     `<span class="panel-note">ranked by reported value · Δ shares vs ${esc(t.prev_period ?? "the prior quarter")} · kind by shares</span></div>` +
-    `<div class="table-scroll"><table class="etable" data-sticky-first><caption class="visually-hidden">13F holders of ${esc(i.ticker)} ranked by reported value</caption>` +
-    `<thead><tr><th scope="col" class="c-num">#</th><th scope="col" class="c-filer c-flex">Filer</th><th scope="col" class="c-num">Reported value</th><th scope="col" class="c-num">Shares</th><th scope="col" class="c-num">Δ shares</th><th scope="col" class="c-chip c-kind">Change</th></tr></thead>` +
-    `<tbody>${rows}</tbody></table></div>` +
+    table(list.slice(0, HOLDERS_VISIBLE).map(holdersPageRowHtml).join("\n"), paged ? `${caption}, ${rangeOfTotal(1, HOLDERS_VISIBLE, list.length, "holders")}` : caption, "ticker-holders-rows") +
+    heldHoldersHtml({ rootId: "ticker-holders-held", render: "holders-page", rows: list, rowHtml: holdersPageRowHtml, ctx: null, table, caption }) +
     cardFoot({ short: `Quarter ended ${t.period_of_report}`, full: instFiledNote(i.latestFiled), scope: "ticker-holders-foot", key: "stamp" }) +
     `</section>` +
     i.overlapHtml +
-    (i.congress ? `<p class="section-note"><a href="${esc(i.congress.href)}">${fmtInt(i.congress.members)} ${i.congress.members === 1 ? "member" : "members"} of Congress disclosed ${esc(i.ticker)} — the congressional view ↗</a></p>` : "") +
+    /* holders-01: the bottom line repeated the subline's Congress link */
     /* CD-3 (DESIGN-POLISH M3, carried): the reviewed-mapping holders path is
        an institutional surface like every other, so the §5 data note ships
        with its body by construction — the entity path gets it from

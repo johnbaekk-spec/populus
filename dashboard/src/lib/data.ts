@@ -65,7 +65,9 @@ import {
   type FilerAggregateInputs,
   type FilerRouteV2,
 } from "./filer-payload.ts";
-import { paginateByBytes, SHARD_RESPONSE_CEILING_BYTES } from "./shards.ts";
+import { fillShardsByBytes, paginateByBytes, SHARD_RESPONSE_CEILING_BYTES } from "./shards.ts";
+import { buildInstIndexRow, directoryColumns, planDirectoryShards, type DirectoryFamily, type InstIndexRow } from "./inst-index.ts";
+import { biggestChange } from "./manager-directory.ts";
 import { buildSignalArtifact, validateSignalArtifact } from "./signals.ts";
 import { buildTriage } from "./signal-triage.ts";
 import { sicCode } from "./committee-direct.ts";
@@ -1525,6 +1527,61 @@ export function filerTailShards(build: BuildData): FilerShardFamily {
     }
   }
   filerFamilyCache = { key, family };
+  return family;
+}
+
+/* ---------- the /institutional/ filer directory (launch redesign M7b; R32, LD28) ---------- */
+
+const directoryRowsCache = new WeakMap<object, InstIndexRow[]>();
+
+/** Every directory row, period-correct (A-2, constraint 4: every number from
+    `agg_filer_concentration` for the filer's latest period, never the
+    registry's cross-period accumulators), as the /institutional/ page and the
+    directory shard family both read them. Memoized per build object so the
+    page's first rows and the shards are the SAME rows. Moved here from the
+    page's frontmatter when the rows left the page for the shard family. */
+export function instDirectoryRows(build: BuildData): InstIndexRow[] {
+  const cached = directoryRowsCache.get(build);
+  if (cached) return cached;
+  const inst = build.inst;
+  if (!inst.present) {
+    directoryRowsCache.set(build, []);
+    return [];
+  }
+  const rows = inst.filers.map((f) => {
+    const row = buildInstIndexRow(
+      f,
+      concentrationFor(inst, f.cik, f.latest_period),
+      filerTier(build, f.cik),
+      // Curated typing where the registry has it, null otherwise — the
+      // directory types a curated SUBSET and says so rather than guessing.
+      typingFor(inst, f.cik),
+      // The manager's largest change in its own latest period.
+      biggestChange(deltasFor(inst, f.cik, f.latest_period), f.latest_period),
+    );
+    row.reference = true;
+    /* R12 (DESIGN-POLISH M2; review R2-6): "Top-5" exists only when the
+       build's concentration slices hold five positions; `directoryColumns`
+       decides the column and the field travels only when the column does. */
+    if (inst.topn === 5) row.top5Share = concentrationFor(inst, row.cik, row.period)?.topn_share_bps ?? null;
+    return row;
+  });
+  if (!directoryColumns(rows, inst.topn).columns.includes("top5")) for (const row of rows) delete row.top5Share;
+  directoryRowsCache.set(build, rows);
+  return rows;
+}
+
+const directoryFamilyCache = new WeakMap<object, DirectoryFamily>();
+
+/** The directory shard family (`/institutional/data/directory/{n}.v1.json`):
+    the slim rows cut at the 1 MiB client-response ceiling into at most
+    `INST_DIRECTORY_SHARDS_MAX` files. The route's `getStaticPaths`, its `GET`
+    and the page's inlined list all read this one memoized plan. */
+export function instDirectoryFamily(build: BuildData): DirectoryFamily {
+  const cached = directoryFamilyCache.get(build);
+  if (cached) return cached;
+  const family = planDirectoryShards(instDirectoryRows(build), fillShardsByBytes);
+  directoryFamilyCache.set(build, family);
   return family;
 }
 

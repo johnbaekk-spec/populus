@@ -92,9 +92,13 @@ const description =
     import { initEntityPage } from "../../scripts/entity-client";
     import { initTabs } from "../../scripts/tabs";
     import { initNotes } from "../../scripts/notes";
+    import { initHeldRows } from "../../scripts/inst-index-client";
+    import { TICKER_HOLDER_HELD } from "../../lib/ui/ticker.ts";
     initEntityPage();
     // signals-v3 M3 (R16): the Congress / Institutional tabs
     initTabs(document);
+    // launch M7b (R33): the Institutional tab's holders 26..N
+    initHeldRows({ "ticker-holder": TICKER_HOLDER_HELD });
     // launch M1c (R12): tips open as bottom sheets at ≤720px here too
     initNotes();
   </script>

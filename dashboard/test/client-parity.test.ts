@@ -33,7 +33,8 @@ import { holdingsRangeText, HOLDINGS_PAGE_SIZE } from "../src/lib/holdings.ts";
 import { congressTickersRollup } from "../src/lib/derive.ts";
 import { initCongressSections } from "../src/scripts/congress-sections.ts";
 import { initAddsControls, initInstIndex, instIndexBodyHtml } from "../src/scripts/inst-index-client.ts";
-import { DESIGN_INST_INDEX_HEADS, type InstIndexRow } from "../src/lib/inst-index.ts";
+import { DESIGN_INST_INDEX_HEADS, planDirectoryShards, type InstIndexRow } from "../src/lib/inst-index.ts";
+import { fillShardsByBytes } from "../src/lib/shards.ts";
 import type { AddsPayload, AddsRow } from "../src/lib/inst-adds.ts";
 import { stripTableRoles } from "./lib/table-roles.ts";
 
@@ -128,31 +129,42 @@ function directoryPage(definite = false): string {
     compactDisclosure({
       rootId: "inst-managers-tbody", total: INDEX_ROWS.length, shown: COMPACT_ROWS, noun: "managers",
       ...(definite ? { boundNoun: "managers in this build's directory", definite: true } : {}),
-      bound: "Every filer in this build has its own page, linked from its row here.",
+      bound: "Every filer has its own page.",
     }) +
-    `<p id="inst-index-status"></p><script type="application/json" id="inst-index-data">${JSON.stringify(INDEX_ROWS)}</script></section>`
+    /* launch M7b (R32, LD28): the page inlines the shard LIST, never the rows */
+    `<p id="inst-index-status"></p><script type="application/json" id="inst-index-shards">${DIRECTORY_FAMILY.listJson}</script></section>`
   );
 }
+const DIRECTORY_FAMILY = planDirectoryShards(INDEX_ROWS, fillShardsByBytes);
 /** Mount the directory and make the island restate its count (a header
-    click re-renders and re-syncs the disclosure, as in the browser). */
-function directoryRestatement(html: string): [string, string] {
+    click fetches the shard family, re-renders and re-syncs the disclosure,
+    as in the browser). */
+async function directoryRestatement(html: string): Promise<[string, string]> {
   const server = countOf(parse(html), "inst-managers-tbody");
   const { doc, restore } = installDom(html);
+  const g = globalThis as unknown as Record<string, unknown>;
+  const priorFetch = g.fetch;
+  g.fetch = (href: string) => {
+    const shard = DIRECTORY_FAMILY.shards[Number(/\/(\d+)\.v1\.json$/.exec(href)?.[1] ?? -1)]!;
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(JSON.parse(shard.body)) });
+  };
   try {
     initInstIndex();
     plantSentinel(doc, "inst-managers-tbody");
     doc.querySelector('th[data-inst-sort="positions"]')!.click();
+    for (let i = 0; i < 12; i++) await Promise.resolve();
     return [server, countOf(doc, "inst-managers-tbody")];
   } finally {
+    g.fetch = priorFetch;
     restore();
   }
 }
 
-test("Q-4: the directory island restates the server's count word for word (plain and definite totals)", () => {
-  const [server, client] = directoryRestatement(directoryPage());
+test("Q-4: the directory island restates the server's count word for word (plain and definite totals)", async () => {
+  const [server, client] = await directoryRestatement(directoryPage());
   assert.equal(server, "1–10 of 23 managers");
   assert.equal(client, server);
-  const [s2, c2] = directoryRestatement(directoryPage(true));
+  const [s2, c2] = await directoryRestatement(directoryPage(true));
   assert.equal(s2, "1–10 of the 23 managers in this build's directory");
   assert.equal(c2, s2, "the island keeps the server's definite bound (it dropped it before the fix)");
   // control: the restatement the unfixed island produced differs
@@ -184,8 +196,22 @@ test("Q-4/R-4: the adds island restates the server's count, and moves the bound 
   const g = globalThis as unknown as Record<string, unknown>;
   const priorFetch = g.fetch;
   try {
+    /* launch M7b (R32, LD28): no rows travel in the page; the island's first
+       restatement follows its first fetch of THIS quarter's payload (on the
+       drawer's first open in the browser, or the first control that needs
+       rows — a header press here). */
+    const fetched: string[] = [];
+    g.fetch = (href: string) => {
+      fetched.push(href);
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(addsPayload(30, true)) });
+    };
     plantSentinel(doc, "inst-adds-tbody");
-    initAddsControls(); // restates at init, from the embedded rows
+    initAddsControls();
+    assert.deepEqual(fetched, [], "nothing is fetched at init");
+    assert.equal(countOf(doc, "inst-adds-tbody"), "SENTINEL", "and nothing is restated before the rows exist");
+    doc.querySelector('[data-adds-sort="managers"]')!.click();
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+    assert.deepEqual(fetched, ["/institutional/data/adds/2026-03-31.all.v1.json"], "the shown quarter's own published payload");
     assert.equal(countOf(doc, "inst-adds-tbody"), server, "the island's first restatement is the server's");
     // the next quarter's payload is complete: the island's words must be the
     // server's words for THAT payload

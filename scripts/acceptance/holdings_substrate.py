@@ -95,6 +95,7 @@ def main() -> int:  # noqa: PLR0915 - a linear acceptance script, deliberately f
         FILER_ROUTING_INDEX_FILES,
         FILER_TAIL_SHARDS_RESERVED,
         FILER_V1_TRANSITION_FILES,
+        INST_DIRECTORY_SHARDS_MAX,
         worst_case_file_count,
     )
     from populus.inst_flags import FLOOR_BPS, MIN_BASELINE_PERIODS, MULT
@@ -427,12 +428,14 @@ def main() -> int:  # noqa: PLR0915 - a linear acceptance script, deliberately f
     # dropped-term guard fired on the M2-11 branch exactly as designed when the
     # formula grew and this sum did not, which is the guard working, recorded
     # here so the restatement is a decision, not a silent re-tune.
+    # Launch redesign M7b (LD29) added the /institutional/ directory shard
+    # family (INST_DIRECTORY_SHARDS_MAX); restated with it for the same reason.
     check(
         projected_total
         == M1_MEASURED_PAGES + SITE_CHROME_FILES + M2_FILER_PAGES
         + ACTIVITY_SHARDS_MAX + M3_RESERVED
         + FILER_TAIL_SHARDS_RESERVED + FILER_ROUTING_INDEX_FILES
-        + FILER_V1_TRANSITION_FILES,
+        + FILER_V1_TRANSITION_FILES + INST_DIRECTORY_SHARDS_MAX,
         "the forward projection sums every committed term",
         "the forward projection dropped a term — the total understates the"
         " breach the owner acts on, which is the C5(a) defect returning",
@@ -446,6 +449,7 @@ def main() -> int:  # noqa: PLR0915 - a linear acceptance script, deliberately f
           f" + tail filer shards {FILER_TAIL_SHARDS_RESERVED}"
           f" + routing index {FILER_ROUTING_INDEX_FILES}"
           f" + filer_v1_transition_files={FILER_V1_TRANSITION_FILES}"
+          f" + directory shards {INST_DIRECTORY_SHARDS_MAX}"
           f" = {projected_total:,} vs self-cap {GLOBAL_FILE_CAP:,}")
     if projected_total > GLOBAL_FILE_CAP:
         NOTES.append(

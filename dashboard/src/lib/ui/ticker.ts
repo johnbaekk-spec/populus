@@ -59,9 +59,10 @@ import { filerHref } from "../holdings.ts";
 import type { TickerInstSection } from "../data.ts";
 import { type BuildStamps, disclosureLedger } from "./shared.ts";
 import { fmtCik, note, noteFromHtml, rangeOfTotal, thHtml } from "../format.ts";
+import type { FilerBudgetState } from "../holdings.ts";
 import { onSignalsLines, tickerOnSignalsHtml } from "./signals.ts";
 import { entityTxnRowsHtml, entityTxnTable } from "./congress.ts";
-import { instStamp, instFiledNote } from "./institutional.ts";
+import { HOLDERS_VISIBLE, heldHoldersHtml, instStamp, instFiledNote } from "./institutional.ts";
 
 /* ---------- unified ticker page body ---------- */
 
@@ -89,9 +90,11 @@ function tickerTitleHtml(info: TickerHeaderInfo): string {
   return `<span class="mono-ticker">${esc(info.ticker)}</span>${name}`;
 }
 
-/** R21: the holders the Institutional tab shows before its "Show all N
-    holders" disclosure; holders 11..N sit inside it, in the same HTML. */
-export const TICKER_HOLDERS_VISIBLE = 10;
+/** R21 → launch M7b (R33, LD30): the holders the Institutional tab shows
+    before its "Show all N holders" disclosure. Holders 26..N are held — an
+    island the binder draws 25 at a time, and a `<noscript>` second table
+    inside the disclosure for readers without JavaScript. */
+export const TICKER_HOLDERS_VISIBLE = HOLDERS_VISIBLE;
 /** R20: the rows the Congress tab's disclosures preview shows in total,
     pinned rows included; the rest are one link away. */
 export const TICKER_PREVIEW_ROWS = 10;
@@ -149,82 +152,111 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
   /* Universal-flag hoisting applies to EVERY flag-bearing table, not only the entity txn one.
      Measured before wiring these: 1,004 pages carried a table whose every row
      read `security not in mapping`, with no caveat line above it.
-     signals-v3 M3 (LD8): computed over ALL N holders — the ten shown and the
-     rest inside "Show all N holders" alike — so a flag is stated once only
-     when every holder carries it. */
+     signals-v3 M3 (LD8) → launch M7b (R33): computed over ALL N holders — the
+     25 shown and the held rest alike — so a flag is stated once only when
+     every holder carries it. The held rows' renderer receives the same set. */
   const statedHolders = universalFlags(holders.map((h) => h.flags));
-  const rowHtml = (h: (typeof holders)[number]): string =>
-    `<tr><td class="c-num c-muted">${fmtInt(h.rank)}</td>` +
-    // ONE href primitive (filerHref): the payload carries the top/tail target.
-    `<td class="c-filer c-flex"><a href="${esc(filerHref(h.cik, h.tier ?? "tail"))}">${esc(h.name)}</a></td>` +
-    `<td class="c-num c-strong has-marks">${h.value == null ? `—<span class="visually-hidden"> value not disclosed</span>` : esc(fmtUsd(h.value))}</td>` +
-    `<td class="c-num">${fmtInt(h.securities)}</td>` +
-    `<td class="c-flags">${flagTags(h.flags, undefined, { stated: statedHolders })}</td>` +
-    `<td class="c-src">${srcLinkDerived("#ticker-inst-footnotes", edgarFilerUrl(h.cik))}</td></tr>`;
-  const shown = holders.slice(0, TICKER_HOLDERS_VISIBLE);
-  const rest = holders.slice(TICKER_HOLDERS_VISIBLE);
-  /* With holders 11..N in a disclosure, the list spans TWO tables. Each is
-     then a part of the collection the hoist judged — the meaning `data-paged`
+  const rows: TickerHolderRow[] = holders.map((h) => ({ rank: h.rank, cik: h.cik, name: h.name, value: h.value, securities: h.securities, flags: h.flags, tier: h.tier }));
+  const ctx: TickerHolderCtx = { stated: statedHolders };
+  const held = holders.length > TICKER_HOLDERS_VISIBLE;
+  /* With holders 26..N held, the list spans more than one table. Each is a
+     part of the collection the hoist judged — the meaning `data-paged`
      carries ("this HTML shows only PART of the collection"): a flag every row
      of one part shows, but not every holder carries, stays on its rows. */
-  const tableHtml = (rows: typeof holders, caption: string): string =>
-    `<div class="table-scroll"><table class="etable" data-sticky-first${rest.length > 0 ? ' data-paged="1"' : ""} data-stated-flags="${esc(statedHolders.join(","))}">` +
+  /* ticker-11 (launch M7b): the § and n/c footnotes became tips — § on the
+     Src column it explains, the newest-filing note on the quarter stamp —
+     with every clause kept, including the W-3 mapped/entity distinction. */
+  // pre-escaped html: literal copy, no data interpolated
+  const srcNote = inst.mapped
+    ? `derived by Public Filings from this build's reviewed ticker-mapping holders list for this share class; that list carries each holder's share count, share change and filed date${inst.holdersPage ? " (the full holders view shows them)" : ", which this table does not show"}, but no document links — the EDGAR link opens the filer's 13F list`
+    : `derived by Public Filings from this build's published top-holders list; per-filer filed dates, share counts and document links are not in that list — the EDGAR link opens the filer's 13F list`;
+  /* Only the PRIMARY table (the first 25) carries the Src tip: the held
+     table and the no-JS copy repeat the header without it, so no note id is
+     emitted twice. */
+  const tableHtml = (bodyHtml: string, caption: string, tbodyId: string | null, primary = false): string =>
+    `<div class="table-scroll"><table class="etable" role="table" data-card="holders" data-sticky-first${held ? ' data-paged="1"' : ""} data-stated-flags="${esc(statedHolders.join(","))}">` +
     `<caption class="visually-hidden">${esc(caption)}</caption>` +
-    `<thead><tr>${thHtml({ label: "#", cls: "c-num" })}${thHtml({ label: "Filer", cls: "c-filer c-flex" })}${thHtml({ label: "Value", cls: "c-num", order: "descending" })}${thHtml({ label: "Securities", cls: "c-num" })}${thHtml({ label: "Flags", cls: "c-flags" })}${thHtml({ label: "Src", cls: "c-src" })}</tr></thead>` +
-    `<tbody>${rows.map(rowHtml).join("\n")}</tbody></table></div>`;
+    `<thead role="rowgroup"><tr role="row">${thHtml({ label: "#", cls: "c-num" })}${thHtml({ label: "Filer", cls: "c-filer c-flex" })}${thHtml({ label: "Value", cls: "c-num", order: "descending" })}${thHtml({ label: "Securities", cls: "c-num" })}${thHtml({ label: "Flags", cls: "c-flags" })}${thHtml(primary ? { label: "Src", cls: "c-src", mark: "·§", noteHtml: srcNote, notes: { scope: "ticker-inst" }, noteKey: "src" } : { label: "Src", cls: "c-src", mark: "·§" })}</tr></thead>` +
+    `<tbody role="rowgroup"${tbodyId ? ` id="${esc(tbodyId)}"` : ""}>${bodyHtml}</tbody></table></div>`;
   const caption = `Top institutional holders of ${ticker} for quarter ${inst.period!}`;
+  const shown = rows.slice(0, TICKER_HOLDERS_VISIBLE);
   return (
     `<section class="page-section" id="ticker-holders">` +
-    `<div class="section-head"><h2 class="section-h2">Institutional holders <span class="section-note-inline">· 13F · ${instStamp(
+    /* ticker-09 (launch M7b): "13F holders" and "All holders ↗"; the quarter
+       stamp and "longs only" stay — this tab carries no 13F caveat box, so
+       the header is where long-only is said. */
+    `<div class="section-head"><h2 class="section-h2">13F holders <span class="section-note-inline">· ${instStamp(
       inst.period!,
       inst.latestFiled ?? null,
-    )} · longs only</span></h2>` +
+    )}${noteFromHtml(esc(instFiledNote(inst.latestFiled ?? null)), { scope: "ticker-inst" }, "stamp", { trigger: "mark", name: "Newest filing" })} · longs only</span></h2>` +
     // R2: link the holders view only when that page is built — never a dressed 404.
     (inst.holdersPage
-      ? `<a class="section-link" href="/institutional/tickers/${esc(encodeURIComponent(ticker))}/holders/">full holders view ↗</a>`
+      ? `<a class="section-link" href="/institutional/tickers/${esc(encodeURIComponent(ticker))}/holders/">All holders ↗</a>`
       : "") +
     `</div>` +
     universalFlagNote(statedHolders) +
-    tableHtml(shown, rest.length > 0 ? `${caption}, ${rangeOfTotal(1, shown.length, holders.length, "holders")}` : caption) +
-    (rest.length > 0
-      ? `<details class="tk-holders-more"><summary>Show all ${fmtInt(holders.length)} holders</summary>` +
-        tableHtml(rest, `${caption}, ${rangeOfTotal(shown.length + 1, holders.length, holders.length, "holders")}`) +
-        `</details>`
-      : "") +
+    tableHtml(shown.map((r) => tickerHolderRowHtml(r, ctx)).join("\n"), held ? `${caption}, ${rangeOfTotal(1, shown.length, holders.length, "holders")}` : caption, held ? "ticker-holders-top" : null, true) +
+    heldHoldersHtml({ rootId: "ticker-holders-held", render: "ticker-holder", rows, rowHtml: (r) => tickerHolderRowHtml(r, ctx), ctx, table: tableHtml, caption }) +
+    /* The anchor `#ticker-inst-footnotes` (linked from older pages and read by
+       the tab binder's hash routing) now marks the table's truncation line. */
+    `<div id="ticker-inst-footnotes">` +
     terminusRow({
       author: "populus",
-      /* W-3 (M3 review): the two sources differ, so the terminus and the §
-         note branch on them. The reviewed-mapping list (share-class grain)
-         keeps the largest holders up to its rank cap and states the true
-         holder count; the entity-keyed top-holders list is cut at the build's
-         top-N parameter. Both count ALL N holders, shown or in the disclosure. */
+      /* W-3 (M3 review): the two sources differ, so the terminus branches on
+         them. The reviewed-mapping list (share-class grain) keeps the largest
+         holders up to its rank cap and states the true holder count; the
+         entity-keyed top-holders list is cut at the build's top-N parameter.
+         Both count ALL N holders, shown or held. ticker-10 (launch M7b): one
+         line, both numbers kept. */
       html: inst.mapped
         ? (holders.length >= inst.mapped.holderCount
-            ? `Every one of the ${fmtInt(inst.mapped.holderCount)} 13F filers reporting this share class for the quarter is listed.`
-            : `The ${fmtInt(holders.length)} largest of the ${fmtInt(inst.mapped.holderCount)} 13F filers reporting this share class for the quarter are listed; the rest are in the individual filings on EDGAR.`) +
-          ` <a href="/methodology/#m2">methodology §13F ↗</a>`
-        : `The published aggregate ranks the top ${fmtInt(inst.topn ?? 25)} holders per issuer — a build parameter of the Public Filings aggregation, not a census. Rows beyond it exist in individual filings on EDGAR. <a href="/methodology/#m2">methodology §13F ↗</a>`,
+            ? `All ${fmtInt(inst.mapped.holderCount)} 13F filers reporting this share class are listed.`
+            : `Top ${fmtInt(holders.length)} of ${fmtInt(inst.mapped.holderCount)} holders shown; the rest are on EDGAR.`) +
+          ` <a href="/methodology/#m2">Method ↗</a>`
+        : `Top ${fmtInt(inst.topn ?? 25)} holders per issuer, set by the site — not a census; the rest are on EDGAR. <a href="/methodology/#m2">Method ↗</a>`,
     }) +
-    footnoteBlock(
-      [
-        {
-          mark: "§",
-          /* Architecture H (G-11): plain words. W-3 (M3 review): on the
-             reviewed-mapping path the list DOES carry each holder's share
-             count, share change and filed date — only this table leaves them
-             out — so the "not in that list" sentence is said of the
-             entity-keyed list alone. */
-          html: inst.mapped
-            ? `derived by Public Filings from this build's reviewed ticker-mapping holders list for this share class; that list carries each holder's share count, share change and filed date${inst.holdersPage ? " (the full holders view shows them)" : ", which this table does not show"}, but no document links — the EDGAR link opens the filer's 13F list`
-            : `derived by Public Filings from this build's published top-holders list; per-filer filed dates, share counts and document links are not in that list — the EDGAR link opens the filer's 13F list`,
-        },
-        { mark: "n/c", html: esc(instFiledNote(inst.latestFiled ?? null)) },
-      ],
-      { id: "ticker-inst-footnotes" },
-    ) +
+    `</div>` +
     `</section>`
   );
 }
+
+/** One ticker-tab holder row's inputs — exactly what `tickerHolderRowHtml`
+    reads, so the held island carries nothing else (launch M7b, R33). */
+export interface TickerHolderRow {
+  rank: number;
+  cik: string;
+  name: string;
+  value: number | null;
+  securities: number;
+  flags: string[];
+  tier: FilerBudgetState;
+}
+
+/** The inputs every row shares: the flags hoisted over ALL N holders. */
+export interface TickerHolderCtx {
+  stated: readonly string[];
+}
+
+/** One row of the ticker tab's holders table — the server's first 25, the
+    no-JS second table and the binder's held rows alike. Explicit table roles
+    (R40) ride every row and cell. */
+export function tickerHolderRowHtml(h: TickerHolderRow, ctx: TickerHolderCtx): string {
+  return (
+    `<tr role="row"><td role="cell" class="c-num c-muted">${fmtInt(h.rank)}</td>` +
+    // ONE href primitive (filerHref): the payload carries the top/tail target.
+    `<td role="cell" class="c-filer c-flex"><a href="${esc(filerHref(h.cik, h.tier ?? "tail"))}">${esc(h.name)}</a></td>` +
+    `<td role="cell" class="c-num c-strong has-marks">${h.value == null ? `—<span class="visually-hidden"> value not disclosed</span>` : esc(fmtUsd(h.value))}</td>` +
+    `<td role="cell" class="c-num">${fmtInt(h.securities)}</td>` +
+    `<td role="cell" class="c-flags">${flagTags(h.flags, undefined, { stated: ctx.stated })}</td>` +
+    `<td role="cell" class="c-src">${srcLinkDerived(null, edgarFilerUrl(h.cik))}</td></tr>`
+  );
+}
+
+/** The ticker tab's registered held-rows renderer (`initHeldRows`). */
+export const TICKER_HOLDER_HELD = {
+  row: (r: unknown, ctx: unknown): string => tickerHolderRowHtml(r as TickerHolderRow, ctx as TickerHolderCtx),
+  text: (r: unknown): string => (r as TickerHolderRow).name,
+};
 
 /** SSR-only inputs for the Ticker.dc.html bands; the generic /e/ route passes
     none and every dependent band renders its stated unavailable state. */
