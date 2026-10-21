@@ -1,6 +1,6 @@
 {
   "v": 1,
-  "about": "launch redesign copy ledger (PLAN LD32, R29): the 120 items of the copy audit (docs/design/launch-redesign-mock/data/copy_audit.json, live build 20261020.2), each with its page, its owning milestone (LD3), its disposition, the shipped text or pattern (a regex over the page's text, tips included; numbers as \\d), the replaced text that must be gone, and for adapted and not-applied one reason code from the closed set. Created in M2; each milestone finalizes its own entries; M8 closes it.",
+  "about": "launch redesign copy ledger (PLAN LD32, R29): the 120 items of the copy audit (docs/design/launch-redesign-mock/data/copy_audit.json, live build 20261020.2), each with its page, its owning milestone (LD3), its disposition, the shipped text or pattern (a regex over the page's text, tips included; numbers as \\d), the replaced text that must be gone, and for adapted and not-applied one reason code from the closed set. Created in M2; each milestone finalizes its own entries; M8 closes it. Closed in the final copy pass (F1, 2026-10-21): no pending entry. `gates` records, per page, the SC5 gate the orchestrator's speed-mode decision adjusts — audit words_visible_after + the words an honesty pin or owner decision D7 kept (itemized; basis audit = the audit's own counts, measured = counted on the shipped markup, ceiling = at most the audit's words_before − words_after for an adapted element not measured here) + 10%, rounded up. A page with any ceiling item carries `gateCeiling` until the owner-tier run on the real build counts those elements; the playbooks tab keeps its own gate (680).",
   "dispositions": [
     "applied",
     "applied-by-163",
@@ -132,22 +132,22 @@
       "page": "Global (every page)",
       "path": "*",
       "milestone": "M6",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Base.astro's search footer is one privacy line that keeps its device-only meaning (M6)."
     },
     {
       "id": "global-02",
       "page": "Global (every page)",
       "path": "*",
       "milestone": "M6",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Kept verbatim, as the audit proposed (keep) (M6)."
     },
     {
       "id": "global-03",
@@ -165,308 +165,308 @@
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M3b)."
     },
     {
       "id": "congress-02",
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M3b)."
     },
     {
       "id": "congress-03",
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3b",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "superseded-by-layout:M3b",
+      "note": "The element changed with the approved Congress layout (ledger, boards first); its words were rewritten for the new element (M3b)."
     },
     {
       "id": "congress-04",
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M3b)."
     },
     {
       "id": "congress-05",
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M3b)."
     },
     {
       "id": "congress-06",
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M3b)."
     },
     {
       "id": "congress-07",
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M3b)."
     },
     {
       "id": "congress-08",
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M3b)."
     },
     {
       "id": "congress-09",
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3b",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "superseded-by-layout:M3b",
+      "note": "The element changed with the approved Congress layout (ledger, boards first); its words were rewritten for the new element (M3b)."
     },
     {
       "id": "congress-10",
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3b",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "wording-ban:buying",
+      "note": "'members with a purchase vs with a sale', never 'buying' (LD32's named adaptation) (M3b)."
     },
     {
       "id": "congress-11",
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3b",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "honesty-pin:dashboard/test/congress-flow.test.ts",
+      "note": "The 'months still filling in' labels keep the estimate wording congress-flow.test.ts pins (M3b)."
     },
     {
       "id": "congress-12",
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3b",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "honesty-pin:dashboard/test/congress-flow.test.ts",
+      "note": "The shading paragraph moved to tips except what congress-flow.test.ts pins visibly (the estimate zone and exclusion counts stay emitted) (M3b)."
     },
     {
       "id": "congress-13",
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M3b)."
     },
     {
       "id": "congress-14",
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M3b)."
     },
     {
       "id": "congress-15",
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Kept as it is, as the audit proposed (keep) (M3b)."
     },
     {
       "id": "congress-16",
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3b",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "superseded-by-layout:M3b",
+      "note": "The element changed with the approved Congress layout (ledger, boards first); its words were rewritten for the new element (M3b)."
     },
     {
       "id": "congress-17",
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M3b)."
     },
     {
       "id": "congress-18",
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M3b)."
     },
     {
       "id": "congress-19",
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M3b)."
     },
     {
       "id": "congress-20",
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3b",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "honesty-pin:dashboard/test/r19-collapsed-honesty.test.ts",
+      "note": "Row-count lines shortened; the omission counts r19-collapsed-honesty.test.ts pins stay (M3b)."
     },
     {
       "id": "congress-21",
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M3b)."
     },
     {
       "id": "congress-22",
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M3b)."
     },
     {
       "id": "congress-23",
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3a",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "honesty-pin:dashboard/test/launch-congress.test.ts",
+      "note": "Merged count line keeps 'filtered on this device' and its reset control (LD21) (M3a)."
     },
     {
       "id": "congress-24",
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3a",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M3a)."
     },
     {
       "id": "congress-25",
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3a",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "honesty-pin:dashboard/test/m3-review-fixes.test.ts",
+      "note": "The Asset · owner tip keeps the owner and partial qualifiers m3-review-fixes.test.ts pins (M3a)."
     },
     {
       "id": "congress-26",
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3a",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "superseded-by-layout:M3a",
+      "note": "The feed's columns were renamed with the M3a layout (Range, Size); the bar column label follows it (M3a)."
     },
     {
       "id": "congress-27",
       "page": "Congress",
       "path": "/congress/",
       "milestone": "M3a",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "honesty-pin:dashboard/test/ledger-system.test.ts",
+      "note": "The footnote's marks moved to tips on the rows' marks; the clauses ledger-system.test.ts pins stay reachable (M3a)."
     },
     {
       "id": "member-01",
       "page": "Member — one trade (J000289)",
       "path": "/congress/members/J000289/",
       "milestone": "M4b",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "superseded-by-layout:M4b",
+      "note": "The element changed with the approved member layouts (active and compact, R23); its copy was rewritten for the new element (M4b)."
     },
     {
       "id": "member-02",
@@ -480,8 +480,9 @@
       "note": "#163 fixed the plural ('1 filing').",
       "rest": {
         "milestone": "M4b",
-        "disposition": "pending",
-        "what": "The rest of the proposal (paper only when >0, the dropped subs, 'after 45 days') goes with M4b's member ledger (R23)."
+        "disposition": "adapted",
+        "reason": "superseded-by-layout:M4b",
+        "what": "The rest of the proposal went with M4b's member ledger (Trades, Last filed, Net flow · 12m, Late)."
       }
     },
     {
@@ -489,385 +490,385 @@
       "page": "Member — one trade (J000289)",
       "path": "/congress/members/J000289/",
       "milestone": "M4b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M4b)."
     },
     {
       "id": "member-04",
       "page": "Member — one trade (J000289)",
       "path": "/congress/members/J000289/",
       "milestone": "M4b",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "superseded-by-layout:M4b",
+      "note": "The element changed with the approved member layouts (active and compact, R23); its copy was rewritten for the new element (M4b)."
     },
     {
       "id": "member-05",
       "page": "Member — one trade (J000289)",
       "path": "/congress/members/J000289/",
       "milestone": "M4b",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "superseded-by-layout:M4b",
+      "note": "The element changed with the approved member layouts (active and compact, R23); its copy was rewritten for the new element (M4b)."
     },
     {
       "id": "member-06",
       "page": "Member — one trade (J000289)",
       "path": "/congress/members/J000289/",
       "milestone": "M4b",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "superseded-by-layout:M4b",
+      "note": "The element changed with the approved member layouts (active and compact, R23); its copy was rewritten for the new element (M4b)."
     },
     {
       "id": "member-07",
       "page": "Member — one trade (J000289)",
       "path": "/congress/members/J000289/",
       "milestone": "M4b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M4b)."
     },
     {
       "id": "member-08",
       "page": "Member — active (P000197)",
       "path": "/congress/members/P000197/",
       "milestone": "M4b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M4b)."
     },
     {
       "id": "member-09",
       "page": "Member — one trade (J000289)",
       "path": "/congress/members/J000289/",
       "milestone": "M4b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M4b)."
     },
     {
       "id": "member-10",
       "page": "Member — one trade (J000289)",
       "path": "/congress/members/J000289/",
       "milestone": "M4b",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "superseded-by-layout:M4b",
+      "note": "The element changed with the approved member layouts (active and compact, R23); its copy was rewritten for the new element (M4b)."
     },
     {
       "id": "member-11",
       "page": "Member — one trade (J000289)",
       "path": "/congress/members/J000289/",
       "milestone": "M4b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M4b)."
     },
     {
       "id": "member-12",
       "page": "Member — one trade (J000289)",
       "path": "/congress/members/J000289/",
       "milestone": "M4b",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "superseded-by-layout:M4b",
+      "note": "The element changed with the approved member layouts (active and compact, R23); its copy was rewritten for the new element (M4b)."
     },
     {
       "id": "member-13",
       "page": "Member — one trade (J000289)",
       "path": "/congress/members/J000289/",
       "milestone": "M4b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M4b)."
     },
     {
       "id": "member-14",
       "page": "Member — one trade (J000289)",
       "path": "/congress/members/J000289/",
       "milestone": "M4b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M4b)."
     },
     {
       "id": "member-15",
       "page": "Member — one trade (J000289)",
       "path": "/congress/members/J000289/",
       "milestone": "M4b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M4b)."
     },
     {
       "id": "member-16",
       "page": "Member — active (P000197)",
       "path": "/congress/members/P000197/",
       "milestone": "M4b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M4b)."
     },
     {
       "id": "member-17",
       "page": "Member — active (P000197)",
       "path": "/congress/members/P000197/",
       "milestone": "M4b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M4b)."
     },
     {
       "id": "member-18",
       "page": "Member — one trade (J000289)",
       "path": "/congress/members/J000289/",
       "milestone": "M4b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M4b)."
     },
     {
       "id": "member-19",
       "page": "Member — one trade (J000289)",
       "path": "/congress/members/J000289/",
       "milestone": "M4b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M4b)."
     },
     {
       "id": "member-20",
       "page": "Member — one trade (J000289)",
       "path": "/congress/members/J000289/",
       "milestone": "M4b",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "honesty-pin:dashboard/test/sl-member.test.ts",
+      "note": "Committee context shortened; the 'not checked, never None' and non-allegation wording sl-member.test.ts pins stays (M4b)."
     },
     {
       "id": "member-21",
       "page": "Member — one trade (J000289)",
       "path": "/congress/members/J000289/",
       "milestone": "M4b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M4b)."
     },
     {
       "id": "signals-01",
       "page": "Signals — Congress tab (default)",
       "path": "/signals/",
       "milestone": "M7a",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "honesty-pin:dashboard/test/launch-signals.test.ts",
+      "note": "The kicker stays where launch-signals.test.ts pins the page head (M7a)."
     },
     {
       "id": "signals-02",
       "page": "Signals — Congress tab (default)",
       "path": "/signals/",
       "milestone": "M7a",
-      "disposition": "pending",
-      "shipped": null,
-      "replaced": null,
-      "reason": null,
-      "note": null
+      "disposition": "adapted",
+      "shipped": "A signal is a rule-based fact about a filing — never a forecast; no prices, returns or intent are used\\.",
+      "replaced": "Never used: prices, returns, intent",
+      "reason": "honesty-pin:dashboard/test/signals-page.test.ts",
+      "note": "The head tip says the generic sentences in fewer words, every caveat kept (not a forecast; no prices, returns or intent; zero is computed; the window by filed date); the ranking sentence left for its own tip. This build's lag, lifecycle, withheld kinds, carried-forward and excluded counts stay: Methodology is static and cannot carry them (F1)."
     },
     {
       "id": "signals-03",
       "page": "Signals — Congress tab (default)",
       "path": "/signals/",
       "milestone": "M7a",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M7a)."
     },
     {
       "id": "signals-04",
       "page": "Signals — Congress tab (default)",
       "path": "/signals/",
       "milestone": "M7a",
-      "disposition": "pending",
-      "shipped": null,
-      "replaced": null,
+      "disposition": "applied",
+      "shipped": "Largest lower bound of [\\d,]+ (?:purchases|sales)\\.",
+      "replaced": "listed-stock (?:purchase|sale) lines ranked in the window",
       "reason": null,
-      "note": null
+      "note": "The lead cards' facts: 'Largest lower bound of N purchases.' / '… sales.' (lib/signal-triage.ts) (M7a)."
     },
     {
       "id": "signals-05",
       "page": "Signals — Congress tab (default)",
       "path": "/signals/",
       "milestone": "M7a",
-      "disposition": "pending",
+      "disposition": "not-applied",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "honesty-pin:dashboard/test/signals-page.test.ts",
+      "note": "The meter legend tip keeps v3's full definitions — every level rule and qualification — which codex M1 round 1 F2 pinned by exact text; the audit's 35-word key would drop them (F1)."
     },
     {
       "id": "signals-06",
       "page": "Signals — Congress tab (default)",
       "path": "/signals/",
       "milestone": "M7a",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
-      "replaced": null,
+      "replaced": "Rules matched:",
       "reason": null,
-      "note": null
+      "note": "The 'Rules matched:' prefix is cut; the rule words alone remain (lib/signal-triage.ts) (M7a)."
     },
     {
       "id": "signals-07",
       "page": "Signals — Congress tab (default)",
       "path": "/signals/",
       "milestone": "M7a",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M7a)."
     },
     {
       "id": "signals-08",
       "page": "Signals — Congress tab (default)",
       "path": "/signals/",
       "milestone": "M7a",
-      "disposition": "pending",
+      "disposition": "not-applied",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "honesty-pin:dashboard/test/ledger-system.test.ts",
+      "note": "The hidden-count toggle and pager keep the count grammar ledger-system.test.ts T1.4 and the R12 tests pin (M7a)."
     },
     {
       "id": "signals-09",
       "page": "Signals — Congress tab (default)",
       "path": "/signals/",
       "milestone": "M7a",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M7a)."
     },
     {
       "id": "signals-10",
       "page": "Signals — Institutional tab",
       "path": "/signals/#institutional",
       "milestone": "M7a",
-      "disposition": "pending",
-      "shipped": null,
-      "replaced": null,
-      "reason": null,
-      "note": null
+      "disposition": "adapted",
+      "shipped": "Classified by share count — a dollar change alone is not a position change",
+      "replaced": "Open a row for its Congress side and its filer page",
+      "reason": "honesty-pin:dashboard/test/signals-institutional.test.ts",
+      "note": "Five header tips trimmed, every qualifier kept: share-count classification, 'a dollar change alone is not a position change', inferred exits, reviewed tickers only, the page's own bound, broad accounts named, co-occurrence never coordination, the 13F snapshot sentence (pinned verbatim); the how-to paragraph and the restated quarter are cut (F1)."
     },
     {
       "id": "signals-11",
       "page": "Signals — Institutional tab",
       "path": "/signals/#institutional",
       "milestone": "M7a",
-      "disposition": "pending",
-      "shipped": null,
-      "replaced": null,
-      "reason": null,
-      "note": null
+      "disposition": "adapted",
+      "shipped": "Filer page ↗",
+      "replaced": "This position on the filer page",
+      "reason": "honesty-pin:dashboard/test/signals-institutional.test.ts",
+      "note": "The opened move drops the row's filed date and the tab's quarter (the row's Filed cell and the tab chip carry them; an exit keeps 'inferred from absence'); the ticker verification stays a visible line, pinned, rather than a tip per row (F1)."
     },
     {
       "id": "signals-12",
       "page": "Signals — Institutional tab",
       "path": "/signals/#institutional",
       "milestone": "M7a",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "honesty-pin:dashboard/test/ledger-system.test.ts",
+      "note": "'This page carries the first N — filer pages list every move.': 'Showing the first N' fails ledger-system.test.ts T1.4 (M7a)."
     },
     {
       "id": "signals-13",
       "page": "Signals — Institutional tab",
       "path": "/signals/#institutional",
       "milestone": "M7a",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Kept verbatim, as the audit proposed (keep) (M7a)."
     },
     {
       "id": "signals-14",
       "page": "Signals — Institutional tab",
       "path": "/signals/#institutional",
       "milestone": "M7b",
-      "disposition": "pending",
-      "shipped": null,
-      "replaced": null,
-      "reason": null,
-      "note": null
+      "disposition": "adapted",
+      "shipped": "a position may have changed or closed since the quarter ended",
+      "replaced": "older still by however long ago that quarter ended",
+      "reason": "honesty-pin:dashboard/test/activity.test.ts",
+      "note": "The 13F box's clauses lose the field name '(otherManager)' and the restated staleness sentence; activity.test.ts pins fourteen qualifiers against the producer's INST_DATA_NOTE (document references and unit_basis among them), so the rest stays; the Python constant is published data and is not edited (F1)."
     },
     {
       "id": "signals-15",
       "page": "Signals — Overlap tab",
       "path": "/signals/#overlap",
       "milestone": "M7a",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "wording-ban:move (verb)",
+      "note": "Overlap lede worded around the ban on 'move' as a verb (M7a)."
     },
     {
       "id": "signals-16",
       "page": "Signals — Playbooks tab",
       "path": "/signals/#playbooks",
       "milestone": "M5",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Playbooks count line without 'this build' (M5)."
     },
     {
       "id": "signals-17",
@@ -885,33 +886,33 @@
       "page": "Signals — Institutional tab",
       "path": "/signals/#institutional",
       "milestone": "M7a",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "honesty-pin:dashboard/test/signals-institutional.test.ts",
+      "note": "Bank label 'Congress lines · N'; the provenance strip stays, pinned by signals-institutional.test.ts T2.4 (M7a)."
     },
     {
       "id": "ticker-01",
       "page": "Ticker — Congress tab (default)",
       "path": "/tickers/AAPL/",
       "milestone": "M6",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M6)."
     },
     {
       "id": "ticker-02",
       "page": "Ticker — Congress tab (default)",
       "path": "/tickers/AAPL/",
       "milestone": "M6",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "honesty-pin:dashboard/test/pages-render.test.ts",
+      "note": "The H1 footnote moved to a tip except what pages-render.test.ts pins on the page (M6)."
     },
     {
       "id": "ticker-03",
@@ -925,8 +926,8 @@
       "note": "#163 states the holder count and 'top N listed'.",
       "rest": {
         "milestone": "M6",
-        "disposition": "pending",
-        "what": "The label renames (Congress trades · all time, Latest filing, Top holders · of N · Qn YYYY)."
+        "disposition": "applied",
+        "what": "The label renames (Congress trades · all time, Latest filing) and the Filed-late qualifier cut; the undated and all-on-time sub-lines stay (M6)."
       }
     },
     {
@@ -934,132 +935,132 @@
       "page": "Ticker — Congress tab (default)",
       "path": "/tickers/AAPL/",
       "milestone": "M6",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "honesty-pin:dashboard/test/pages-render.test.ts",
+      "note": "Provenance shortened; keeps 'filed up to 45 days later' instead of 'not current holdings', which pages-render.test.ts bars from the ticker page (+3 words) (M6)."
     },
     {
       "id": "ticker-05",
       "page": "Ticker — Congress tab (default)",
       "path": "/tickers/AAPL/",
       "milestone": "M6",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M6)."
     },
     {
       "id": "ticker-06",
       "page": "Ticker — Congress tab (default)",
       "path": "/tickers/AAPL/",
       "milestone": "M6",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M6)."
     },
     {
       "id": "ticker-07",
       "page": "Ticker — Congress tab (default)",
       "path": "/tickers/AAPL/",
       "milestone": "M6",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M6)."
     },
     {
       "id": "ticker-08",
       "page": "Ticker — Congress tab (default)",
       "path": "/tickers/AAPL/",
       "milestone": "M6",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M6)."
     },
     {
       "id": "ticker-09",
       "page": "Ticker — Institutional tab",
       "path": "/tickers/AAPL/#institutional",
       "milestone": "M7b",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "honesty-pin:dashboard/test/pages-render.test.ts",
+      "note": "Section header shortened within what pages-render.test.ts pins (M7b)."
     },
     {
       "id": "ticker-10",
       "page": "Ticker — Institutional tab",
       "path": "/tickers/AAPL/#institutional",
       "milestone": "M7b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Truncation line under the holders shortened as proposed (M7b)."
     },
     {
       "id": "ticker-11",
       "page": "Ticker — Institutional tab",
       "path": "/tickers/AAPL/#institutional",
       "milestone": "M7b",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "honesty-pin:dashboard/test/m3-review-fixes.test.ts",
+      "note": "The § and n/c footnotes moved to tips; the Crowding line keeps what m3-review-fixes.test.ts pins (M7b)."
     },
     {
       "id": "ticker-12",
       "page": "Ticker — Institutional tab",
       "path": "/tickers/AAPL/#institutional",
       "milestone": "M7b",
-      "disposition": "pending",
-      "shipped": null,
-      "replaced": null,
-      "reason": null,
-      "note": null
+      "disposition": "adapted",
+      "shipped": "filed \\d{4}-\\d{2}-\\d{2} → \\d{4}-\\d{2}-\\d{2} · statutory ranges",
+      "replaced": "who in Congress disclosed purchases or sales",
+      "reason": "honesty-pin:dashboard/test/m3-review-fixes.test.ts",
+      "note": "The meta that restated the heading is cut; 'statutory ranges' and the snapshot caveat stated once each; the kind words and '$ = reported value now, not the change' in a tip (m3-review-fixes.test.ts W-2 pins them); the issuer as filed stays, the receipt of the ticker mapping (+2 words) (F1)."
     },
     {
       "id": "ticker-13",
       "page": "Ticker — Institutional tab",
       "path": "/tickers/AAPL/#institutional",
       "milestone": "M7b",
-      "disposition": "pending",
-      "shipped": null,
-      "replaced": null,
-      "reason": null,
-      "note": null
+      "disposition": "adapted",
+      "shipped": "Congress vs filers",
+      "replaced": "Do the two regimes agree\\?",
+      "reason": "honesty-pin:dashboard/test/launch-copy-final.test.ts",
+      "note": "Head 'Congress vs filers · 12 months' and one 'Filers · not computed' line; the absence reason and 'stated only when both sides are computed' are that line's tip, not 'not available yet' (no roadmap claim) (F1)."
     },
     {
       "id": "inst-01",
       "page": "Institutional",
       "path": "/institutional/",
       "milestone": "M7b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M7b)."
     },
     {
       "id": "inst-02",
       "page": "Institutional",
       "path": "/institutional/",
       "milestone": "M7b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M7b)."
     },
     {
       "id": "inst-03",
@@ -1073,8 +1074,9 @@
       "note": "#163 fixed the directory count note.",
       "rest": {
         "milestone": "M7b",
-        "disposition": "pending",
-        "what": "The count line ('1–10 of N') and the self-evident sentence ('Every filer in this build has its own page…') remain."
+        "disposition": "adapted",
+        "reason": "honesty-pin:dashboard/test/inst-index-client.test.ts",
+        "what": "The count line and the self-evident sentence keep what inst-index-client.test.ts pins (M7b)."
       }
     },
     {
@@ -1082,198 +1084,198 @@
       "page": "Institutional",
       "path": "/institutional/",
       "milestone": "M7b",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
-      "replaced": null,
-      "reason": null,
-      "note": null
+      "replaced": "Not shown: position weight",
+      "reason": "honesty-pin:dashboard/test/column-presence.test.ts",
+      "note": "The activity half is cut (a column removed by design gets no foot line, the filer-06 precedent); the directory's Top-5 line stays — a column the data removes states why, pinned by column-presence.test.ts R2-6 (16 words) (F1)."
     },
     {
       "id": "inst-05",
       "page": "Institutional",
       "path": "/institutional/",
       "milestone": "M7b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M7b)."
     },
     {
       "id": "inst-06",
       "page": "Institutional",
       "path": "/institutional/",
       "milestone": "M7b",
-      "disposition": "pending",
-      "shipped": null,
-      "replaced": null,
+      "disposition": "applied",
+      "shipped": "Notable managers · newest first",
+      "replaced": "notable managers · at most two per manager · newest filing first, then largest change",
       "reason": null,
-      "note": null
+      "note": "Head meta 'Notable managers · newest first'; the cap, the order and the filer-page pointer are its tip (F1)."
     },
     {
       "id": "inst-07",
       "page": "Institutional",
       "path": "/institutional/",
       "milestone": "M7b",
-      "disposition": "pending",
-      "shipped": null,
-      "replaced": null,
-      "reason": null,
-      "note": null
+      "disposition": "adapted",
+      "shipped": "This build publishes (?:all|the first) [\\d,]+ of its",
+      "replaced": "These rows are notable managers' new, added, trimmed and exited positions",
+      "reason": "honesty-pin:dashboard/test/activity.test.ts",
+      "note": "The bound's first sentence (what the rows are) moved into inst-06's tip; the count keeps naming its own bound (V1 NEW-2), the publication bound keeps every number (T3.10) and the truncation notice stays whole with 'can be derived from the filings on EDGAR', never 'are in' (H-2) — activity.test.ts pins them (F1)."
     },
     {
       "id": "inst-08",
       "page": "Institutional",
       "path": "/institutional/",
       "milestone": "M7b",
-      "disposition": "pending",
-      "shipped": null,
-      "replaced": null,
-      "reason": null,
-      "note": null
+      "disposition": "adapted",
+      "shipped": "not a record of transactions; absence is not a sale record",
+      "replaced": "Quarter-over-quarter comparisons are between two quarter-end snapshots",
+      "reason": "honesty-pin:dashboard/test/css-fold.test.ts",
+      "note": "The caveat line is cut; 'not a record of transactions' joins the Kind column's tip, because the 13F box's summary, which already says 'not current holdings', is pinned verbatim by css-fold.test.ts (F1)."
     },
     {
       "id": "inst-09",
       "page": "Institutional",
       "path": "/institutional/",
       "milestone": "M7b",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "honesty-pin:dashboard/test/sl-surfaces.test.ts",
+      "note": "The drawer's intro and bound note keep what sl-surfaces.test.ts pins (M7b)."
     },
     {
       "id": "filer-01",
       "page": "Filer",
       "path": "/institutional/filers/1067983/",
       "milestone": "M6",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "honesty-pin:dashboard/test/refinement-m2.test.ts",
+      "note": "Subline shortened within what refinement-m2.test.ts pins (M6)."
     },
     {
       "id": "filer-02",
       "page": "Filer",
       "path": "/institutional/filers/1067983/",
       "milestone": "M6",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M6)."
     },
     {
       "id": "filer-03",
       "page": "Filer",
       "path": "/institutional/filers/1067983/",
       "milestone": "M6",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M6)."
     },
     {
       "id": "filer-04",
       "page": "Filer",
       "path": "/institutional/filers/1067983/",
       "milestone": "M6",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M6)."
     },
     {
       "id": "filer-05",
       "page": "Filer",
       "path": "/institutional/filers/1067983/",
       "milestone": "M6",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "honesty-pin:dashboard/test/m3-review-fixes.test.ts",
+      "note": "Column tips lose the internal flag codes; the qualifiers m3-review-fixes.test.ts pins stay (M6)."
     },
     {
       "id": "filer-06",
       "page": "Filer",
       "path": "/institutional/filers/1067983/",
       "milestone": "M6",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "honesty-pin:dashboard/test/m1-layout.test.ts",
+      "note": "Self-referential and roadmap lines cut; the data-dependent removal reasons m1-layout.test.ts pins stay (M6)."
     },
     {
       "id": "filer-07",
       "page": "Filer",
       "path": "/institutional/filers/1067983/",
       "milestone": "M6",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M6)."
     },
     {
       "id": "filer-08",
       "page": "Filer",
       "path": "/institutional/filers/1067983/",
       "milestone": "M6",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M6)."
     },
     {
       "id": "filer-09",
       "page": "Filer",
       "path": "/institutional/filers/1067983/",
       "milestone": "M6",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M6)."
     },
     {
       "id": "filer-10",
       "page": "Filer",
       "path": "/institutional/filers/1067983/",
       "milestone": "M6",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "honesty-pin:dashboard/test/sl-filer.test.ts",
+      "note": "Book shape notes moved onto the bar labels' tips; the stated row count sl-filer.test.ts pins stays (M6)."
     },
     {
       "id": "filer-11",
       "page": "Filer",
       "path": "/institutional/filers/1067983/",
       "milestone": "M6",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "honesty-pin:dashboard/test/pages-render.test.ts",
+      "note": "Drawer copy shortened within what pages-render.test.ts pins (M6)."
     },
     {
       "id": "holders-01",
       "page": "Holders",
       "path": "/institutional/tickers/AAPL/holders/",
       "milestone": "M7b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "'CMN' renamed; the duplicate link line at the page bottom is gone (M7b)."
     },
     {
       "id": "holders-02",
@@ -1297,33 +1299,33 @@
       "page": "Congress leaders (moved stub)",
       "path": "/congress/leaders/",
       "milestone": "M3b",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "superseded-by-layout:M3b",
+      "note": "The moved-page stub keeps one visible working link (/congress/#members-section or #momentum-section) with shortened copy (R22) (M3b)."
     },
     {
       "id": "stub-02",
       "page": "Congress tickers (moved stub)",
       "path": "/congress/tickers/",
       "milestone": "M3b",
-      "disposition": "pending",
+      "disposition": "adapted",
       "shipped": null,
       "replaced": null,
-      "reason": null,
-      "note": null
+      "reason": "superseded-by-layout:M3b",
+      "note": "The moved-page stub keeps one visible working link (/congress/#members-section or #momentum-section) with shortened copy (R22) (M3b)."
     },
     {
       "id": "meth-01",
       "page": "Methodology",
       "path": "/methodology/",
       "milestone": "M7b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "Applied as proposed (M7b)."
     },
     {
       "id": "meth-02",
@@ -1337,8 +1339,8 @@
       "note": "#163 removed v_default_transactions, bioguide_id = null and agg_filer_registry from Methodology.",
       "rest": {
         "milestone": "M7b",
-        "disposition": "pending",
-        "what": "'a Public Filings build parameter' (methodology/index.astro:214, :239) and 'counted in totals labeled *_including_excluded' (:130) remain."
+        "disposition": "applied",
+        "what": "'a Public Filings build parameter' and 'counted in totals labeled *_including_excluded' replaced (M7b)."
       }
     },
     {
@@ -1346,11 +1348,11 @@
       "page": "Methodology",
       "path": "/methodology/",
       "milestone": "M7b",
-      "disposition": "pending",
+      "disposition": "applied",
       "shipped": null,
       "replaced": null,
       "reason": null,
-      "note": null
+      "note": "The repeated sentence merged (M7b)."
     },
     {
       "id": "meth-04",
@@ -1362,6 +1364,332 @@
       "replaced": null,
       "reason": null,
       "note": "#163 fixed the spacing around both links in the legal notice. Nothing left."
+    }
+  ],
+  "gates": [
+    {
+      "path": "/congress/",
+      "page": "Congress",
+      "auditAfter": 218,
+      "baseGate": 240,
+      "retained": [
+        {
+          "id": "congress-11",
+          "reason": "honesty-pin:dashboard/test/congress-flow.test.ts",
+          "words": 8,
+          "basis": "ceiling",
+          "how": "adapted, not measured per element here: at most the audit's words_before − words_after; the owner-tier run on the real build replaces it with the element's served count"
+        },
+        {
+          "id": "congress-12",
+          "reason": "honesty-pin:dashboard/test/congress-flow.test.ts",
+          "words": 107,
+          "basis": "ceiling",
+          "how": "adapted, not measured per element here: at most the audit's words_before − words_after; the owner-tier run on the real build replaces it with the element's served count"
+        },
+        {
+          "id": "congress-20",
+          "reason": "honesty-pin:dashboard/test/r19-collapsed-honesty.test.ts",
+          "words": 16,
+          "basis": "ceiling",
+          "how": "adapted, not measured per element here: at most the audit's words_before − words_after; the owner-tier run on the real build replaces it with the element's served count"
+        },
+        {
+          "id": "congress-23",
+          "reason": "honesty-pin:dashboard/test/launch-congress.test.ts",
+          "words": 15,
+          "basis": "ceiling",
+          "how": "adapted, not measured per element here: at most the audit's words_before − words_after; the owner-tier run on the real build replaces it with the element's served count"
+        },
+        {
+          "id": "congress-27",
+          "reason": "honesty-pin:dashboard/test/ledger-system.test.ts",
+          "words": 34,
+          "basis": "ceiling",
+          "how": "adapted, not measured per element here: at most the audit's words_before − words_after; the owner-tier run on the real build replaces it with the element's served count"
+        }
+      ],
+      "retainedWords": 180,
+      "note": "M3 reported the served page over 300 against 240 (at risk); the ceiling items are its Monthly flow and feed elements.",
+      "gateCeiling": 438,
+      "measureOnRealBuild": [
+        "congress-11",
+        "congress-12",
+        "congress-20",
+        "congress-23",
+        "congress-27"
+      ]
+    },
+    {
+      "path": "/institutional/",
+      "page": "Institutional",
+      "auditAfter": 154,
+      "baseGate": 170,
+      "retained": [
+        {
+          "id": "global-03",
+          "reason": "owner-decision:D7",
+          "words": 14,
+          "basis": "audit",
+          "how": "not applied: the audit's own words_before − words_after"
+        },
+        {
+          "id": "inst-03",
+          "reason": "honesty-pin:dashboard/test/inst-index-client.test.ts",
+          "words": 20,
+          "basis": "ceiling",
+          "how": "adapted, not measured per element here: at most the audit's words_before − words_after; the owner-tier run on the real build replaces it with the element's served count"
+        },
+        {
+          "id": "inst-04",
+          "reason": "honesty-pin:dashboard/test/column-presence.test.ts",
+          "words": 16,
+          "basis": "measured",
+          "how": "the directory's Top-5 line, 'Not shown: the top-five share — this build's concentration slices hold the top 25 positions, not five.'"
+        },
+        {
+          "id": "inst-07",
+          "reason": "honesty-pin:dashboard/test/activity.test.ts",
+          "words": 70,
+          "basis": "measured",
+          "how": "shipped 96 = count line 11 + publication bound 44 + 'Truncated by Public Filings.' notice 41 (the audit's 127 less the 31-word first sentence); proposed 26"
+        }
+      ],
+      "retainedWords": 120,
+      "note": "M7b estimated ~327 before this pass; this pass cuts inst-04's activity half (11), inst-06 (9), inst-07's first sentence (31) and inst-08's line (26).",
+      "gateCeiling": 302,
+      "measureOnRealBuild": [
+        "inst-03"
+      ]
+    },
+    {
+      "path": "/institutional/filers/1067983/",
+      "page": "Filer",
+      "auditAfter": 228,
+      "baseGate": 251,
+      "retained": [
+        {
+          "id": "global-03",
+          "reason": "owner-decision:D7",
+          "words": 14,
+          "basis": "audit",
+          "how": "not applied: the audit's own words_before − words_after"
+        },
+        {
+          "id": "filer-01",
+          "reason": "honesty-pin:dashboard/test/refinement-m2.test.ts",
+          "words": 14,
+          "basis": "ceiling",
+          "how": "adapted, not measured per element here: at most the audit's words_before − words_after; the owner-tier run on the real build replaces it with the element's served count"
+        },
+        {
+          "id": "filer-06",
+          "reason": "honesty-pin:dashboard/test/m1-layout.test.ts",
+          "words": 34,
+          "basis": "ceiling",
+          "how": "adapted, not measured per element here: at most the audit's words_before − words_after; the owner-tier run on the real build replaces it with the element's served count"
+        },
+        {
+          "id": "filer-10",
+          "reason": "honesty-pin:dashboard/test/sl-filer.test.ts",
+          "words": 53,
+          "basis": "ceiling",
+          "how": "adapted, not measured per element here: at most the audit's words_before − words_after; the owner-tier run on the real build replaces it with the element's served count"
+        }
+      ],
+      "retainedWords": 115,
+      "note": "M6 measured 247 on the T0 served HTML with its fragments spliced in (the audit's own tools, positive control 472): the base gate 251 is met without the adjustment.",
+      "gateCeiling": 378,
+      "measureOnRealBuild": [
+        "filer-01",
+        "filer-06",
+        "filer-10"
+      ]
+    },
+    {
+      "path": "/institutional/tickers/AAPL/holders/",
+      "page": "Holders",
+      "auditAfter": 234,
+      "baseGate": 258,
+      "retained": [
+        {
+          "id": "ticker-12",
+          "reason": "honesty-pin:dashboard/test/m3-review-fixes.test.ts",
+          "words": 2,
+          "basis": "measured",
+          "how": "the same block on the holders page (the audit counts shared components on every page)"
+        },
+        {
+          "id": "holders-02",
+          "reason": "owner-decision:D7",
+          "words": 14,
+          "basis": "audit",
+          "how": "the 13F footer sentence verbatim (D7): global-03's 30 words against its proposed 16"
+        }
+      ],
+      "retainedWords": 16,
+      "note": "M7b estimated ~309 before this pass; ticker-12 cuts 41 of the shared block's 64 words.",
+      "gate": 275
+    },
+    {
+      "path": "/signals/",
+      "page": "Signals — Congress tab (default)",
+      "auditAfter": 184,
+      "baseGate": 203,
+      "retained": [
+        {
+          "id": "signals-01",
+          "reason": "honesty-pin:dashboard/test/launch-signals.test.ts",
+          "words": 7,
+          "basis": "ceiling",
+          "how": "adapted, not measured per element here: at most the audit's words_before − words_after; the owner-tier run on the real build replaces it with the element's served count"
+        },
+        {
+          "id": "signals-08",
+          "reason": "honesty-pin:dashboard/test/ledger-system.test.ts",
+          "words": 6,
+          "basis": "audit",
+          "how": "not applied: the audit's own words_before − words_after"
+        }
+      ],
+      "retainedWords": 13,
+      "gateCeiling": 217,
+      "measureOnRealBuild": [
+        "signals-01"
+      ]
+    },
+    {
+      "path": "/signals/#institutional",
+      "page": "Signals — Institutional tab",
+      "auditAfter": 192,
+      "baseGate": 212,
+      "retained": [
+        {
+          "id": "signals-01",
+          "reason": "honesty-pin:dashboard/test/launch-signals.test.ts",
+          "words": 7,
+          "basis": "ceiling",
+          "how": "adapted, not measured per element here: at most the audit's words_before − words_after; the owner-tier run on the real build replaces it with the element's served count"
+        },
+        {
+          "id": "signals-18",
+          "reason": "honesty-pin:dashboard/test/signals-institutional.test.ts",
+          "words": 11,
+          "basis": "ceiling",
+          "how": "adapted, not measured per element here: at most the audit's words_before − words_after; the owner-tier run on the real build replaces it with the element's served count"
+        }
+      ],
+      "retainedWords": 18,
+      "gateCeiling": 231,
+      "measureOnRealBuild": [
+        "signals-01",
+        "signals-18"
+      ]
+    },
+    {
+      "path": "/signals/#overlap",
+      "page": "Signals — Overlap tab",
+      "auditAfter": 100,
+      "baseGate": 110,
+      "retained": [
+        {
+          "id": "signals-01",
+          "reason": "honesty-pin:dashboard/test/launch-signals.test.ts",
+          "words": 7,
+          "basis": "ceiling",
+          "how": "adapted, not measured per element here: at most the audit's words_before − words_after; the owner-tier run on the real build replaces it with the element's served count"
+        }
+      ],
+      "retainedWords": 7,
+      "gateCeiling": 118,
+      "measureOnRealBuild": [
+        "signals-01"
+      ]
+    },
+    {
+      "path": "/signals/#playbooks",
+      "page": "Signals — Playbooks tab",
+      "auditAfter": 927,
+      "baseGate": 680,
+      "retained": [
+        {
+          "id": "signals-01",
+          "reason": "honesty-pin:dashboard/test/launch-signals.test.ts",
+          "words": 7,
+          "basis": "ceiling",
+          "how": "adapted, not measured per element here: at most the audit's words_before − words_after; the owner-tier run on the real build replaces it with the element's served count"
+        }
+      ],
+      "retainedWords": 7,
+      "note": "SC5 gates this tab at 680 = round(946 × 240/334), not at after + 10%; the adjustment adds the retained words + 10% to 680.",
+      "gateCeiling": 688,
+      "measureOnRealBuild": [
+        "signals-01"
+      ]
+    },
+    {
+      "path": "/tickers/AAPL/",
+      "page": "Ticker — Congress tab (default)",
+      "auditAfter": 187,
+      "baseGate": 206,
+      "retained": [
+        {
+          "id": "ticker-02",
+          "reason": "honesty-pin:dashboard/test/pages-render.test.ts",
+          "words": 19,
+          "basis": "ceiling",
+          "how": "adapted, not measured per element here: at most the audit's words_before − words_after; the owner-tier run on the real build replaces it with the element's served count"
+        },
+        {
+          "id": "ticker-04",
+          "reason": "honesty-pin:dashboard/test/pages-render.test.ts",
+          "words": 3,
+          "basis": "measured",
+          "how": "M6's measurement: 'filed up to 45 days later' kept instead of 'not current holdings' (+3)"
+        }
+      ],
+      "retainedWords": 22,
+      "note": "M6 measured 250 on the T0 served HTML with its fragments spliced in; 195 once M7a's signals-03 and signals-07 apply to the shared On Signals block (both applied): the base gate 206 is met without the adjustment.",
+      "gateCeiling": 230,
+      "measureOnRealBuild": [
+        "ticker-02"
+      ]
+    },
+    {
+      "path": "/tickers/AAPL/#institutional",
+      "page": "Ticker — Institutional tab",
+      "auditAfter": 278,
+      "baseGate": 306,
+      "retained": [
+        {
+          "id": "ticker-09",
+          "reason": "honesty-pin:dashboard/test/pages-render.test.ts",
+          "words": 5,
+          "basis": "ceiling",
+          "how": "adapted, not measured per element here: at most the audit's words_before − words_after; the owner-tier run on the real build replaces it with the element's served count"
+        },
+        {
+          "id": "ticker-11",
+          "reason": "honesty-pin:dashboard/test/m3-review-fixes.test.ts",
+          "words": 78,
+          "basis": "ceiling",
+          "how": "adapted, not measured per element here: at most the audit's words_before − words_after; the owner-tier run on the real build replaces it with the element's served count"
+        },
+        {
+          "id": "ticker-12",
+          "reason": "honesty-pin:dashboard/test/m3-review-fixes.test.ts",
+          "words": 2,
+          "basis": "measured",
+          "how": "shipped 23 = window line 5 + 'by shares · $ = value held · <issuer as filed>' 6 + timeline note 12; proposed 21: the filed issuer name"
+        }
+      ],
+      "retainedWords": 85,
+      "note": "M7b estimated ~499 before this pass; ticker-12 (−41) and ticker-13 (−43) apply here.",
+      "gateCeiling": 400,
+      "measureOnRealBuild": [
+        "ticker-09",
+        "ticker-11"
+      ]
     }
   ]
 }

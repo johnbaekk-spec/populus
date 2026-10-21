@@ -9,6 +9,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 import {
   activityFeedHtml,
@@ -22,7 +24,9 @@ import {
 import { directoryColumns } from "../src/lib/inst-index.ts";
 import { overlapBandHtml, type OverlapBand } from "../src/lib/overlap.ts";
 import { moveRowHtml, namedMoveIds, signalsInstitutionalHtml } from "../src/lib/ui/signals-institutional.ts";
-import { signalsOverlapHtml, tickerUnifiedBody } from "../src/lib/ui/index.ts";
+import { signalsBody, signalsOverlapHtml, tickerUnifiedBody } from "../src/lib/ui/index.ts";
+import { buildTriage } from "../src/lib/signal-triage.ts";
+import { loadTriageFixture } from "./lib/triage-fixture.ts";
 import { domOf, visibleText } from "./lib/ledger-dom.ts";
 import { fixtureInstitutional } from "./lib/inst-signals-fixture.ts";
 import { fixtureOverlap } from "./lib/overlap-fixture.ts";
@@ -211,4 +215,36 @@ test("signals-10 (adapted): the five header tips are shorter and keep every qual
   // control: the checker sees a dropped qualifier
   const dropped = inst.replace("a dollar change alone is not a position change", "");
   assert.ok(!dropped.includes("a dollar change alone is not a position change"));
+});
+
+/* ---------------------------------------------------------------- the ledger's patterns, on the rendered surfaces */
+
+test("the ledger's patterns past M2: each shipped pattern is on its rendered surface and each replaced text is gone (control)", () => {
+  const ledger = JSON.parse(readFileSync(path.resolve(import.meta.dirname, "fixtures", "launch-copy-ledger.json"), "utf-8")) as {
+    items: { id: string; milestone: string; shipped: string | null; replaced: string | null }[];
+  };
+  const f = loadTriageFixture();
+  const triage = buildTriage(f.artifact, f.rows, { committee: f.committee, identityOf: f.identityOf });
+  const model = fixtureInstitutional();
+  const ids = namedMoveIds(model);
+  const { feed, ciks } = activity();
+  const stamps = { buildId: "b", generatedAt: "2026-07-24 06:56 UTC", generatedAtDate: "2026-07-24" };
+  const corpus = [
+    signalsBody(f.artifact, CTX, { rowsEvaluated: f.rows.length, triage, institutional: model, overlap: fixtureOverlap() }),
+    model.domSet.map((m, i) => moveRowHtml(m, ids[i]!, model, false)).join(""),
+    activitySectionHtml(feed, { reference: true, notableCiks: ciks }),
+    overlapBandHtml(band(), CTX, (c) => `/f/${c}`),
+    tickerUnifiedBody({ ticker: "WMB", txns: [] } as never, { state: "module-absent" } as never, stamps, CTX, { fullTable: false }, { crowding: null, committees: null } as never),
+  ]
+    .map(reach)
+    .join(" ");
+  const checked = ledger.items.filter((e) => e.milestone !== "M2" && (e.shipped || e.replaced));
+  assert.ok(checked.length >= 12, `the final pass's patterned entries (${checked.length})`);
+  for (const e of checked) {
+    if (e.shipped) assert.match(corpus, new RegExp(e.shipped), `${e.id}: /${e.shipped}/ ships`);
+    if (e.replaced) assert.doesNotMatch(corpus, new RegExp(e.replaced), `${e.id}: /${e.replaced}/ is gone`);
+  }
+  // control: a replaced text that came back is caught
+  const inst07 = checked.find((e) => e.id === "inst-07")!;
+  assert.match(corpus + " These rows are notable managers' new, added, trimmed and exited positions", new RegExp(inst07.replaced!));
 });

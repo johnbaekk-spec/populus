@@ -8,8 +8,10 @@
 
    The audit itself (docs/design/launch-redesign-mock/data/copy_audit.json)
    is an untracked spec record, so the ledger is self-contained and the id
-   set is pinned here by prefix and count. Later milestones finalize their own
-   entries; M8 removes the pending allowance (no pending entry after M8). */
+   set is pinned here by prefix and count. Later milestones finalized their own
+   entries; the final copy pass (F1) closed the ledger — the pending allowance
+   is off — and recorded the SC5 gates the orchestrator's speed-mode decision
+   adjusts (`gates`, checked below). */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -54,11 +56,31 @@ interface Entry {
   note: string | null;
   rest?: Rest;
 }
+interface Retained {
+  id: string;
+  reason: string;
+  words: number;
+  basis: "audit" | "measured" | "ceiling";
+  how: string;
+}
+interface Gate {
+  path: string;
+  page: string;
+  auditAfter: number;
+  baseGate: number;
+  retained: Retained[];
+  retainedWords: number;
+  note?: string;
+  gate?: number;
+  gateCeiling?: number;
+  measureOnRealBuild?: string[];
+}
 interface Ledger {
   v: number;
   dispositions: string[];
   reasonCodes: string[];
   items: Entry[];
+  gates: Gate[];
 }
 
 const ledger = JSON.parse(readFileSync(LEDGER_PATH, "utf-8")) as Ledger;
@@ -70,8 +92,8 @@ const ID_COUNTS: Readonly<Record<string, number>> = {
 };
 const DISPOSITIONS = ["applied", "applied-by-163", "adapted", "not-applied", "pending"] as const;
 const MILESTONES = ["M2", "M3a", "M3b", "M4b", "M5", "M6", "M7a", "M7b"] as const;
-/** M8 flips this to false: the ledger closes with no pending entry. */
-const PENDING_ALLOWED = true;
+/** Off since the final copy pass (F1): the ledger is closed, no pending entry. */
+const PENDING_ALLOWED = false;
 
 /** LD3: the milestone that owns an item's copy. */
 function owner(id: string): string {
@@ -161,6 +183,72 @@ test("launch-copy: the #163 items and the owner-decided items carry their record
   assert.equal(by.get("global-03")!.reason, "owner-decision:D7");
   // every home item is final in M2
   for (let i = 1; i <= 10; i++) assert.notEqual(by.get(`home-${String(i).padStart(2, "0")}`)!.disposition, "pending");
+});
+
+test("launch-copy: the ledger is closed — no pending entry or remainder; every shipped and replaced pattern is a valid pattern", () => {
+  const open = ledger.items.filter((e) => e.disposition === "pending" || e.rest?.disposition === "pending").map((e) => e.id);
+  assert.deepEqual(open, []);
+  for (const e of ledger.items) for (const re of [e.shipped, e.replaced]) if (re) assert.doesNotThrow(() => new RegExp(re), `${e.id}: /${re}/`);
+});
+
+/* ---------- the SC5 gates the orchestrator's decision adjusts (F1) ----------
+
+   Speed-mode decision (recorded in the decision record): where an owner
+   decision (D7) or an honesty pin keeps words the audit proposed to cut, the
+   page's gate is the audit's words_visible_after + those words, itemized, +
+   10%, rounded up (the plan's own rounding: 218 → 240, 184 → 203). The
+   Playbooks tab keeps SC5's 680 and adds the retained words + 10%. A word
+   count whose basis is `ceiling` (an adapted element not measured per element
+   yet) makes the page's figure a `gateCeiling`, and names the item for the
+   owner-tier count on the real build. */
+
+/** What is wrong with one gate record against the ledger it belongs to. */
+function gateProblems(g: Gate, items: readonly Entry[]): string[] {
+  const by = new Map(items.map((e) => [e.id, e]));
+  const out: string[] = [];
+  const playbooks = g.path === "/signals/#playbooks";
+  const base = playbooks ? 680 : Math.ceil(g.auditAfter * 1.1 - 1e-9);
+  if (g.baseGate !== base) out.push(`${g.path}: base gate ${g.baseGate}, want ${base}`);
+  const sum = g.retained.reduce((n, r) => n + r.words, 0);
+  if (g.retainedWords !== sum) out.push(`${g.path}: retainedWords ${g.retainedWords}, items sum ${sum}`);
+  const want = playbooks ? 680 + Math.ceil(sum * 1.1 - 1e-9) : Math.ceil((g.auditAfter + sum) * 1.1 - 1e-9);
+  const ceilings = g.retained.filter((r) => r.basis === "ceiling").map((r) => r.id);
+  if (ceilings.length > 0) {
+    if (g.gate !== undefined || g.gateCeiling !== want) out.push(`${g.path}: gateCeiling ${g.gateCeiling}, want ${want} (and no gate)`);
+    if (JSON.stringify(g.measureOnRealBuild ?? []) !== JSON.stringify(ceilings)) out.push(`${g.path}: measureOnRealBuild must name the ceiling items`);
+  } else if (g.gate !== want || g.gateCeiling !== undefined) out.push(`${g.path}: gate ${g.gate}, want ${want}`);
+  for (const r of g.retained) {
+    const e = by.get(r.id);
+    if (!e) {
+      out.push(`${g.path}: ${r.id} is not a ledger id`);
+      continue;
+    }
+    const reasons = [e.disposition === "adapted" || e.disposition === "not-applied" ? e.reason : null, e.rest && (e.rest.disposition === "adapted" || e.rest.disposition === "not-applied") ? (e.rest.reason ?? null) : null];
+    if (!reasons.includes(r.reason)) out.push(`${g.path}: ${r.id}'s reason ${r.reason} is not the entry's`);
+    if (!(r.reason.startsWith("honesty-pin:") || r.reason === "owner-decision:D7")) out.push(`${g.path}: ${r.id} kept words for ${r.reason}, which the decision does not cover`);
+    if (!(r.words > 0) || !Number.isInteger(r.words)) out.push(`${g.path}: ${r.id} words ${r.words}`);
+    if (!["audit", "measured", "ceiling"].includes(r.basis) || !r.how) out.push(`${g.path}: ${r.id} basis`);
+  }
+  return out;
+}
+
+test("launch-copy (F1): every adjusted SC5 gate is the decision's arithmetic over itemized words an honesty pin or D7 kept (controls)", () => {
+  assert.ok(ledger.gates.length > 0);
+  assert.equal(new Set(ledger.gates.map((g) => g.path)).size, ledger.gates.length, "one record per page");
+  for (const g of ledger.gates) assert.deepEqual(gateProblems(g, ledger.items), [], g.path);
+  // the plan's own SC5 gates are the base gates (rounding included)
+  const base = new Map(ledger.gates.map((g) => [g.path, g.baseGate]));
+  for (const [path, gate] of [["/congress/", 240], ["/signals/", 203], ["/signals/#institutional", 212], ["/signals/#overlap", 110], ["/signals/#playbooks", 680], ["/tickers/AAPL/", 206], ["/tickers/AAPL/#institutional", 306], ["/institutional/", 170], ["/institutional/filers/1067983/", 251], ["/institutional/tickers/AAPL/holders/", 258]] as const) {
+    if (base.has(path)) assert.equal(base.get(path), gate, path);
+  }
+  // the D7 footer sentence is itemized where it renders
+  const holders = ledger.gates.find((g) => g.path === "/institutional/tickers/AAPL/holders/")!;
+  assert.ok(holders.retained.some((r) => r.id === "holders-02" && r.reason === "owner-decision:D7"));
+  // controls: a gate off by one, a reason the decision does not cover, and an uncounted ceiling are each refused
+  const g0 = structuredClone(holders);
+  assert.match(gateProblems({ ...g0, gate: (g0.gate ?? 0) + 1 }, ledger.items).join(";"), /gate \d+, want/);
+  assert.match(gateProblems({ ...g0, retained: [...g0.retained, { id: "home-02", reason: "superseded-by-layout:M2", words: 3, basis: "audit", how: "x" }], retainedWords: g0.retainedWords + 3, gate: Math.ceil((g0.auditAfter + g0.retainedWords + 3) * 1.1 - 1e-9) }, ledger.items).join(";"), /does not cover/);
+  assert.match(gateProblems({ ...g0, retained: g0.retained.map((r, i) => (i === 0 ? { ...r, basis: "ceiling" as const } : r)) }, ledger.items).join(";"), /gateCeiling/);
 });
 
 test("launch-copy: the reason checker refuses what LD32's closed set refuses (controls)", () => {
