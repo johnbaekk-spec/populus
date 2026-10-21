@@ -1613,7 +1613,8 @@ function onSignalsView(rows: readonly TriageRow[], hits: readonly Signal[]): OnS
   return { kind: "compact", lines: lines.slice(0, ON_SIGNALS_COMPACT_LINES), allLines: lines.length, hits: hits.length };
 }
 
-const BACK_TO_SIGNALS = `<a class="section-link tk-onsig-back" href="/signals/">← Back to Signals</a>`;
+/* launch copy audit ticker-05: the link names its page, no "back" (the reader may arrive from search) */
+const BACK_TO_SIGNALS = `<a class="section-link tk-onsig-back" href="/signals/">Signals ↗</a>`;
 
 /** R18: the ticker's "On Signals" block (`#on-signals`), or "" when the
     ticker has no active signal.
@@ -1633,12 +1634,14 @@ export function tickerOnSignalsHtml(triageRows: readonly TriageRow[], hits: read
   if (view === null) return "";
   if (view.kind === "full") {
     const { row } = view;
-    const ticker = row.lead.txn.ticker ?? "";
-    const more = view.rows > 1 ? ` · THE STRONGEST OF ${fmtInt(view.rows)} ROWS LED BY ${esc(ticker)}` : "";
+    /* Launch copy audit ticker-05: the 23-word caps meta becomes the count it
+       carried and a tip with the ranking basis. */
     return (
       `<section class="panel tk-onsig" id="on-signals" data-block="full" data-tier="${row.tier}" aria-labelledby="on-signals-h">` +
       `<div class="panel-head"><h2 class="section-h" id="on-signals-h">On Signals</h2>` +
-      `<span class="panel-note">FILINGS TO READ · AGAINST THE FILER'S OWN RECORD, AS OF ITS FILING${more}</span>` +
+      `<span class="panel-note">${view.rows > 1 ? `Strongest of ${fmtInt(view.rows)} rows` : "1 row"} ` +
+      noteFromHtml(esc("Ranked against each filer's own record as of its filing."), { scope: "ticker-onsig" }, "rank", { trigger: "mark", name: "How the row is ranked" }) +
+      `</span>` +
       BACK_TO_SIGNALS +
       `</div>` +
       // the tier is the row's heading level above it, as in "Filings to read"

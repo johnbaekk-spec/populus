@@ -1620,20 +1620,21 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
         })
       : "";
 
-  // A sum over zero disclosed values is not "$0 of holdings" — that reads as a
-  // number the filer reported. It is the absence of any disclosed value.
-  const valueNote =
-    totals.disclosedRows === 0
-      ? "no disclosed value in these rows"
-      : `${fmtUsd(totals.disclosedUsd)} disclosed value over ${fmtInt(totals.disclosedRows)} ${
-          totals.disclosedRows === 1 ? "row" : "rows"
-        }`;
+  /* Launch copy audit filer-08: the head counts the list — issuers (or
+     positions) and rows — and names undisclosed-value rows only when there are
+     any. The reported value is the page ledger's first figure (whose note says
+     NULL values are excluded from the sum), so it is not repeated here; the
+     pager states the page range. */
+  const rowCount = matched;
+  const plural = (n: number, one: string, many: string): string => `${fmtInt(n)} ${n === 1 ? one : many}`;
+  const headNote =
+    (folded ? `${plural(unitCount, "issuer", "issuers")} · ${plural(rowCount, "row", "rows")}` : plural(unitCount, "position", "positions")) +
+    (totals.undisclosedRows > 0 ? ` · ${plural(totals.undisclosedRows, "undisclosed-value row", "undisclosed-value rows")}` : "") +
+    (totals.disclosedRows === 0 && rowCount > 0 ? " · no disclosed value in these rows" : "");
   return (
     `<div class="panel-head">` +
     `<h2 class="section-h">Reported positions — ${esc(opts.period)}</h2>` +
-    `<span class="panel-note">${esc(rangeText)} · ${esc(valueNote)} · ${fmtInt(
-      totals.undisclosedRows,
-    )} undisclosed-value ${totals.undisclosedRows === 1 ? "row" : "rows"}</span></div>` +
+    `<span class="panel-note">${esc(headNote)}</span></div>` +
     emptyNote +
     universalFlagNote(statedHoldings) +
     /* `data-paged` means "this HTML shows only PART of the
@@ -1680,7 +1681,10 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
               : {}),
         })
       : "") +
-    (refCols ? tableFootReasonHtml(refCols, ["Change kind and share change are in Position changes above; Congress overlap is planned."]) : "") +
+    /* launch copy audit filer-06: the static pointer to Position changes and
+       the "Congress overlap is planned" roadmap note are gone; the data-dependent
+       reasons (Weight) still print */
+    (refCols ? tableFootReasonHtml(refCols) : "") +
     truncation +
     pagerHtml({ page: opts.page, pageCount, rangeText, idPrefix: "holdings" }) +
     holdingsCaveatHtml(groups != null, total, matched)
@@ -1707,20 +1711,15 @@ export function presentedHoldingFlags(row: Pick<FilerHoldingRow, "flags" | "tick
     size-capped page (`total > matched`) prints none, because its terminus
     already says how many rows are not embedded and why. The de-duplication
     detail lives on /methodology/#filer-positions. */
-export function holdingsCaveatHtml(grouped: boolean, total: number, matched: number): string {
-  const what = grouped
-    ? "One line per issuer, largest first; a row with no issuer key stands on its own line. Open a line for its rows as this filer reported them."
-    : "Each row as this filer reported it.";
-  /* The plan's "These are all the rows …" is written with "every" (M3-D in
-     DEV-NOTES): the unqualified-"all" ban (`unqualifiedAllClaims`) admits
-     "all" only before a qualifier, and this is the old caveat's own word for
-     the same fact ("every row this filer reported for the quarter"). */
-  const all = total === matched ? " The list holds every row this filer reported for the quarter." : "";
-  return (
-    `<div class="caveat-line">${what}${all} Issuer totals on the holders pages count each ` +
-    `manager's own report once; that never removes a row here. ` +
-    `<a href="/methodology/#filer-positions">how positions are grouped ↗</a></div>`
-  );
+export function holdingsCaveatHtml(grouped: boolean, _total: number, _matched: number): string {
+  /* Launch copy audit filer-09: what the table IS, in one line; the
+     holders-page de-duplication detail lives on /methodology/#filer-positions,
+     one link away. The caveat makes no completeness claim of its own: a
+     size-capped list's terminus states how many rows it leaves out, and the
+     head counts the rows (the count arguments stay in the signature its
+     callers share). */
+  const what = grouped ? "One line per issuer, largest first — open a line for its reported rows." : "Each row as this filer reported it.";
+  return `<div class="caveat-line">${what} <a href="/methodology/#filer-positions">Grouping ↗</a></div>`;
 }
 
 /* DESIGN-POLISH M3 (R19): caps words in the change-kind style. This view is
@@ -2146,9 +2145,10 @@ function viewChips(payload: SurfacePayload, state: SurfaceState): string {
     ` data-holdings-view="${view}" aria-pressed="${state.view === view}">${esc(label)}</button>`;
   const { selected, prior } = selectedPair(payload, state);
   const hasPrior = prior != null && payload.rowsByPeriod[prior] != null;
+  /* launch copy audit filer-08: with a prior quarter the chips speak for
+     themselves; the missing-prior case keeps its stated reason */
   const note = hasPrior
-    ? `<span class="period-note">this build publishes the selected quarter and the one ` +
-      `before it, so a displayed change can be inspected on both sides</span>`
+    ? ""
     : `<span class="period-note">${noteFromHtml(
         esc(`This build carries one quarter for this manager: ${payload.current}. Notable managers carry four published quarters, others two.`),
         { scope: "filer-period" },

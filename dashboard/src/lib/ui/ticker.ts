@@ -32,7 +32,6 @@ import {
   memberHrefFor,
   congressTickerHref,
   partyClass,
-  cardFoot,
   presentColumns,
   dataColumnsAttr,
   tableFootReasonHtml,
@@ -58,8 +57,8 @@ import type { TickerCrowding } from "../inst-analytics.ts";
 import { unavailableDesignPanel } from "./shared.ts";
 import { filerHref } from "../holdings.ts";
 import type { TickerInstSection } from "../data.ts";
-import { type BuildStamps, asOfNote, disclosureLedger } from "./shared.ts";
-import { fmtCik, note, rangeOfTotal, thHtml } from "../format.ts";
+import { type BuildStamps, disclosureLedger } from "./shared.ts";
+import { fmtCik, note, noteFromHtml, rangeOfTotal, thHtml } from "../format.ts";
 import { onSignalsLines, tickerOnSignalsHtml } from "./signals.ts";
 import { entityTxnRowsHtml, entityTxnTable } from "./congress.ts";
 import { instStamp, instFiledNote } from "./institutional.ts";
@@ -72,9 +71,20 @@ export interface TickerHeaderInfo {
   mappedName: string | null;
 }
 
+/** G14: what the † beside a mapped issuer name says. Launch copy audit
+    ticker-02: it is the mark's own tip, where it is read, not a footnote at the
+    foot of the page (the SEC's file name stays out of reader copy). */
+const TICKER_MAPPED_NAME_NOTE =
+  "Today's name, from the SEC's present-day ticker list — a present-day mapping, not the name as of each filing.";
+
 function tickerTitleHtml(info: TickerHeaderInfo): string {
   const name = info.mappedName
-    ? ` — ${esc(info.mappedName)}<a class="fn-ref" href="#ticker-footnotes" aria-label="footnote: present-day mapping">†</a>`
+    ? ` — ${esc(info.mappedName)}` +
+      noteFromHtml(esc(TICKER_MAPPED_NAME_NOTE), { scope: "ticker-head" }, "mapped-name", {
+        trigger: "mark",
+        textHtml: "†",
+        name: "Present-day name",
+      })
     : "";
   return `<span class="mono-ticker">${esc(info.ticker)}</span>${name}`;
 }
@@ -280,14 +290,7 @@ export function tickerUnifiedBody(
       }${(
         [["Member", "c-member c-flex"], ["Side · Owner", "c-kind"], ["Traded · Lag", "c-num"], ["Amount", "c-num"], ["Range · Flags", "c-bar"], ["Src", "c-src"]] as const
       ).map(([label, cls]) => thHtml({ label, mark: null, cls })).join("")}</tr></thead>` +
-      `<tbody>${entityTxnRowsHtml(previewRows, "ticker", ctx, statedPreview, null, { dataTxn: true, pinned: pinnedIds })}</tbody></table></div>` +
-      cardFoot({
-        short: "Traded → filed dates on every row",
-        full: "Each row shows the trade date and the filing date; the gap between them is the disclosure lag.",
-        scope: "ticker-congress-foot",
-        key: "dates",
-        extraHtml: `<a href="${congressTickerHref(t.ticker)}">all ${fmtInt(t.txns.length)} rows ↗</a>`,
-      });
+      `<tbody>${entityTxnRowsHtml(previewRows, "ticker", ctx, statedPreview, null, { dataTxn: true, pinned: pinnedIds })}</tbody></table></div>`;
 
   /* R17: the five-figure ledger. Every figure is computed from this page's
      own rows. Totals are over the FULL qualifying population; `disclosing`
@@ -315,13 +318,18 @@ export function tickerUnifiedBody(
       : unknownTimeliness > 0
         ? { detail: `${fmtInt(unknownTimeliness)} of ${fmtInt(t.txns.length)} undated: timeliness unknown`, subKind: "count" as const }
         : late > 0
-          ? { detail: "filed past the 45-day window", subKind: "qualifier" as const }
+          ? /* launch copy audit ticker-03: the label, the SELL tone and the
+               figure's note ("past the STOCK Act's 45-day window") say it */
+            { detail: "", subKind: "qualifier" as const }
           : { detail: "every row filed inside 45 days", subKind: "qualifier" as const };
   const ledger = disclosureLedger(
     [
-      { label: "Congress txns", value: fmtInt(t.txns.length), detail: `all PTR rows naming ${t.ticker}`, subKind: "count" },
+      /* Launch copy audit ticker-03: #163 settled the 13F figure (the holder
+         count with "top N listed"); the remainder is the PTR jargon in the
+         other labels. */
+      { label: "Congress trades", value: fmtInt(t.txns.length), detail: "all time", subKind: "count" },
       { label: "Members · 12m", value: fmtInt(members12), detail: `${fmtInt(buys12)} buys · ${fmtInt(sells12)} sells · by trade date`, subKind: "count" },
-      { label: "Latest PTR", value: latestFiled ? latestFiled.slice(5) : "—", detail: latestFiled ? `filed ${latestFiled}` : "no filing on record", subKind: latestFiled ? "date" : "absence" },
+      { label: "Latest filing", value: latestFiled ? latestFiled.slice(5) : "—", detail: latestFiled ?? "no filing on record", subKind: latestFiled ? "date" : "absence" },
       {
         label: "Filed late",
         value: fmtInt(late),
@@ -365,17 +373,18 @@ export function tickerUnifiedBody(
   return (
     `<div class="page-head">` +
     `<div class="page-head-copy">` +
-    `<div class="kicker">Public record / Tickers / ${esc(t.ticker)}</div>` +
+    /* launch copy audit ticker-01: the "Public record / Tickers / X" kicker repeated the H1 */
     `<h1 class="entity-title">${tickerTitleHtml(info)}</h1>` +
     `</div>` +
     ledger +
     `</div>` +
     /* R17 / LD9: the provenance line carries each section's own clock (it was
-       the lede's sentence). */
-    `<div class="design-provenance"><span>Congress = transactions in statutory ranges, 45-day lag · Institutions = quarter-end positions, 45-day lag</span>` +
-    `<span class="tk-clock">Each section keeps its own clock — congressional trades on the 45-day PTR clock, 13F holdings as quarter-end snapshots.</span>` +
-    `<span class="stamp-line">${asOfNote(stamps)}</span>` +
-    `<span>no price data — a disclosure record, not a chart</span></div>` +
+       the lede's sentence). Launch copy audit ticker-04: each regime's clock
+       stated once — Congress in statutory ranges on the 45-day filing clock,
+       13F as quarter-end snapshots filed up to 45 days later — without the
+       sentence that restated them. */
+    `<div class="design-provenance"><span class="tk-clock">Congress: statutory ranges, filed up to 45 days after the trade · 13F: quarter-end snapshots, filed up to 45 days later</span>` +
+    `<span class="stamp-line">as of ${esc(stamps.generatedAtDate)}</span></div>` +
     onSignals +
     tabs +
     /* PANEL 1 — Congress: the timeline beside the members active, then the
@@ -388,10 +397,11 @@ export function tickerUnifiedBody(
     `<div class="design-band design-ticker-band design-ticker-congress">` +
     `<section class="panel" aria-label="Congressional disclosures">` +
     `<div class="panel-head"><h2 class="section-h">Congressional disclosures</h2>` +
-    `<span class="panel-note">ALL PTR ROWS NAMING ${esc(t.ticker)} · ${
-      pinned.length > 0 && !opts.fullTable ? "ON SIGNALS ROWS FIRST, THEN FILED ↓" : "SORTED FILED ↓"
-    } · STATUTORY RANGES · FILED ≤45D LATE</span>` +
-    (opts.fullTable ? "" : `<a class="section-link" href="${congressTickerHref(t.ticker)}">full congressional view ↗</a>`) +
+    /* Launch copy audit ticker-08: the order in a few words and one link to
+       every row; the ranges and the filing clock are the provenance line's, and
+       both dates show on every row. */
+    `<span class="panel-note">${pinned.length > 0 && !opts.fullTable ? "Signals rows first, then newest" : "Newest filed first"}</span>` +
+    (opts.fullTable ? "" : `<a class="section-link" href="${congressTickerHref(t.ticker)}">All ${fmtInt(t.txns.length)} ${t.txns.length === 1 ? "row" : "rows"} ↗</a>`) +
     `</div>` +
     recent +
     `</section>` +
@@ -408,18 +418,7 @@ export function tickerUnifiedBody(
     `<div class="design-band design-ticker-band design-ticker-agree">` +
     agreementHtml(t, stamps, inst) +
     `</div>` +
-    `</section>` +
-    footnoteBlock(
-      info.mappedName
-        ? [
-            {
-              mark: "†",
-              html: `issuer name from the SEC's present-day ticker list — a present-day mapping, not the name as of each filing`,
-            },
-          ]
-        : [],
-      { id: "ticker-footnotes" },
-    )
+    `</section>`
   );
 }
 
@@ -488,19 +487,28 @@ function timelineHtml(t: TickerEntity, stamps: BuildStamps, pinned: ReadonlySet<
     const d = new Date(Date.UTC(+bounds.start.slice(0, 4), +bounds.start.slice(5, 7) - 1 + m, 1));
     return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
   });
+  /* Launch copy audit ticker-06: one meta line — the axis, the window, the
+     rows placed, and (when any) the rows that cannot be placed — with the
+     legend and the trade-date-not-filing-date note as its tip. */
+  const legend =
+    `▲ buy, ▼ sell; height = lower bound (log scale)${ringed > 0 ? "; ringed = on Signals" : ""}. ` +
+    `Trade date, not filing date — the filing lag is in the table below.`;
   return (
     `<section class="panel design-timeline" aria-label="Congress disclosure timeline">` +
     `<div class="panel-head"><h2 class="section-h">Congress · disclosure timeline</h2>` +
-    `<span class="panel-note">TRADE DATES · 24M · ▲ BUY ▼ SELL · HEIGHT = LOG LOWER BOUND${ringed > 0 ? " · RINGED = ON SIGNALS" : ""}</span></div>` +
+    `<span class="panel-note">By trade date · 24 months · ${fmtInt(rows.length)} ${rows.length === 1 ? "row" : "rows"}` +
+    (undated > 0 ? ` · ${fmtInt(undated)} undated, not placed` : "") +
+    " " +
+    noteFromHtml(esc(legend), { scope: "ticker-timeline" }, "legend", { trigger: "mark", name: "Timeline legend" }) +
+    `</span></div>` +
     (rows.length === 0
       ? `<p class="section-note">No dated ${esc(t.ticker)} rows fall inside the trailing 24 months by trade date.</p>`
       : `<div class="tl-plot" aria-hidden="true">${grid}${marks}</div>` +
         `<div class="tl-axis" aria-hidden="true">${ticks.map((x) => `<span>${esc(x)}</span>`).join("")}</div>` +
         `<p class="visually-hidden">${fmtInt(rows.length)} dated disclosures in the window, placed by trade date; magnitudes are the disclosed lower bounds, against gridlines at ${TIMELINE_GRIDLINES.map(([, l]) => l).join(", ")}` +
-        `${ringed > 0 ? `; ${fmtInt(ringed)} ringed ${ringed === 1 ? "mark is a row" : "marks are rows"} on Signals, pinned in the table below` : ""}.</p>`) +
-    `<p class="section-note">Trade date, not filing date — the lag lives in the table below. ${fmtInt(rows.length)} rows placed` +
-    (undated > 0 ? ` · ${fmtInt(undated)} rows disclose no trade date and cannot be placed` : "") +
-    `.</p></section>`
+        `${ringed > 0 ? `; ${fmtInt(ringed)} ringed ${ringed === 1 ? "mark is a row" : "marks are rows"} on Signals, pinned in the table below` : ""}` +
+        `${undated > 0 ? `; ${fmtInt(undated)} ${undated === 1 ? "row discloses" : "rows disclose"} no trade date and cannot be placed` : ""}.</p>`) +
+    `</section>`
   );
 }
 
@@ -569,7 +577,22 @@ function membersActiveHtml(t: TickerEntity, stamps: BuildStamps, ctx: RenderCtx,
   return (
     `<section class="panel design-members-active" aria-label="Members active">` +
     `<div class="panel-head"><h2 class="section-h">Members active in ${esc(t.ticker)}</h2>` +
-    `<span class="panel-note">12M · NET LOWER BOUND · ${deps?.committees ? `COMMITTEES AS OF TRADE DATE · SNAPSHOT ${esc(deps.committees.snapshotDate)}` : "COMMITTEE ROSTER NOT IN BUILD"}</span></div>` +
+    /* Launch copy audit ticker-07: the window and the order in a few words;
+       the two method lines are its tip. (Without the roster, the table foot
+       still states the Committees column's absence.) */
+    `<span class="panel-note">12 months · most active first ` +
+    noteFromHtml(
+      esc(
+        `Rows = number of disclosures, not dollars. Net = lower bound of the net range. ` +
+          (deps?.committees
+            ? `Committees as of each member's latest trade in the window (roster snapshot ${deps.committees.snapshotDate}).`
+            : "The committee roster is not in this build."),
+      ),
+      { scope: "ticker-members" },
+      "method",
+      { trigger: "mark", name: "How this table counts" },
+    ) +
+    `</span></div>` +
     (members.length === 0
       ? `<p class="section-note">No member disclosed ${esc(t.ticker)} in the trailing 12 months.</p>`
       : `<div class="table-scroll"><table class="etable etable-compact"${dataColumnsAttr(cols)}><caption class="visually-hidden">Members disclosing ${esc(t.ticker)} in the trailing 12 months</caption>` +
@@ -583,7 +606,9 @@ function membersActiveHtml(t: TickerEntity, stamps: BuildStamps, ctx: RenderCtx,
         `</tr></thead>` +
         `<tbody>${rowsHtml}</tbody></table></div>` +
         tableFootReasonHtml(cols) +
-        `<p class="section-note">${byMember.size > members.length ? `${esc(rangeOfTotal(1, members.length, byMember.size, "members"))} in the window, most active first` : `${fmtInt(byMember.size)} members in the window`} · counts of disclosures, not dollars.</p>`) +
+        /* launch copy audit ticker-07: the range alone ("1–8 of 28"); the
+           heading names the members and the meta the window */
+        `<p class="section-note">${byMember.size > members.length ? esc(rangeOfTotal(1, members.length, byMember.size, "").trim()) : `${fmtInt(byMember.size)} ${byMember.size === 1 ? "member" : "members"}`}</p>`) +
     `</section>`
   );
 }
