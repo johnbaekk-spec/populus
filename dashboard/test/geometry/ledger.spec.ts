@@ -191,7 +191,15 @@ const ROUTES: Route[] = [
   { id: "ticker-inst", path: "/tickers/AAPL/#institutional", minTables: 1, minColumns: 4, allowZero: NO_CONTROLS_ZERO },
   { id: "congress-ticker", path: "/congress/tickers/NVDA/", minTables: 2, minColumns: 8, g10Min: { colours: 1 } },
   { id: "home", path: "/", minTables: 2, minColumns: 6, allowZero: NO_CONTROLS_ZERO, g10Min: { colours: 1 } },
-  { id: "e-member", path: "/e/?k=m:M001193", minTables: 3, minColumns: 12, g10Min: { colours: 1 } },
+  /* launch M4b (R23, LD24): the member's flows-by-ticker table became the
+     Top tickers board, which opens on 24 months — M001193 filed no
+     ticker-keyed trade in the last 24 months, so the board shows its stated
+     empty line, not a table (its All window holds the table). The SSR member
+     page's third table is Sectors, which the /e/ route states unavailable (the
+     issuer-SIC join is build-side only, unchanged since B-5). The /e/ member
+     renders Trades and Filing history: two tables with rows, 6 + 3 columns
+     (measured on 20261019.2). */
+  { id: "e-member", path: "/e/?k=m:M001193", minTables: 2, minColumns: 9, g10Min: { colours: 1 } },
   { id: "e-filer", path: discoverTailFiler, minTables: 2, minColumns: 8, g10Min: { colours: 1 } },
   { id: "holders", path: discoverHolders, minTables: 1, minColumns: 4 },
 ];
@@ -638,7 +646,13 @@ test.describe("M1 review: route properties", () => {
     const { ctx, page } = await open(browser, testInfo, 390, "/congress/");
     try {
       await expect(page.locator(".feed-table .feed-row").first()).toBeVisible({ timeout: 20_000 });
-      expect(await page.locator(".feed-table .cell-range .flag").count(), "the feed's first page carries flags").toBeGreaterThan(0);
+      /* launch M3a (R20): the feed opens on "With ticker", whose newest page
+         may carry no flag at all (20261019.2: none); the "All rows" view
+         carries the rows a flag marks most ("no ticker"), so the chips are
+         measured there */
+      await page.locator('#feed-section button[data-group="view"][data-value="all"]').click();
+      await expect(page.locator(".feed-table .cell-range .flag").first()).toBeVisible({ timeout: 20_000 });
+      expect(await page.locator(".feed-table .cell-range .flag").count(), "the All rows page carries flags").toBeGreaterThan(0);
       expect(await truncatedFlags(page)).toEqual([]);
       // control 1: the pre-fix chip — a nowrap, ellipsized box narrower than its words
       const own = await page.addStyleTag({ content: ".feed-row .cell-range .flag { display: inline-block !important; max-width: 3ch !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; }" });
@@ -1151,8 +1165,14 @@ test.describe("M2: route properties", () => {
   /** The fixed default rows per route (CD-1). `hold`: the gate route's data
       holds rows back there, so the table must be compact at exactly `n`. */
   const DEFAULT_ROWS: Record<string, { id: string; n: number; hold: boolean }[]> = {
-    member: [{ id: "member-flows-tbody", n: 20, hold: true }, { id: "member-history-tbody", n: 12, hold: true }],
-    "e-member": [{ id: "member-flows-tbody", n: 20, hold: true }, { id: "member-history-tbody", n: 12, hold: true }],
+    /* launch M4b (R23, R25, LD25): the flows-by-ticker table (20 rows, held)
+       became Top tickers — MEMBER_FLOW_COMPACT_ROWS (8) in the DOM, the rest
+       held through the LD26 binder — whose 24-month window opens by default;
+       the trades table pages 25 rows through the entity pager (its own
+       action below), never a compact disclosure. M001193's 24 months hold no
+       ticker-keyed trade, so the All window's board carries the count. */
+    member: [{ id: "member-top-all-tbody", n: 8, hold: false }, { id: "member-history-tbody", n: 12, hold: true }],
+    "e-member": [{ id: "member-top-all-tbody", n: 8, hold: false }, { id: "member-history-tbody", n: 12, hold: true }],
     filer: [{ id: "filer-holdings-tbody", n: 20, hold: true }],
     "e-filer": [{ id: "filer-holdings-tbody", n: 20, hold: false }],
     /* CD-5 → signals-v4 LD12: the Consensus board shows a fixed 10 — on
@@ -1335,7 +1355,12 @@ test.describe("M2: route properties", () => {
        slim hits render 10 lines and "Show 10 more" fetches the next — so it
        has no T2.11 actions; "Show 10 more" and the family filter are asserted
        by "R13 (signals-v3 M2)" below and by design-reference.spec.ts. */
-    member: [{ name: "transactions pager", sel: '[data-entity-older]:not([aria-disabled="true"])' }],
+    member: [
+      { name: "transactions pager", sel: '[data-entity-older]:not([aria-disabled="true"])' },
+      /* launch M4b: the Top tickers window switch re-renders the board; its
+         All window's held table must then offer its toggle and the count */
+      { name: "Top tickers All window", sel: '[data-top-window] button[data-window="all"][aria-pressed="false"]' },
+    ],
     /* the M2 delta review: a step-paged ranking's "Show 50 more" (R13), then
        its restated count — "1–60 of 993 ranked tickers" — against the server's
        words */
@@ -1709,7 +1734,7 @@ const LEG_SURFACES = [
 async function exchangedLegProblems(
   page: Page,
   opts: { cell: string; html?: string; plantInside?: boolean },
-): Promise<{ found: boolean; truncated: boolean; problems: string[] }> {
+): Promise<{ found: boolean; truncated: boolean; card?: boolean; problems: string[] }> {
   return page.evaluate(({ cell: sel, html, inside }) => {
     let line: HTMLElement | null;
     if (html !== undefined) {
@@ -1740,15 +1765,24 @@ async function exchangedLegProblems(
     const lr = leg.getBoundingClientRect();
     const problems: string[] = [];
     const truncated = box.scrollWidth > box.clientWidth + 1;
+    const table = cell.closest("table");
+    const card = !!table && table.matches('[data-card]:not([data-card="feed"])') && getComputedStyle(table).display !== "table";
     if (lr.width === 0) problems.push("the exchanged leg has no box");
     if (lr.left < cr.left - 0.5 || lr.right > cr.right + 0.5) problems.push(`the exchanged leg (${lr.left.toFixed(1)}–${lr.right.toFixed(1)}) reaches past its cell (${cr.left.toFixed(1)}–${cr.right.toFixed(1)})`);
     const tr = text.getBoundingClientRect();
-    if (!inside && lr.left < tr.right - 0.5) problems.push("the exchanged leg overlaps the truncating text");
+    /* the leg clear of the text: on one line, after it; on a D4 card the line
+       WRAPS (launch M1b), so a leg on the next line is clear of it too */
+    if (!inside && lr.left < tr.right - 0.5 && lr.top < tr.bottom - 0.5 && tr.top < lr.bottom - 0.5) problems.push("the exchanged leg overlaps the truncating text");
+    /* On a D4 card the row's main link stretches a TRANSPARENT ::after over
+       the card (launch M1c, R7: a tap anywhere opens the row), so a hit test
+       on the leg's text returns that link; it paints nothing, so it covers
+       nothing. Any other element there still does. */
+    const rowLink = card ? cell.closest("tr")?.querySelector("a[data-row-link]") ?? null : null;
     for (const [x, where] of [[lr.left + 1, "start"], [lr.right - 1, "end"]] as const) {
       const e = document.elementFromPoint(x, lr.top + lr.height / 2);
-      if (!e || !(e === leg || leg.contains(e))) problems.push(`the exchanged leg's ${where} is clipped or covered (${e ? e.tagName.toLowerCase() + "." + [...e.classList].join(".") : "nothing"})`);
+      if (!e || !(e === leg || leg.contains(e) || (rowLink !== null && e === rowLink))) problems.push(`the exchanged leg's ${where} is clipped or covered (${e ? e.tagName.toLowerCase() + "." + [...e.classList].join(".") : "nothing"})`);
     }
-    return { found: true, truncated, problems };
+    return { found: true, truncated, card, problems };
   }, { cell: opts.cell, html: opts.html, inside: opts.plantInside ?? false });
 }
 
@@ -1768,7 +1802,11 @@ test.describe("T7b: the exchanged leg stays visible in a truncated asset cell", 
           else testInfo.annotations.push({ type: "T7b", description: `${surface.path}: no real exchanged leg on this build's page` });
           const r = await exchangedLegProblems(page, { cell: surface.cell, html: surface.html });
           expect(r.found, "the shared renderer emitted the leg").toBe(true);
-          expect(r.truncated, "the planted asset text truncates (the check measures a truncated cell)").toBe(true);
+          /* launch M1b (D4, LD5, R5): on a row card the asset WRAPS, never
+             ellipsises, so the planted long text must not truncate there — the
+             leg's visibility then holds by the wrap, and is still measured */
+          if (r.card) expect(r.truncated, "on a D4 row card the planted asset text wraps, never truncates").toBe(false);
+          else expect(r.truncated, "the planted asset text truncates (the check measures a truncated cell)").toBe(true);
           expect(r.problems, `${surface.path} @${width}`).toEqual([]);
         } finally {
           await ctx.close();
@@ -1956,7 +1994,11 @@ test.describe("signals-v3 M3: the ticker page (R16, R19, R23)", () => {
           return page.evaluate((id) => {
             const el = document.getElementById(id)!;
             const bar = document.querySelector<HTMLElement>(".tk-tabs")!.getBoundingClientRect();
-            return { top: el.getBoundingClientRect().top, barBottom: bar.bottom, barTop: bar.top, shown: el.checkVisibility() };
+            /* launch M1c: on a phone the slim masthead is sticky, so a stuck
+               bar sits on the masthead's bottom edge, not the viewport's top */
+            const mh = document.querySelector<HTMLElement>(".masthead");
+            const stuckAt = mh && /sticky|fixed/.test(getComputedStyle(mh).position) ? Math.max(0, mh.getBoundingClientRect().bottom) : 0;
+            return { top: el.getBoundingClientRect().top, barBottom: bar.bottom, barTop: bar.top - stuckAt, shown: el.checkVisibility() };
           }, hash.slice(1));
         };
         /* A panel's own anchor (and the holders right under the bar) leaves
@@ -1966,14 +2008,14 @@ test.describe("signals-v3 M3: the ticker page (R16, R19, R23)", () => {
         for (const hash of ["#ticker-holders", "#congress", "#institutional", "#overlap"]) {
           const r = await land(hash);
           expect(r.shown, `${hash} shows`).toBe(true);
-          if (hash === "#overlap") expect(r.barTop, `${hash}: the bar is stuck at the top`).toBeLessThanOrEqual(1);
+          if (hash === "#overlap") expect(Math.abs(r.barTop), `${hash}: the bar is stuck at the top (under a sticky masthead, on its bottom edge)`).toBeLessThanOrEqual(1);
           expect(r.top, `${hash} sits below the bar (top ${r.top} ≥ bar bottom ${r.barBottom})`).toBeGreaterThanOrEqual(r.barBottom - 1);
           await page.evaluate(() => { location.hash = ""; window.scrollTo(0, 0); });
         }
         // control: without the scroll margin the same anchor lands under the stuck bar
         await page.addStyleTag({ content: ".tk-panel, .tk-panel [id] { scroll-margin-top: 0 !important; }" });
         const under = await land("#overlap");
-        expect(under.barTop).toBeLessThanOrEqual(1);
+        expect(Math.abs(under.barTop)).toBeLessThanOrEqual(1);
         expect(under.top, "control: with no scroll margin the anchor is under the bar").toBeLessThan(under.barBottom - 1);
       } finally {
         await ctx.close();

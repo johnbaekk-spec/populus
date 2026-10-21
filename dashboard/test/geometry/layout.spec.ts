@@ -74,6 +74,14 @@ for (const width of WIDTHS) {
          copy — is unchanged; its home moved (SIGNALS-CLARITY-DECISIONS.md). */
       const watermark = /build \d{8}\.\d+ · code \S{7}(?!\S)/g;
       await page.goto("/methodology/");
+      /* launch M7b (R34, LD30): at ≤720px every Methodology section is a
+         closed fold; the watermark is in "Publication & verification", one tap
+         away — the reader opens it, then it is printed exactly once */
+      const fold = page.locator("#publication details[data-metho-fold]");
+      if (!(await fold.evaluate((d) => (d as HTMLDetailsElement).open))) {
+        expect(width, "the Methodology folds close only at the phone fold").toBeLessThanOrEqual(720);
+        await page.locator("#publication details[data-metho-fold] > summary").click();
+      }
       const body = (await page.locator("body").innerText()).replace(/\s+/g, " ");
       const stamps = body.match(watermark) ?? [];
       expect(stamps.length, `/methodology prints the watermark ${stamps.length} times, expected 1`).toBe(1);
@@ -309,6 +317,36 @@ for (const width of WIDTHS) {
       expect(await scroller.count(), "the filer page renders a scroll container").toBeGreaterThan(0);
       await page.addStyleTag({ content: FORCE_TABLE_OVERFLOW });
       await scroller.scrollIntoViewIfNeeded();
+
+      if (width <= 720) {
+        /* launch M1b (D4, LD5 reversal record): at the ≤720px fold a table no
+           longer scrolls inside its container — it folds into row cards — so
+           the property R6 protects, "no column is off-screen without a cue",
+           holds by construction: nothing is off-screen. Asserted, not assumed:
+           the table is a card, neither its container nor the page scrolls
+           sideways even with the overflow forced, and the identity cell is on
+           screen; the control re-plants the pre-D4 scrolling table and must be
+           caught by the same reading. */
+        const read = () => scroller.evaluate((el) => {
+          const t = el.querySelector("table")!;
+          const id = el.querySelector(".design-holding-row .c-pos")!.getBoundingClientRect();
+          return {
+            card: t.matches('[data-card]:not([data-card="feed"])') && getComputedStyle(t).display !== "table",
+            sw: el.scrollWidth, cw: el.clientWidth,
+            page: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+            idOn: id.left >= -0.5 && id.right <= document.documentElement.clientWidth + 0.5,
+          };
+        });
+        const folded = await read();
+        expect(folded.card, `at ${width}px the holdings table is a row card (D4)`).toBe(true);
+        expect(folded.sw, `at ${width}px the card table's container scrolls sideways (${folded.sw}/${folded.cw})`).toBeLessThanOrEqual(folded.cw + 1);
+        expect(folded.page, `at ${width}px the page scrolls sideways`).toBeLessThanOrEqual(0);
+        expect(folded.idOn, `at ${width}px the issuer identity cell is off screen`).toBe(true);
+        await page.addStyleTag({ content: "[data-holdings-surface] .table-scroll{overflow-x:auto !important} [data-holdings-surface] .table-scroll > table{display:table !important;min-width:900px !important}" });
+        const planted = await read();
+        expect(planted.sw > planted.cw + 1, "control: the pre-D4 scrolling table is caught by the same reading").toBe(true);
+        return;
+      }
 
       const box = (await scroller.boundingBox())!;
       const state = await scroller.evaluate((el) => {

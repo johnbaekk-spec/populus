@@ -134,8 +134,11 @@ for (const [file, route] of references) {
         await expect(page.locator('p.inst-moved a[href="/signals/#institutional"]')).toBeVisible();
       }
       if (route.includes('/members/')) {
-        // R16: the empty annual/overlap frames are one planned line.
-        for (const title of ['Disclosed flow by quarter', 'Net disclosed flow by ticker', 'Trading profile', 'Filing history']) {
+        /* R16: the empty annual/overlap frames are one planned line. launch
+           M4b (R23, LD24): the active layout names its sections Quarterly flow
+           and Trades (main), Top tickers and Profile (side), then the filing
+           history — the same four facts, retitled with the approved board */
+        for (const title of ['Quarterly flow', 'Trades', 'Top tickers', 'Profile', 'Filing history']) {
           await expect(page.getByRole('heading', {name:title, exact:true})).toBeVisible();
         }
         /* T2.10 (:52), R12: the transactions head follows the table's column
@@ -239,7 +242,16 @@ for (const [file, route] of references) {
             i, height: Math.round(el.getBoundingClientRect().height * 10) / 10, chips: el.querySelectorAll('.cell-range .flag').length,
           })));
           expect(rows.filter(r => Math.abs(r.height - 30) > 1), 'every feed row is 30±1px').toEqual([]);
-          expect(rows.some(r => r.chips >= 1), 'the page carries flagged rows, so the pin measures chip rows too').toBe(true);
+          /* launch M3a (R20): the default "With ticker" page may carry no flag
+             (20261019.2: none), so the chip rows are pinned on the "All rows"
+             page, whose rows a flag marks most ("no ticker") */
+          await page.locator('#feed-section button[data-group="view"][data-value="all"]').click();
+          await expect(page.locator('.reference-feed .reference-row .cell-range .flag').first()).toBeVisible();
+          const allRows = await page.locator('.reference-feed .reference-row').evaluateAll(els => els.map((el, i) => ({
+            i, height: Math.round(el.getBoundingClientRect().height * 10) / 10, chips: el.querySelectorAll('.cell-range .flag').length,
+          })));
+          expect(allRows.filter(r => Math.abs(r.height - 30) > 1), 'every All rows feed row, the chip rows included, is 30±1px').toEqual([]);
+          expect(allRows.some(r => r.chips >= 1), 'the page carries flagged rows, so the pin measures chip rows too').toBe(true);
           const bars = await page.locator('.reference-feed .band-fill').evaluateAll(els => els.map(el => ({height:el.getBoundingClientRect().height,width:el.getBoundingClientRect().width})));
           expect(bars.every(bar => bar.height >= 3 && bar.width > 0), 'interval fills must actually paint inside their tracks').toBe(true);
           await expect(page.locator('#momentum-section thead th')).toHaveCount(6);
@@ -630,8 +642,11 @@ test('Signals composition at 1440 (signals-v3 M2, LD7): head → lead cards → 
   // the moved sections are on Methodology, the rule book still expanded with its seven rules
   expect((await page.goto('/methodology/'))?.status()).toBe(200);
   for (const id of ['signal-rules', 'signal-lag', 'signals-ranking', 'committee-direct']) await expect(page.locator(`#${id}`)).toBeVisible();
-  const rb = await page.locator('#signal-rules').evaluate((s) => ({ details: !!s.closest('details'), multiline: s.querySelector('table')!.hasAttribute('data-multiline'), rows: s.querySelectorAll('tbody tr').length }));
-  expect(rb).toEqual({ details: false, multiline: true, rows: 7 });
+  /* launch M7b (R34, LD30): every Methodology section ships <details open>
+     (closed by script at ≤720px only), so the rule book sits in an OPEN fold
+     at 1440 — expanded, as before, and still never a closed disclosure */
+  const rb = await page.locator('#signal-rules').evaluate((s) => { const d = s.closest('details'); return { details: !!d, open: !d || d.open, fold: !!d?.hasAttribute('data-metho-fold'), multiline: s.querySelector('table')!.hasAttribute('data-multiline'), rows: s.querySelectorAll('tbody tr').length }; });
+  expect(rb).toEqual({ details: true, open: true, fold: true, multiline: true, rows: 7 });
 });
 
 /* signals-v3 M2 (R11, LD6): the ranking control works with JavaScript OFF —
@@ -1083,6 +1098,9 @@ test('compact feed paging and row flags remain usable', async ({page}) => {
   await page.locator('#pager-newer').click();
   await expect(page.locator('#filter-count-line')).toContainText('1–20');
   await expect(page.locator('#filter-count-line')).toContainText('without a ticker');
+  /* launch M3a (R20): the default "With ticker" page may carry no flag
+     (20261019.2: none); the "All rows" page carries the rows a flag marks most */
+  await page.locator('#feed-section button[data-group="view"][data-value="all"]').click();
   /* DESIGN-POLISH M1 (H-17): a row's flags are VISIBLE chips in the range
      cell, never inside a note panel — and each chip OPENS ITS OWN definition,
      one interaction away, as the row's single flag note did before (M1 review,
@@ -1155,6 +1173,9 @@ for (const width of [375, 1440]) {
     expect(members.tips, 'the three method tips are on screen').toEqual([true, true, true]);
     // the readout follows a tap on the plot (one control, LD13)
     const plot = page.locator('#monthly-flow-section .mf-variant:not([hidden]) .mf-measure[data-flow-measure="members"] .mf-plot');
+    /* launch M3b (R21): the panel closes the page, below the fold — a pointer
+       reaches the plot once it is scrolled to (a raw click off screen lands nowhere) */
+    await plot.scrollIntoViewIfNeeded();
     const box = (await plot.boundingBox())!;
     await page.mouse.click(box.x + 4, box.y + box.height / 2);
     await expect(page.locator('#monthly-flow-section .mf-variant:not([hidden]) .mf-measure[data-flow-measure="members"] .mf-readout')).not.toHaveText(members.readout);

@@ -425,18 +425,21 @@ test.describe("ledger probe self-tests (synthetic fixtures)", () => {
     expect(has(await probe(page, "g4"), (f) => (f.el ?? "").includes("#tinyd"))).toBe(true);
   });
 
-  test("G5 fails when fewer than 14 --fs-* tokens resolve, and when a page renders more than 14 sizes", async ({ page }) => {
+  /* launch M1b (LD12): fifteen tokens, and at most fifteen rendered sizes —
+     the fixture's fifteen less one is fourteen, and sixteen tokened sizes
+     (two extra tokens) exceed the cap */
+  test("G5 fails when fewer than 15 --fs-* tokens resolve, and when a page renders more than 15 sizes", async ({ page }) => {
     await fixture(page, "<p>one line</p>", ":root{--fs-hero:initial}");
     const few = await probe(page, "g5");
-    expect(has(few, (f) => /only 13 --fs-\* tokens/.test(f.detail)), formatResult(few)).toBe(true);
-    const sizes = [9.5, 10, 10.5, 11, 11.5, 12, 12.5, 13, 13.5, 14, 15, 17, 20, 26, 40];
+    expect(has(few, (f) => /only 14 --fs-\* tokens/.test(f.detail)), formatResult(few)).toBe(true);
+    const sizes = [9.5, 10, 10.5, 11, 11.5, 12, 12.5, 13, 13.5, 14, 15, 17, 18, 20, 26, 40];
     await fixture(
       page,
       `<p>${sizes.map((s) => `<span style="font-size:${s}px">x</span>`).join(" ")}</p>`,
-      ":root{--fs-extra:17px}",
+      ":root{--fs-extra:17px;--fs-extra2:18px}",
     );
     const many = await probe(page, "g5");
-    expect(has(many, (f) => /15 distinct rendered sizes/.test(f.detail)), formatResult(many)).toBe(true);
+    expect(has(many, (f) => /16 distinct rendered sizes/.test(f.detail)), formatResult(many)).toBe(true);
     expect(has(many, (f) => /not a type token/.test(f.detail)), "every size there is a token").toBe(false);
   });
 
@@ -1246,10 +1249,33 @@ test.describe("route negative controls (clean target → injected defect → sam
      cut each side on its own: the holders page's last-column square measured
      22.3px of 24). G12 asserts it after the table-side clamp and before the
      midpoint clip (which may rightly shorten a square between close
-     neighbours, H-16). At 390 the congress tables' last-column marks sit
-     within half a square of their table's right side, so their squares move. */
+     neighbours, H-16). At 390 the congress tables' last-column marks sat
+     within half a square of their table's right side, so their squares moved.
+     launch M1b (D4, LD5): at ≤720px no launch table scrolls — each folds into
+     row cards — and above the fold every launch route's tables fit, so no
+     route square reaches a scrolling table's side any more (measured at 768,
+     964 and 1080 under a coarse pointer: 0 shifted). The clamp still runs on
+     the page for any scroller, so the control PLANTS one on /congress/: a
+     scrolling table (no data-card, overflow-x auto) whose last header's
+     trigger sits flush with the table's right side. The page's own script
+     must shift its square inside (G12's corners pass), and the pre-fix
+     shrink re-planted in G12's mirror must be named. */
   test("M2 G12 @390: a square the table-side clamp moves keeps its full --hit-min; re-planting the shrink FAILS", async ({ page }) => {
     await openRoute(page, "/congress/", 390);
+    await page.evaluate(() => {
+      document.querySelector("main")!.insertAdjacentHTML(
+        "afterbegin",
+        '<section class="panel" id="clamp-plant"><div class="table-scroll" style="max-width:300px;overflow-x:auto">' +
+          '<table class="etable" style="min-width:640px"><thead><tr><th class="c-flex">Name</th><th class="c-num">Rows</th>' +
+          '<th class="c-num" style="padding-right:0"><span class="note"><button type="button" class="note-btn note-label" popovertarget="clamp-plant-pop">Net</button>' +
+          '<span class="note-pop" popover id="clamp-plant-pop" role="note">x</span></span></th></tr></thead>' +
+          '<tbody><tr><td class="c-flex">alpha</td><td class="c-num">1</td><td class="c-num">2</td></tr>' +
+          '<tr><td class="c-flex">beta</td><td class="c-num">3</td><td class="c-num">4</td></tr></tbody></table></div></section>',
+      );
+      window.dispatchEvent(new Event("resize"));
+    });
+    await page.waitForTimeout(300);
+    await installProbe(page);
     const ok = await probe(page, "g12");
     expect(ok.failureCount, formatResult(ok)).toBe(0);
     expect(ok.sub?.shifted ?? 0, `a mark at a scrolling table's side is shifted inside it\n${formatResult(ok)}`).toBeGreaterThan(0);

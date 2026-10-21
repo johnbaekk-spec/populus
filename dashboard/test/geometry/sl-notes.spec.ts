@@ -361,14 +361,26 @@ test("SL-R10: with JavaScript ON, the bound stands BEFORE the feed arrives", asy
   await expect(toggle, "after load the control is offered, dataset or not (R36)").toBeVisible();
   const table = page.locator(".design-rankings tbody").first();
   const shownBefore = await table.locator("tr:not([hidden]):not(.unranked-sep)").count();
-  const prefetched = await table.locator("tr[data-compact-hidden]").count();
+  /* launch F2 (LD26): the boards' prefetched rows travel in the page's
+     held-rows island (`script[data-held-for=<tbody id>]`), not as hidden rows;
+     the first press draws them from it, with nothing downloaded */
+  const prefetched = await table.evaluate((tb) => {
+    const dom = tb.querySelectorAll("tr[data-compact-hidden]").length;
+    const island = tb.id ? document.querySelector(`script[data-held-for="${CSS.escape(tb.id)}"]`) : null;
+    const held = island ? ((JSON.parse(island.textContent ?? "{}") as { rows?: unknown[] }).rows ?? []).length : 0;
+    return dom + held;
+  });
+  expect(prefetched, "the page carries the board's prefetched rows (hidden rows or its held-rows island)").toBeGreaterThan(0);
   await toggle.click();
   await expect(table.locator("tr:not([hidden]):not(.unranked-sep)")).toHaveCount(shownBefore + prefetched);
 
-  // The remainder — the route to the rows being held back — is stated too.
-  await expect(
-    page.locator('.compact-bound-extra a[href="/congress/data/"]').first(),
-  ).toBeVisible();
+  /* The remainder is stated too. Copy item congress-20 (launch M3/F2, SRC §5)
+     took the board's "published dataset" link to Methodology, so the board's
+     own statement carries it: after the press the count states the rows now
+     shown OF the whole ranking — what is still held back stays in words. */
+  await expect(stated).toHaveText(new RegExp(`^1–${shownBefore + prefetched} of [\\d,]+ ranked \\S`));
+  const [shownNow, total] = ((await stated.textContent()) ?? "").match(/^1–([\d,]+) of ([\d,]+)/)!.slice(1).map((x) => Number(x.replace(/,/g, "")));
+  expect(total, "the ranking holds rows beyond the ones the page carries").toBeGreaterThan(shownNow!);
 });
 
 test("CODE-REVIEW F8: a header note WRAPS and stays inside its panel at every width", async ({ page }) => {
@@ -382,6 +394,10 @@ test("CODE-REVIEW F8: a header note WRAPS and stays inside its panel at every wi
     const btn = page.locator(".design-rankings th .note-btn").first();
     if ((await btn.count()) === 0) continue;
     const id = await btn.getAttribute("popovertarget");
+    /* launch M1b (D4, LD5): at ≤720px the board is a row card and its head is
+       folded — reachable and announced, unfolded while it holds focus — so
+       the reader reaches the header note by focus first */
+    if (await btn.evaluate((b) => getComputedStyle(b.closest("table")!).display !== "table")) await btn.focus();
     await btn.click();
     const pop = page.locator(`#${id}`);
     await expect(pop).toBeVisible();
