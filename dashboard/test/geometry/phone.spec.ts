@@ -342,10 +342,7 @@ test.describe("phone predicate controls", () => {
     expect(a.smallTaps.some((t) => /30x30/.test(t))).toBe(true);
   });
   test("a planted stretched link above a receipt fails R7's cover check", async ({ browser }) => {
-    const html = COMPLIANT.replace('class="main"', 'class="main" style="position:static"').replace(
-      "</tr></tbody>",
-      "</tr></tbody>",
-    ).replace('<tr role="row" style="display:block;position:relative">', '<tr role="row" style="display:block;position:relative"><style>.main::after{content:"";position:absolute;inset:0;z-index:5}</style>');
+    const html = COMPLIANT.replace('class="main"', 'class="main" style="position:static"').replace('<tr role="row" style="display:block;position:relative">', '<tr role="row" style="display:block;position:relative"><style>.main::after{content:"";position:absolute;inset:0;z-index:5}</style>');
     const a = await controlAudit(browser, html);
     expect(a.coveredTaps.some((t) => /cell-src/.test(t))).toBe(true);
   });

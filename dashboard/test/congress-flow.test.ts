@@ -456,7 +456,7 @@ test("T15/R16 → launch M3b: the panel closes /congress, after the feed, render
   assert.ok(flowAt > feedEnd && feedEnd > 0, "after the feed section");
   assert.ok(flowAt > page.indexOf('id="congress-leaders-band"'), "after the boards");
   assert.equal((page.match(/set:html=\{monthlyFlowHtml\}/g) ?? []).length, 1, "rendered once");
-  assert.ok(page.indexOf("</main>") > flowAt && !/<(?:section|div)\b/.test(page.slice(flowAt, page.indexOf("</main>")).replace(/<script[\s\S]*?\/>/g, "").replace("<Fragment set:html={monthlyFlowHtml} />", "")), "nothing renders after it");
+  assert.ok(page.indexOf("</main>") > flowAt && !/<(?:section|div)\b/.test(page.slice(flowAt, page.indexOf("</main>")).replace(/<script[\s\S]*?\/>/g, " ").replace("<Fragment set:html={monthlyFlowHtml} />", "")), "nothing renders after it");
 });
 
 /* ---------- launch M3b: the Members chart, its axis, the readouts ---------- */
