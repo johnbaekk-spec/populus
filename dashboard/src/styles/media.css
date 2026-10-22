@@ -112,7 +112,7 @@
   }
   .site-nav.open > a { grid-column: 1; }
   .site-nav.open .nav-count {
-    display: block;
+    display: block !important; /* over the global [hidden] rule: the count is hidden until the drawer opens */
     grid-column: 2;
     font: 500 var(--fs-meta) var(--mono);
     color: var(--ink-meta);
@@ -155,7 +155,7 @@
   }
   .site-search.open input { flex: 1 1 0; min-height: var(--hit-min); }
   .site-search.open .search-sheet-hint {
-    display: block;
+    display: block !important; /* over the global [hidden] rule, as the drawer counts */
     flex-basis: 100%;
     font: 400 var(--fs-note) var(--mono);
     color: var(--ink3);

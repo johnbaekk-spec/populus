@@ -87,8 +87,8 @@ test("the PLANNED reading catches the overlap band's badge branch and passes the
     ticker: "ZZZZ", txns: [], generatedAtDate: "2026-06-01", inst: { present: false, reason: "module-absent" },
     typingByCik: new Map(), period: null, ctx: {}, filerHref: (c) => `/f/${c}`,
   });
-  // negative control: the band in its badge mode (the holders page's default)
-  assert.deepEqual(plannedProblems(overlapBandHtml(band, {}, (c) => `/f/${c}`)), ["carries PLANNED", "carries badge-planned", "carries overlap-planned"]);
+  // the holders page's band (the former badge default) carries none either
+  assert.deepEqual(plannedProblems(overlapBandHtml(band, {}, (c) => `/f/${c}`)), []);
   // a synthetic page with the badge outside <main> is caught too
   assert.ok(plannedProblems(`<header><span class="badge-planned">PLANNED</span></header><main></main>`).length > 0, "control: outside main");
   // the ticker route's rendering passes, and still states the absence

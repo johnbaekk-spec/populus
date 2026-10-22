@@ -45,7 +45,7 @@ function domOf(html: string): MiniElement {
 
 /* ---------------------------------------------------------------- T3.2: content */
 
-test("T3.2 (LD15): seven playbooks — ids, sources, statuses and grades as LD15 lists them; every evidence entry complete with an https url", () => {
+test("T3.2 (LD15): six playbooks (launch polish: the Form 4 one, which had no data, is gone) — ids, sources, statuses and grades as LD15 lists them; every evidence entry complete with an https url", () => {
   assert.deepEqual(
     PLAYBOOKS.map((p) => [p.id, p.short, p.name, p.source, p.status, p.grade]),
     [
@@ -55,11 +55,10 @@ test("T3.2 (LD15): seven playbooks — ids, sources, statuses and grades as LD15
       ["best-ideas", "BEST IDEA", "Best ideas", "Institutional", "live", "supportive"],
       ["consensus", "CONSENSUS", "Notable-manager consensus", "Institutional", "live", "weak"],
       ["overlap", "OVERLAP", "Congress and managers on one name", "Overlap", "descriptive", "no studies"],
-      ["insider-opp", "INSIDER", "Opportunistic insider purchases", "Form 4", "needs-data", "needs data"],
     ],
   );
   assert.deepEqual([...CONGRESS_PLAYBOOKS], ["opp-buy", "leader", "cmte"]);
-  assert.deepEqual(PLAYBOOKS.map((p) => p.evidence.length), [5, 1, 2, 1, 2, 0, 1]);
+  assert.deepEqual(PLAYBOOKS.map((p) => p.evidence.length), [5, 1, 2, 1, 2, 0]);
   for (const p of PLAYBOOKS) {
     for (const e of p.evidence) {
       assert.ok(["supports", "against", "indirect"].includes(e.dir));
@@ -67,7 +66,7 @@ test("T3.2 (LD15): seven playbooks — ids, sources, statuses and grades as LD15
       assert.match(e.url, /^https:\/\/[^\s]+$/, `${p.id} ${e.cite}: url`);
     }
   }
-  assert.deepEqual(PLAYBOOKS.find((p) => p.id === "insider-opp")!.needs?.length, 3);
+  assert.ok(PLAYBOOKS.every((p) => p.status === "live" || p.status === "descriptive"), "no playbook waits on data the site does not have");
 });
 
 test("T3.2 (LD15) + launch M5 (R28): the texts are pinned word for word — the launch mock's cut of the v4 texts, the † edits and the build's two kept", () => {
@@ -90,7 +89,6 @@ test("T3.2 (LD15) + launch M5 (R28): the texts are pinned word for word — the 
   assert.equal(by["cmte"]!.verdict, "Thin: no study we found tests a jurisdiction match like this one.");
   assert.equal(by["consensus"]!.verdict, "Weak: no study we found shows such names outperform.");
   assert.equal(by["overlap"]!.verdict, "Descriptive only: the site uses no prices to test it.");
-  assert.equal(by["insider-opp"]!.verdict, "The strongest evidence of the set, but there is no Form 4 data here yet.");
   // the research's qualifiers survive the cut
   assert.match(by["opp-buy"]!.verdict, /no average edge/);
   assert.match(by["opp-buy"]!.evidence[0]!.finding, /abnormal returns/);
@@ -98,7 +96,6 @@ test("T3.2 (LD15) + launch M5 (R28): the texts are pinned word for word — the 
   // † edits
   assert.equal(by["best-ideas"]!.pattern, "A manager’s biggest tilt from market weight.");
   assert.doesNotMatch(PLAYBOOKS.map((p) => `${p.pattern} ${p.verdict} ${p.trigger}`).join(" "), /highest-conviction/);
-  assert.equal(by["insider-opp"]!.name, "Opportunistic insider purchases");
   assert.match(playbookTextHtml(by["best-ideas"]!.trigger), /\(<span class="ref-label">Conviction leaders<\/span>\)\.$/, "the section is named through the markup-bound label");
   assert.match(playbookTextHtml(by["best-ideas"]!.verdict), /; <span class="ref-label">Conviction leaders<\/span> ranks by raw share of book\.$/);
   // the build's two: the leadership roster is no longer a draft, and the Overlap rule is not one
@@ -109,7 +106,7 @@ test("T3.2 (LD15) + launch M5 (R28): the texts are pinned word for word — the 
 });
 
 test("T3.2 (R25): every playbook text, rendered, passes BANNED_WORDING, the raw-bytes banned scan and the visible-copy terms; a planted word is caught", () => {
-  const all = PLAYBOOKS.flatMap((p) => [p.name, p.pattern, p.trigger, p.horizon, p.verdict, ...(p.needs ?? []), ...p.evidence.flatMap((e) => [e.cite, e.venue, e.sample, e.finding])])
+  const all = PLAYBOOKS.flatMap((p) => [p.name, p.pattern, p.trigger, p.horizon, p.verdict, ...p.evidence.flatMap((e) => [e.cite, e.venue, e.sample, e.finding])])
     .map((t) => `<p>${playbookTextHtml(t)}</p>`)
     .join("");
   assert.deepEqual(scanBannedWording(all), []);
@@ -389,7 +386,7 @@ function lineProblems(li: MiniElement): string[] {
   return out;
 }
 
-test("T3.4 (R19): the Playbooks tab — the visible 'Not advice' line, seven articles with every citation and link, the list as anchors, the statuses", () => {
+test("T3.4 (R19): the Playbooks tab — the visible 'Not advice' line, six articles with every citation and link, the list as anchors, the statuses", () => {
   const root = domOf(signalsPlaybooksHtml(model(), CTX));
   const disc = root.querySelector(".pb-disc")!;
   assert.match(text(disc).replace(/How to read a playbook.*$/, ""), /^Published research on the patterns these rows show\. Not advice\./);
@@ -415,7 +412,7 @@ test("T3.4 (R19): the Playbooks tab — the visible 'Not advice' line, seven art
     if (p.evidence.length === 0) assert.match(text(a), /No published study found\./);
     assert.ok(a.querySelectorAll(".pb-meta .note-btn").length === 2, `${p.id}: the rule and horizon tips`);
   }
-  // statuses: rows, panels, unavailable, descriptive, needs data — the
+  // statuses: rows, panels, unavailable, descriptive — the
   // list carries each count; an article states its status word (R28: the
   // count is said once, in the list and the article's "Triggers now")
   const st = (id: string) => text(root.querySelector(`a.pbi[data-pb-pick="${id}"] .pb-st`));
@@ -423,12 +420,11 @@ test("T3.4 (R19): the Playbooks tab — the visible 'Not advice' line, seven art
   assert.equal(st("best-ideas"), "Live · 3 managers qualify");
   assert.equal(st("consensus"), "Live · 7 names qualify");
   assert.equal(st("overlap"), "Descriptive");
-  assert.equal(st("insider-opp"), "Needs Form 4");
   const ast = (id: string) => text(root.querySelector(`#pb-${id} .pb-st`));
-  assert.deepEqual(PLAYBOOKS.map((p) => ast(p.id)), ["Live", "Live", "Live", "Live", "Live", "Descriptive", "Needs data"]);
-  assert.deepEqual(root.querySelectorAll("#pb-insider-opp .pb-needs li").length, 3);
+  assert.deepEqual(PLAYBOOKS.map((p) => ast(p.id)), ["Live", "Live", "Live", "Live", "Live", "Descriptive"]);
+  assert.equal(root.querySelectorAll(".pb-needs").length, 0, "nothing on the tab says what it still needs");
   // copy item signals-16
-  assert.match(text(root.querySelector(".pb-count")), /^7 playbooks · 5 live · \d+ Congress rows trigger one$/);
+  assert.match(text(root.querySelector(".pb-count")), /^6 playbooks · 5 live · \d+ Congress rows trigger one$/);
   // the committee playbook unavailable this build: the list and the article say so
   const off = domOf(signalsPlaybooksHtml(model({ triggers: { ...model().triggers, cmteAvailable: false }, cmteUnavailableReason: "inputs-not-in-build" }), CTX));
   assert.equal(text(off.querySelector('a.pbi[data-pb-pick="cmte"] .pb-st')), "Live · unavailable this build");

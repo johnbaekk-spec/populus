@@ -8,11 +8,10 @@
    (trim · exit) the ticker in the CLOSED quarter, read from the class-grain
    `agg_ticker_holders` (R3 tickers). Dollar figures on that side are the
    managers' REPORTED value now — a Δ$ per holder is not published at that
-   grain, so none is invented. When R3 has not mapped the ticker the 13F half
-   is a `Planned` badge and the Congress half still ships — except on
-   /tickers/{T}/, which states the absence and its reason in plain words
-   (`absence: "statement"`, signals-v3 M3 success criterion 4: no PLANNED
-   markup on a ticker page).
+   grain, so none is invented. When the 13F half cannot be read (R3 has not
+   mapped the ticker, or the module is absent) it states the absence and its
+   reason in plain words and the Congress half still ships (signals-v3 M3
+   success criterion 4; launch polish: no PLANNED badge on any page).
    Below both: a merged timeline, 20 rows, newest first. */
 
 import { esc, fmtInt, fmtUsd, kindWord, memberHrefFor, note, sideLabel, amountText, utcDayNumber, thHtml, type RenderCtx, type TxnRow } from "./format.ts";
@@ -85,11 +84,8 @@ export interface OverlapBand {
 
 export type OverlapInstAbsence = "module-absent" | "artifact-missing" | "unmapped" | "no-closed-quarter";
 
-/** How the renderer shows an unreadable 13F half: the `PLANNED` badge (the
-    holders page), or a plain-language statement of the absence and its
-    reason (the ticker page, which renders no PLANNED markup). */
+/** Render options for the band. */
 export interface OverlapRenderOpts {
-  absence?: "badge" | "statement";
   /** Print the §13107(c) sentence under the Congress half. Only a page whose
       footer carries the 13F notice needs it (the holders page); a page with the
       standard footer already states it once, in the footer. */
@@ -276,11 +272,8 @@ export function overlapBandHtml(b: OverlapBand, ctx: RenderCtx, filerHref: (cik:
          means go to a tip; the issuer as filed stays — it names which filed
          13F issuer the reviewed mapping reads for the ticker */
       `</dl><p class="section-note">by shares · $ = value held${note("NEW + ADD vs TRIM + EXIT, by share count. $ = reported value now, not the change.", { scope: "overlap" }, "inst", { trigger: "mark", name: "About the managers' side" })} · <span class="filed-name">${esc(b.inst.issuer)}</span></p></div>`
-    : opts.absence === "statement"
-      ? `<div class="overlap-half overlap-inst" data-absent="${esc(b.instAbsence ?? "unmapped")}"><h3 class="section-h">Notable managers</h3>` +
-        `<p class="section-note">${esc(overlapAbsenceText(b.ticker, b.instAbsence ?? "unmapped"))}${(b.instAbsence ?? "unmapped") === "unmapped" ? ` <a href="/methodology/#ticker-mapping">how tickers are mapped ↗</a>` : ""}</p></div>`
-      : `<div class="overlap-half overlap-inst overlap-planned"><h3 class="section-h">Notable managers <span class="badge-planned">PLANNED</span></h3>` +
-        `<p class="section-note">Ticker not yet mapped — the 13F side needs a reviewed name-and-class mapping row for ${esc(b.ticker)}. <a href="/methodology/#ticker-mapping">how tickers are mapped ↗</a></p></div>`;
+    : `<div class="overlap-half overlap-inst" data-absent="${esc(b.instAbsence ?? "unmapped")}"><h3 class="section-h">Notable managers</h3>` +
+      `<p class="section-note">${esc(overlapAbsenceText(b.ticker, b.instAbsence ?? "unmapped"))}${(b.instAbsence ?? "unmapped") === "unmapped" ? ` <a href="/methodology/#ticker-mapping">how tickers are mapped ↗</a>` : ""}</p></div>`;
   /* The row edge (tr[data-edge], DESIGN-POLISH M1): a congressional row by its
      side, a 13F row by its change kind. */
   const edgeOf = (r: OverlapTimelineRow): string | null =>
@@ -315,8 +308,7 @@ export function overlapBandHtml(b: OverlapBand, ctx: RenderCtx, filerHref: (cik:
 
 /** The band as the ticker page renders it (signals-v3 M3, success criterion
     4): an unreadable 13F half is a plain statement of the absence and its
-    reason, never the `PLANNED` badge. The holders page keeps the badge
-    (`overlapBandHtml` default). */
+    reason. */
 export function tickerOverlapHtml(b: OverlapBand, ctx: RenderCtx, filerHref: (cik: string) => string): string {
-  return overlapBandHtml(b, ctx, filerHref, { absence: "statement" });
+  return overlapBandHtml(b, ctx, filerHref);
 }

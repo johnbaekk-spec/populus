@@ -94,6 +94,7 @@ import { institutionalLedgerHtml, signalsInstitutionalHtml, type SignalsInstitut
 import { overlapCarried, overlapCounts, overlapLedgerHtml, overlapRowId, signalsOverlapHtml, type Overlap } from "./signals-overlap.ts";
 import { playbookChipsHtml, playbookFilterHtml, playbookRowSectionHtml, playbooksLedgerHtml, signalsPlaybooksHtml, type PlaybooksModel } from "./signals-playbooks.ts";
 import { PLAYBOOKS, type PlaybookHit } from "../playbooks.ts";
+import { SIGNAL_SECTIONS } from "../signal-sections.ts";
 import { BROAD_ACCOUNT_NAMES, CONGRESS_DETAIL_LINES, QUARTER_ENDS_TEXT } from "../congress-quarter.ts";
 import { NAMED_MOVES_MIN } from "../notable-moves.ts";
 
@@ -1585,16 +1586,20 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
   /* LD8: the tabs. Every panel renders and shows without script; `tabs.ts`
      selects one. The scroll region is the ROLE-LESS wrapper, so the tablist
      keeps its role and name at every width. */
-  const tab = (id: string, name: string, n: string | null, isNew = false): string =>
-    `<a class="tk-tab sig-tab" role="tab" id="tab-${id}" href="#${id}" aria-controls="${id}">${esc(name)}${n === null ? "" : ` <span class="tk-tab-n">${esc(n)}</span>`}${isNew ? ` <span class="tab-new">New</span>` : ""}</a>`;
+  /* each tab names what it holds on a second line, so a first-time reader
+     sees four sections, not one page with a strip of links */
+  const tab = (id: string, name: string, n: string | null, hint: string): string =>
+    `<a class="tk-tab sig-tab" role="tab" id="tab-${id}" href="#${id}" aria-controls="${id}">` +
+    `<span class="sig-tab-name">${esc(name)}${n === null ? "" : ` <span class="tk-tab-n">${esc(n)}</span>`}</span> ` +
+    `<span class="sig-tab-hint">${esc(hint)}</span></a>`;
   const tabs =
     `<div class="sig-tabs-scroll" data-scroll-region="Signal tabs · scroll sideways">` +
     `<div class="tk-tabs sig-tabs" role="tablist" aria-label="Signal sources">` +
-    tab("congress", "Congress", fmtInt(active.length)) +
-    tab("institutional", "Institutional", inst && inst.present && inst.period !== null ? fmtInt(inst.moves.length) : null) +
+    tab("congress", "Congress", fmtInt(active.length), SIGNAL_SECTIONS[0].hint) +
+    tab("institutional", "Institutional", inst && inst.present && inst.period !== null ? fmtInt(inst.moves.length) : null, SIGNAL_SECTIONS[1].hint) +
     /* M3: Overlap counts its same-side names (broad accounts not counted), Playbooks its seven */
-    tab("overlap", "Overlap", overlap && overlap.period !== null ? fmtInt(overlapCounts(overlap.core).same) : null, true) +
-    tab("playbooks", "Playbooks", fmtInt(PLAYBOOKS.length), true) +
+    tab("overlap", "Overlap", overlap && overlap.period !== null ? fmtInt(overlapCounts(overlap.core).same) : null, SIGNAL_SECTIONS[2].hint) +
+    tab("playbooks", "Playbooks", fmtInt(PLAYBOOKS.length), SIGNAL_SECTIONS[3].hint) +
     `</div></div>`;
 
   return (

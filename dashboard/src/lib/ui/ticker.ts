@@ -541,7 +541,7 @@ function timelineHtml(t: TickerEntity, stamps: BuildStamps, pinned: ReadonlySet<
       ? `<p class="section-note">No dated ${esc(t.ticker)} rows fall inside the trailing 24 months by trade date.</p>`
       : `<div class="tl-plot" aria-hidden="true">${grid}${marks}</div>` +
         `<div class="tl-axis" aria-hidden="true">${ticks.map((x) => `<span>${esc(x)}</span>`).join("")}</div>` +
-        `<p class="visually-hidden">${fmtInt(rows.length)} dated disclosures in the window, placed by trade date; magnitudes are the disclosed lower bounds, against gridlines at ${TIMELINE_GRIDLINES.map(([, l]) => l).join(", ")}` +
+        `<p class="visually-hidden">${fmtInt(rows.length)} dated ${rows.length === 1 ? "disclosure" : "disclosures"} in the window, placed by trade date; magnitudes are the disclosed lower bounds, against gridlines at ${TIMELINE_GRIDLINES.map(([, l]) => l).join(", ")}` +
         `${ringed > 0 ? `; ${fmtInt(ringed)} ringed ${ringed === 1 ? "mark is a row" : "marks are rows"} on Signals, pinned in the table below` : ""}` +
         `${undated > 0 ? `; ${fmtInt(undated)} ${undated === 1 ? "row discloses" : "rows disclose"} no trade date and cannot be placed` : ""}.</p>`) +
     `</section>`
