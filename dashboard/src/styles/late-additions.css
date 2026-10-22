@@ -1533,6 +1533,10 @@ details.si-tier > summary > .si-tier-h { display: inline; }
      its cell, and a card's stretch covers the row's bottom rule too (the
      row's 44px includes that 1px border; the stretch is its padding box) */
   .reference-feed .reference-row > .cell:has(a[data-row-link]) { position: static; }
+  /* the asset line's qualifiers (owner, partial) and a Senate exchange's
+     given-up leg sit ABOVE that stretch, as the row's targets do (gate 2,
+     67b9a8d: the row's link covered them, T3.3 and T7b on /congress/ at 390) */
+  .reference-feed .reference-row :is(.owner-note, .exchanged-leg) { position: relative; z-index: 2; }
   table[data-card] > tbody > tr a[data-row-link]:not(:is(.cell-src, .c-src) a)::after { bottom: -1px; }
   /* R4: a committee name wraps instead of widening a phone page */
   .member-cmte { white-space: normal; }
