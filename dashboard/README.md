@@ -186,6 +186,113 @@ the full record is `docs/frontend/signals-v4.md`.
 
 Design-side reconciliation is still owed for each.
 
+## Deviation register — the launch redesign mock
+
+The approved launch mock (Design canvas version 9,
+https://claude.ai/artifact/9xxeAvHRP53NHgRZ1k4jVU, approved 2026-10-20) is
+authoritative on structure, behaviour and copy intent, never on numbers. Each
+departure is recorded here with its reason. DV1–DV20 are the plan's (LD35);
+DV21 onward were made during the build. The full record is
+`docs/frontend/launch-redesign.md`.
+
+**Home**
+
+- **DV1.** The committee card keeps `COMMITTEE_CAVEAT`; the mock dropped it.
+- **DV2.** Notable managers keep Filed (Manager, Ticker, Change, Δ $, Filed);
+  the header word is Change, never Move.
+- **DV4.** The trust strip says only what is true: members and committees come
+  from CC0 congress-legislators and the jurisdiction map is the site's own (in
+  a tip), and the site is "rebuilt on each publish", not every day.
+- **DV5.** No "Today" and no live dot on the ledger.
+- **DV7.** Counts and labels say "13F filers", never "funds".
+- **DV13.** No "updated daily" kicker (design-principles §8: no cadence claim).
+- **DV14.** The hero search is a launcher into the masthead combobox
+  (`#site-search`), not a second search field.
+- **DV24.** The Try chips come from the build: the search index's two most
+  active tickers and two most active members, and the notable 13F filer
+  reporting the largest value. The mock's five chips are literals (Pelosi,
+  NVDA, Berkshire Hathaway, Tuberville, MSFT), which `MOCKUP_LITERALS` keeps
+  out.
+
+**Every page**
+
+- **DV3.** The footer keeps three links (Methodology, Sources & licenses,
+  Legal); the mock's fourth, Privacy, is not added (LD9).
+- **DV15.** No as-of stamp in the footer; the build date shows on the home
+  ledger and on Methodology.
+- **DV20.** The 13F footer sentence stays verbatim (D7): global-03 and the
+  footer half of holders-02 are not applied.
+- **DV12.** The phone drawer has no Home entry (the brand links home) and no
+  Sign in or Sign up (D2).
+- **DV21.** The drawer's section counts ship `hidden` and show only when the
+  drawer opens, so a closed drawer adds no words to any page's served HTML
+  (the SC5 ruler) and the nav's three-link pin stands.
+- **DV9.** No line clamp on owner, partial or flag text; the mock's `.csub`
+  clamp could hide them.
+- **DV23.** Tables stay `<table>` elements and fold into row cards at ≤720px
+  (D4); the mock draws div grids with ARIA roles. One renderer serves desktop
+  and phone, the roster and post-build parsers keep reading tables, and
+  explicit roles (`withTableRoles` over the page body, `rolesFor` on client
+  repaints) keep the table semantics WebKit drops under the card layout (R40,
+  LD37).
+
+**Congress**
+
+- **DV6.** Monthly flow says "with a purchase / with a sale", not the mock's
+  banned "buying / selling".
+- **DV17.** Party and the EXCHANGE side stay under More filters; the mock
+  dropped them.
+- **DV18.** No "All tickers →" link to the stub; the boards expand in place
+  ("Show 50 more").
+- **DV22.** The pager's count is visually hidden at every width (congress-23).
+  The count line above the feed states the same range with the hidden rows and
+  "filtered on this device", so the mock's pager text says it twice; with the
+  pager's count visible again the fixture page reads over its 240-word gate
+  (`launch-congress-budget.test.ts`).
+
+**Member pages**
+
+- **DV10.** Trades page 25 rows (`MEMBER_PAGE_SIZE`) where the mock's desktop
+  board shows 20; the feed's transport page size is unchanged.
+- **DV19.** Top tickers adds "Show all N tickers"; the mock showed 8 rows, so
+  the rest were unreachable.
+- **DV25.** Top tickers' Net keeps the interval grammar (≥ when one-signed, ≈
+  when it overlaps the row above), lists tickers with a wholly undisclosed side
+  last behind a separator, never as zero, and announces the bar's ranges.
+- **DV26.** The quarterly readout counts "purchases and sales", not the mock's
+  "trades"; the open quarter reads "so far (inside the 45-day filing window)";
+  exchange and unparsed-side rows are stated as not drawn (review H2: 140 of
+  283 member pages read "26Q4: 0 trades").
+
+**Signals and Methodology**
+
+- **DV11.** Triage row bodies stay server-rendered (D6), so /signals/ stays
+  over 3,000 elements; the overage is in the decision record.
+- **DV16.** Playbooks stay anchors (`a.pbi`), one article shown at a time by
+  script, not a tablist; every article is in the served HTML.
+- **DV8.** Methodology's roster stays a table, folded as cards on phones; the
+  mock's definition list would break the roster parse.
+
+**Copy**
+
+- **DV27.** Of the copy audit's 120 items, 60 are applied, 7 applied by #163,
+  48 adapted and 5 not applied (`test/fixtures/launch-copy-ledger.json`).
+  Adaptations keep what a test pins or a ban forbids: 33 for honesty pins (2
+  of them not applied, signals-05 and signals-08), 2 for banned wording
+  (congress-10 "buying", signals-15 "move" as a verb), 17 superseded by the
+  layout (home-09 and home-10 not applied) and 1 owner decision (global-03,
+  D7). Two cuts were reverted at review to keep a caveat: an opened triage row
+  with a committee overlap keeps "Context, not an allegation." (signals-07),
+  and the lead cards keep "listed-stock … in the window" (signals-04).
+
+**Matches the mock, departs from the live page** (recorded so neither reads as
+a regression): the quick filters (Rows, Side, Chamber) carry no visible label,
+each group keeping its aria-label; Top tickers has the mock's four columns
+(Ticker, the purchases ◂ ▸ sales bar, B·S, Net), so the live page's Issuer and
+Last traded columns are gone.
+
+Design-side reconciliation is still owed for each.
+
 ## Build markers and `/stats.json`
 
 Deploy verification reads two things out of the built site:
