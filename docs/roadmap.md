@@ -383,3 +383,133 @@ validated by a supervised production publish. What remains is the residue.
   process parity; the code is merged and green, so this only re-establishes
   the paper trail.
 - **B8 — a deeper cross-module adversarial sweep of M1.**
+
+## 11. Launch redesign (#166, live 2026-10-22)
+
+Squash-merged as `c02597e` and published as build 20261022.1 (publish run
+39722671491). The record is
+[docs/frontend/launch-redesign.md](frontend/launch-redesign.md); the
+departures from the mock are in the deviation register in
+[dashboard/README.md](../dashboard/README.md). Unless stated otherwise,
+"before" is T0 (code 80694e3, data 20261019.2), "after" is the last gated tree
+on the same data (67b9a8d; geometry re-run on a1e23dd), and "live" is
+20261022.1. B54–B58 are DONE and kept for their measurements; delete each when
+a later change re-measures it.
+
+- **B54 — first-load DOM at 390, JavaScript on — DONE.** Before → after (live):
+  G000583 13,833 → 1,813 (1,813); ticker AAPL, both tabs, 6,464 → 1,248
+  (1,246); `/congress/` 5,341 → 1,648 (1,657); holders AAPL 4,851 → 607 (605);
+  P000197 3,474 → 1,643 (1,643); J000289 481 → 138 (138); filer 1067983
+  2,768 → 2,741; `/institutional/` 1,679 → 1,678; Methodology 747 → 759
+  (752); home 280 → 374 (382); `/signals/` 35,446 → 10,242 (10,422), the one
+  route over 3,000 (B59).
+- **B55 — page bytes and the file count — DONE.**
+  - `/institutional/` HTML 4,166,624 B → 152,259 B (cap 256 KiB). Its inline
+    JSON went from 4,025,382 B to 115 B: the directory moved into
+    `institutional/data/directory/{n}.v1.json` shards, fetched on the first
+    search (live: 0 shards at load, 2 after a search).
+  - `/signals/` HTML 1,856,423 B → 1,347,708 B against its 2 MiB budget.
+    831,820 B of that is four JSON islands: `mv-list` 458,933, `ov-list`
+    278,649, `signal-hits-body` 53,566 and `mv-bank` 40,672.
+  - Elsewhere: G000583 662,533 → 321,349 B; `/congress/` 286,757 → 185,768 B;
+    filer 1067983 321,838 → 339,779 B.
+  - Two pages grew, as TD-L3 declared (B66): ticker AAPL 361,933 → 496,289 B
+    (+134,356) and holders AAPL 186,333 → 353,578 B (+167,245).
+  - The dist went from 17,818 to 17,822 files against the 18,000 cap, so
+    headroom fell from 182 to 178. The directory family is declared at most 8
+    files (the `launch-routes` block).
+- **B56 — the phone rules, 17 views at 360 / 390 / 430 — DONE but for small
+  taps.** Measured with the mock's audit algorithm:
+  - sideways tables 35 / 33 / 30 → 0 / 0 / 0, after and live;
+  - text under 11px: up to 46% of a view → 0% on every view;
+  - small taps 3,367 / 3,366 / 3,366 → 77 / 79 / 72 after, and 74 / 76 / 69
+    live.
+
+  SC2's zero is not met. Live at 390 the real misses are Signals Overlap's 30
+  13F receipt links (`a.mv-src`, 36×18) and 15 links of 67×19 on the Signals
+  Congress tab. The rest are 44 px tall and just short after rounding: five
+  264×44 links on `/congress/`, four on Methodology, and the footer's Legal
+  link, which counts once on every view.
+- **B57 — word gates (SC5, served HTML) — DONE.** Before → after, gate in
+  brackets:
+  - Congress 632 → 226 [240];
+  - one-trade member 324 → 134 [160]; active member 370 → 232 [233, the
+    retained-words rule];
+  - Signals Congress 289 → 201 [203], Institutional 210 → 204 [212], Overlap
+    113 → 104 [110], Playbooks 948 → 669 [680];
+  - ticker Congress tab 374 → 198 [206];
+  - Institutional 449 → 254 [280 with only its measured retained words, 302
+    with its one unmeasured item];
+  - Filer 472 → 247 [251]; Holders 318 → 275 [275];
+  - stubs 131 / 179 → 42 / 42 [49]; Methodology 5,126 → 5,088 [5,540].
+
+  Two pages pass on less than a measured gate:
+  - The ticker Institutional tab reads 598 → 329, against a gate of 306 plus
+    retained words. That is 308 without its two ceiling items (ticker-09,
+    ticker-11) and 400 with them, so it passes only until those two are counted
+    one by one.
+  - The home reads 229 → 252. Its gate is the Home A board's count plus 10%,
+    and M2 estimated the board at about 307 words without measuring it.
+- **B58 — gates by name — DONE.**
+  - test:post 15 → 14 failing names, 0 new; R20 (holders) now passes.
+  - test:geometry 29 → 14 on a1e23dd, 0 new; 15 of T0's names now pass.
+  - test:holders-browser 0 → 0 (34 pass).
+  - Live, `playwright.production.config.ts` in each theme: 932 pass / 11 fail /
+    69 skip, every failure among the T0.5 live baseline's 23 names; 12 of those
+    23 now pass.
+  - `docs/maintenance/POST-BUILD-BASELINE.md` has not been re-measured by name
+    for the new tree.
+- **B59 — `/signals/` is 7,242 elements over the 3,000 budget (D6, owner).**
+  It measured 10,242 at first load on 20261019.2 data (10,422 live). By panel:
+  Congress 5,149, Institutional 2,751, Overlap 1,661, Playbooks 538, outside
+  the panels 143. D6 keeps the 51 triage rows' bodies (4,653 elements) in the
+  page. Nothing more is cut without a new owner decision: the triage-row bodies
+  or another cut.
+- **B60 — `/congress/` has elements outside the viewport on phones.** The live
+  audit finds 4 escapes at 390 and 430:
+  - the More filters "to date" input (`input.filter-select`, x 306–483) and
+    its filter group (16–483);
+  - one unidentified unlabelled `div`, at x −209 to 81, with an `a` inside it
+    at −196 to 68.
+
+  At 360 two long filed names (`span.filed-name`, BondBloxx) also run to 365.
+  Identify the div, then wrap or contain the date row.
+- **B61 — accounts are a separate plan (D2).** Not built: sign-up and sign-in,
+  the watchlist, the header buttons, member Follow, the home sign-up band, and
+  the Account and Watchlist boards. `watchlist-removed.test.ts`,
+  `post/watchlist-absent.test.ts` and design-principles §8/§9 stay in force
+  until that plan lands.
+- **B62 — 13F freshness.** The build holds filings received through
+  2026-07-31, so the home's newest closed quarter reads Q1 2026. It is stated
+  with its filings-through date. This is an ops and data item, and an owner
+  launch precondition.
+- **B63 — the advisory sweep fails repository-wide.**
+  - pip-audit flags certifi 2026.7.22 (PYSEC-2026-4320) and pillow 12.3.0
+    (eight CVEs), so `make security` exits 2 and never reaches `npm audit`.
+  - Run alone, `npm audit` flags vite 8.0.0–8.1.5 (three GHSAs).
+  - Dependabot #164 (pillow) and #165 (certifi) are open. The fix is its own
+    fix(deps) PR.
+- **B64 — no Codex round reviewed the redesign.** Three internal reviews of
+  8159717 and one fix round replaced the plan's per-milestone Codex rounds. An
+  external review now needs a range diff, `80694e3..c02597e` (159 files,
+  +20,028 / −3,533). Partition it by risk: the held-rows binder, the central
+  table roles, feed paging, and the copy against the honesty pins.
+- **B65 — the launch reference boards are not pinned (LD33, R36).** The ten
+  `launch-*.dc.html` boards and the launch-board opener in `canvas-compare.ts`
+  were never added. The September Congress and Congress Member boards are
+  retired from the comparison, so no structural board comparison covers the
+  launch layouts.
+- **B66 — the plan's declared debt.**
+  - **TD-L1:** a quick filter or More filter still downloads the whole feed
+    corpus, 31 parts and 23,178,782 B.
+  - **TD-L3:** held rows that a no-JS reader reaches ship twice, as the island
+    and the `<noscript>` table (B55's two growths).
+  - **TD-L4:** there is no WebKit lane, and the plan's VoiceOver check on an
+    iPhone is not in the run records.
+  - **TD-L5:** the launch boards are compared by structure only (B65).
+  - TD-L2 is B59.
+- **B67 — owner preconditions the plan left open.**
+  - The DATA-LICENSE registers' counsel review (dated "Review by: 2026-10-23")
+    must happen before the site is promoted as launched.
+  - The insider playbook stays "Needs Form 4" until Form 4 ingest exists.
+  - The search-index overrun is B18.3.

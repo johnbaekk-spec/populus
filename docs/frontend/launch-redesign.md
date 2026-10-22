@@ -188,9 +188,10 @@ The phone harness measures each Signals tab's hash load at 360, 390 and 430 and 
 | T0, production data 20261019.2, every tab, JavaScript on, 390 | 35,446 (Congress 5,932; Institutional 21,288; Overlap 7,645; Playbooks 442; outside the panels 139) |
 | Integrated tree, fixture body, served HTML (the R31 test's element counter) | 5,069, with the Named moves island holding 192 rows (4,024 elements not built until revealed) |
 | Review measurement, fixture page, first load | 7,280 |
-| Integrated tree, production data | not measured yet: the owner-tier run on the integrated tree records it |
+| Integrated tree 67b9a8d, production data 20261019.2, first load, JavaScript on, 390 | **10,242: 7,242 over the budget** (Congress 5,149; Institutional 2,751; Overlap 1,661; Playbooks 538; outside the panels 143). The 51 triage rows D6 keeps are 4,653 of the Congress panel's elements. |
+| Live, build 20261022.1, 360, 390 and 430 | 10,422: 7,422 over |
 
-Every other LD31 route gates at 3,000 from this tree on. That includes /congress/, whose board slimming lands separately: until it does, /congress/ fails the gate, which is the honest state (T0: 5,341).
+Every other LD31 route gates at 3,000 from this tree on. /congress/ was over until the F2 board slimming (T0 5,341); on 67b9a8d it is 1,648. **The overage is the owner's to revisit** (roadmap B59); nothing more is cut without a new owner decision.
 
 ## Speed-mode deviations
 
@@ -198,3 +199,68 @@ The owner authorized autonomous overnight completion on 2026-10-21. The coordina
 
 - **Word gates where a decision keeps words (SC5, LD3).** Where an owner decision or an honesty pin keeps words the copy audit proposed to cut, that page's word gate is the audit's `words_visible_after`, plus the retained words (counted and itemized), plus 10%. This was the coordinator's decision during the M7b integration. It is measured on the served HTML of the real build.
   - **Active member page: gate 233, measured 232.** The retained-words rule applies because D7 keeps the 13F footer sentence verbatim. The gate-fix round brought the page from 260 to 232 words: the sector gap's two causes moved into a tip, and an empty quarter's readout now says "none disclosed" once. No caveat was dropped.
+  - The per-page gates and their itemized retained words are the `gates` block of `dashboard/test/fixtures/launch-copy-ledger.json`. Nine pages carry a `gateCeiling` because some retained elements are bounded by the audit's own before − after, not counted one by one. The measured results are in the close below.
+- **One integration PR instead of one PR per milestone (LD1, LD2).** The milestones were built as parallel areas, each in its own worktree: M1 phone, M2 home, M3 Congress, M4 member, M5 with M7a Signals, M6 copy and M7b weight. They were integrated onto `feat/launch-redesign`, followed by two passes (F1, the copy pass that closed the ledger; F2, the Congress budget) and one review-fix round, and shipped as one PR, #166. So the owner tier, the publish and the live probe ran once, at the end, instead of after each milestone.
+- **Internal reviews instead of Codex rounds (SC6).** No Codex round ran on any milestone or on #166. Three internal reviewers read the integrated tree at 8159717:
+  - weight, budgets and build: changes requested, no blocker (3 major, 6 minor);
+  - phone, CSS and accessibility, measured in headless Chromium at 360, 390, 430 and 1440: not ready (1 blocker, 5 major, 4 minor);
+  - honesty and data: no blocker (10 findings, H1–H10).
+
+  One fix round took their findings before the second owner-tier run. The blocker was old table min-widths that made five surfaces scroll sideways on phones (page width 440 and 720 px); the live audit below reads 0 sideways tables.
+- **T0 on 20261019.2 only.** The T0 block above records the skipped 20260817.1 leg. Every later owner-tier run used 20261019.2 as well.
+- **Central table roles (R40, LD37).** The plan put role-emitting builders in every table renderer. Instead, `withTableRoles` in `format.ts` runs once over the whole page body in `Base.astro`, and every client sink that repaints table markup passes it through `rolesFor` (`scripts/table-roles.ts`). Roles a renderer already emits are kept, never doubled. `launch-semantics.test.ts` pins it.
+- **The with-ticker offsets island (LD20).** The With ticker view's total and page positions ride a separate inline island, `#feed-ticker-offsets`, built in `lib/feed-parts.ts` from the same part plan. The published feed-parts index and its page size of 50 are unchanged. Live on 20261022.1, `/congress/` fetched no feed part at load and one after paging to page 2.
+- **Holders without the CI env.** T0's passing run and every later owner-tier run ran `test:holders-browser` without `CI`, `POPULUS_TICKER_MAP` and `POPULUS_PRIOR_SIGNALS`: its dev server never answers under them (see T0).
+- **New files outside LD36's list.**
+  - `src/lib/held-rows.ts` is the server half of the one held-rows binder (rule 8, LD26). The member tables, the Congress boards, the Signals lists and the holders tables share it.
+  - Two client modules are also outside the list: `scripts/table-roles.ts` (the central roles above) and `scripts/scroll-regions.ts` (named scroll regions, now run from `Base.astro` on every page).
+  - 18 test files and helpers go beyond LD36's list. The planned `post/launch-dist.test.ts` was not created: the home's post-build checks are `post/launch-home-dist.test.ts`, and the copy items are pinned by `launch-copy.test.ts` and `launch-copy-final.test.ts`.
+- **Launch reference boards not pinned (LD33, R36).** The ten `launch-*.dc.html` boards and the launch-board opener were not added. The September Congress and Congress Member boards left the structural comparison (`docs/design/reference/README.md`), so no board comparison covers the launch layouts yet (roadmap B65).
+- **Squash merge, not a rebase merge.** GitHub refuses a rebase merge of more than 100 commits, and the branch carried 103 (80694e3..549011b). #166 was squash-merged with its head pinned to 549011b, as `c02597e`. Main's tree is identical to 549011b's (tree `2e581d9`). The full history stays on `origin/feat/launch-redesign` at 549011b, one commit past the last gated tree, a1e23dd; that commit changes only two launch test helpers, to clear CodeQL notes.
+
+## Close (M8)
+
+**Merge and publish.**
+
+- #166 merged as `c02597e` on 2026-10-22 at 04:29:22Z.
+- Publish run 39722671491 was dispatched at 04:29:36Z on `c02597e` and completed with success at 07:49:55Z.
+- It published build **20261022.1**.
+- At the time of this record, the domain serves `c02597e` on the later data build 20261022.2.
+
+**Owner tier on 20261019.2, judged by name against T0.** The run records are in `docs/design/launch-redesign-run/` (untracked, main checkout): `gate-75e9920/`, `gate-67b9a8d/` and `gate2-fix-a1e23dd/`.
+
+| Tree | test:post | test:geometry | test:holders-browser |
+|---|---|---|---|
+| T0, 80694e3 | 15 names | 29 names | 0 failing |
+| 75e9920, 2026-10-21 18:12–20:05Z | 103 / 16 / 1, 2 new names | 878 / 247 / 69, 58 did not run, 221 new names | no test ran (webServer timeout; a re-run at load ~450 timed out too) |
+| 67b9a8d, 23:01–23:55Z | 105 / 14 / 1: **0 new names**; T0's R20 holders test now passes | 1,157 / 30 / 69: 16 new names (phone home, signals and signals-inst at 360, 390 and 430; seven ledger and negative-control names) | **34 / 0 / 0** |
+| a1e23dd, 2026-10-22 00:13–00:38Z, geometry only | not re-run | 1,173 / 14 / 69: **0 new names**; 15 of T0's 29 now pass | not re-run |
+
+**Live verification, build 20261022.1, code `c02597e`.** It ran 2026-10-22 from 07:52 to 08:01Z (`live-20261022.1/`).
+
+- **Production geometry run** (`playwright.production.config.ts`, 1,012 tests per theme): dark and light each 932 pass, 11 fail, 69 skip. All 11 names are in T0.5's 23 (0 new), and 12 of T0.5's names now pass. The 11 are the same in both themes:
+  - G6 on ticker-inst @1440 and on e-filer @1440 and @390, chromium and touch;
+  - G10 on home @1440, chromium and touch;
+  - controlHeights on holders @1440;
+  - T2.11 institutional @1440;
+  - G12 on filer @1440, touch.
+- **Phone audit** (the mock's algorithm, 17 views):
+  - 0 sideways tables at 360, 390 and 430 (T0: 35, 33, 30);
+  - 0% of any view's text under 11px (T0: up to 46%);
+  - small taps 74, 76 and 69 (T0: 3,367, 3,366, 3,366);
+  - every view within the viewport width;
+  - /congress/ still has 4 escaping elements at 390 and 430, and 6 at 360 (roadmap B60).
+- **Honesty visibility at 390:** 0 failures on 14 of 15 views. The one clipped element is /congress/'s Monthly flow `.mf-table`, which sits inside a `visually-hidden` wrapper on purpose: it is the screen-reader table. The first sweep's other failures were column heads folded on purpose and elements inside named swipe strips; the refined probe excludes both.
+- **Smoke, 390 and 1440, 0 console errors:**
+  - feed paging is 20 rows, with no feed fetch at load and one after page 2;
+  - the count line reads "1–20 of 59,869 transactions with a ticker · 12,567 without a ticker and 3,061 paper filings are in All rows";
+  - each board's "Show 50 more" goes from 10 to 60 rows;
+  - holders show 25, then 50, and local search works;
+  - the /institutional/ directory fetches 0 shards before its first search and 2 after;
+  - the held member, Signals and Overlap rows render on demand;
+  - Methodology shows its 6 sections closed with JavaScript at 390, and all 6 open without it.
+  - One smoke check failed: the Signals hits pager at 390, because the hits sit behind the pane switch at that width. The follow-up probe switched panes and read 10 → 20 rows.
+
+**DOM, bytes, files and words** are in roadmap B54–B58, before → after. The open follow-ups are B59–B67.
+
+**Deviations from the mock** are DV1–DV27 in the launch register in `dashboard/README.md`. DV1–DV20 are LD35's; DV21–DV27 were made during the build.
