@@ -301,8 +301,14 @@ export function clipHitAreas(): void {
        a narrow target on the 16px gutter — a card's receipt tip, 11px wide,
        reaches 16.5px — pushed the page half a pixel sideways on a phone, and
        no finger lands past the edge of the screen. A cut, like the midpoint
-       split: the target's own box never shrinks. */
-    if (pageR > 0) {
+       split: the target's own box never shrinks.
+       Only OUTSIDE a scroller (gate 2, 67b9a8d on 20261019.2), like the shift
+       above: a receipt in a swipe strip's second card sits past the page's
+       right side until the strip is swiped, so the cut read it as ON the
+       edge and wrote --hit-x-r 0 — a 40×44 "PTR ↗" square, nine phone
+       views. Inside a scroller the scroller clips the square, so it can never
+       push the page sideways, and an inner scroll re-runs this cut anyway. */
+    if (pageR > 0 && !a.sc) {
       ext.l = Math.min(ext.l, a.l);
       ext.r = Math.min(ext.r, pageR - a.r);
     }
