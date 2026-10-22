@@ -1,23 +1,27 @@
-/* ---------- Home ---------- */
+/* ---------- Home (launch M2: Home A, owner decision D1) ----------
+   The hero's copy beside the four-figure ledger, "What stands out", the two
+   tables side by side, the trust strip. The tables' phone cards come from the
+   one card mechanism (launch M1), never from rules here. */
 
 .hero-band { border-bottom: 1px solid var(--rule2); }
 .hero {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
   gap: 64px;
   align-items: center;
-  padding-top: 72px;
-  padding-bottom: 56px;
+  padding-top: 44px;
+  padding-bottom: 36px;
 }
+.home-hero-copy { min-width: 0; }
 .hero-kicker {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 22px;
+  gap: 12px;
+  margin-bottom: 18px;
 }
 .hero-mark {
-  width: 44px;
-  height: 44px;
+  width: 22px;
+  height: 22px;
   display: block;
   color: var(--ink);
   flex-shrink: 0;
@@ -31,28 +35,148 @@
 .hero-title {
   font: 600 var(--fs-hero)/1.08 var(--serif);
   letter-spacing: -0.01em;
-  margin: 0 0 20px;
+  margin: 0 0 12px;
   max-width: 640px;
+  text-wrap: balance;
 }
 .hero-lede {
-  font: 400 var(--fs-lede)/1.65 var(--sans);
+  font: 400 var(--fs-lede)/1.6 var(--sans);
   color: var(--ink2);
-  max-width: 600px;
-  margin: 0 0 12px;
+  max-width: 560px;
+  margin: 0;
 }
-.hero-sub {
-  font: 400 var(--fs-brand)/1.65 var(--sans);
-  color: var(--ink2);
-  max-width: 600px;
-  margin: 0 0 28px;
-}
-.hero-ctas {
+/* LD17, DV14: the launcher wears the search field's look; it is a link into
+   the one masthead combobox, never a second input. */
+.home-search {
   display: flex;
-  gap: 14px;
   align-items: center;
-  flex-wrap: wrap;
+  gap: 10px;
+  max-width: 560px;
+  min-height: 48px;
+  margin-top: 24px;
+  padding: 0 14px;
+  border: 1.5px solid var(--ink);
+  border-radius: 2px;
+  background: var(--paper);
+  color: var(--ink3);
+  text-decoration: none;
 }
-.hero-ctas .cta-primary { margin-top: 0; }
+.home-search:hover { color: var(--ink2); }
+.home-search:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.home-search-g { font: 400 var(--fs-lede) var(--mono); }
+.home-search-t {
+  flex: 1;
+  min-width: 0;
+  font: 400 var(--fs-lede) var(--sans);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.home-search-kbd {
+  font: 500 var(--fs-meta)/1 var(--mono);
+  color: var(--ink3);
+  border: 1px solid var(--rule2);
+  border-radius: 2px;
+  padding: 3px 6px;
+}
+/* The "Try" chips wear the search panel's starter look: the same ranking. */
+.home-try-strip { margin-top: 12px; }
+.home-try { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.home-try-k {
+  font: 500 var(--fs-label)/1 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-meta);
+  margin-right: 2px;
+}
+.home-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: max(32px, var(--hit-min));
+  padding: 0 14px;
+  border: 1px solid var(--rule2);
+  font: 600 var(--fs-small) var(--sans);
+  color: var(--ink);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.home-chip[data-kind="ticker"] { font-family: var(--mono); }
+.home-chip:hover { border-color: var(--ink3); }
+/* R15: the four figures as one bordered 2×2 card at every width (the shared
+   ledger's markup, laid out here). */
+.home-ledger { min-width: 0; }
+.home-ledger .design-ledger {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  border: 1px solid var(--rule2);
+  background: var(--raised);
+}
+.home-ledger .ledger-fig {
+  min-width: 0;
+  max-width: none;
+  padding: 18px 20px 16px;
+  border-left: 1px solid var(--rule2);
+  border-top: 1px solid var(--rule2);
+}
+.home-ledger .ledger-fig:nth-child(odd) { border-left: 0; }
+.home-ledger .ledger-fig:nth-child(-n + 2) { border-top: 0; }
+.home-ledger .ledger-fig[data-wide] { grid-column: auto; }
+.home-ledger .ledger-fig > dt { white-space: normal; }
+/* R16: the lead cards are the Signals tab's (`.si-cards`, a swipe strip at
+   ≤1080px); the home adds the asset as filed under each card's title. */
+.home-page { padding-top: 14px; }
+.home-sec-link { margin-left: auto; }
+.si-card-iss { font: 400 var(--fs-small)/1.4 var(--sans); color: var(--ink3); margin: 0 0 2px; overflow-wrap: anywhere; }
+@media (min-width: 1081px) {
+  .home-lead .si-cards { border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+}
+/* R14: "Latest from Congress" and "Notable managers", side by side. */
+.home-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px 48px;
+  align-items: start;
+  margin-top: 10px;
+}
+.home-pair > .home-tile { min-width: 0; margin: 0; }
+.home-13f-note { padding: 8px 0; }
+/* R17: the trust strip. */
+.home-trust {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 32px 0 0;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+.home-trust > div { min-width: 0; padding: 16px 20px 18px; border-left: 1px solid var(--story-divider); }
+.home-trust > div:first-child { border-left: 0; padding-left: 0; }
+.home-trust-k {
+  font: 500 var(--fs-label)/1 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-meta);
+}
+.home-trust-v { font: 600 var(--fs-title)/1.35 var(--sans); margin: 8px 0 3px; }
+.home-trust-s { font: 400 var(--fs-small)/1.5 var(--sans); color: var(--ink3); margin: 0; }
+@media (max-width: 1100px) {
+  .hero { grid-template-columns: minmax(0, 1fr); gap: 28px; }
+  .home-pair { grid-template-columns: minmax(0, 1fr); }
+  .home-trust { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .home-trust > div:nth-child(3) { border-left: 0; padding-left: 0; }
+}
+@media (max-width: 720px) {
+  .home-search { min-height: 50px; }
+  /* R10: the chips are a named quick-picks strip that swipes and snaps */
+  .home-try-strip { overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; }
+  .home-try { flex-wrap: nowrap; }
+  .home-try > * { flex: 0 0 auto; scroll-snap-align: start; }
+  .home-ledger .ledger-fig { padding: 14px; }
+  .home-trust { grid-template-columns: minmax(0, 1fr); }
+  .home-trust > div,
+  .home-trust > div:nth-child(3) { border-left: 0; padding-left: 0; border-top: 1px solid var(--story-divider); }
+  .home-trust > div:first-child { border-top: 0; }
+}
 .specimen {
   border: 1px solid var(--rule2);
   background: var(--raised);
@@ -127,63 +251,15 @@
   color: var(--ink3);
 }
 .spec-foot a { font: inherit; }
-.modules-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  margin-bottom: 18px;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-.mod-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 1px;
-  background: var(--rule2);
-  border: 1px solid var(--rule2);
-}
-.mod-card {
-  background: var(--raised);
-  padding: 24px 24px 20px;
-  display: block;
-  text-decoration: none;
-  color: var(--ink);
-}
-a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raised)); }
-/* No blanket fade on a planned card: an opacity mutes every text colour by
-   the same factor in both themes, and even 0.85 took the light theme's --ink3
-   text to 4.08:1 on the raised panel (G11, the M1 light pass — review Q-6).
-   The card reads as planned through its PLANNED badge and its --ink2 name. */
-.mod-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-}
-.mod-name { font: 600 var(--fs-heading) var(--serif); }
-.mod-card-planned .mod-name { color: var(--ink2); }
-.badge-live {
-  font: 600 var(--fs-label) var(--mono);
-  color: var(--buy);
-  border: 1px solid var(--buy);
-  padding: 2px 6px;
-  border-radius: 2px;
-}
+/* launch M2 (R14): the Modules grid — `.modules-head`, `.mod-grid`, the
+   `.mod-*` card and its `.badge-live` — left with the home's Modules
+   section; `.badge-planned` stays, other surfaces still state PLANNED. */
 .badge-planned {
   font: 600 var(--fs-label) var(--mono);
   color: var(--ink3);
   border: 1px solid var(--rule2);
   padding: 2px 6px;
   border-radius: 2px;
-}
-.mod-desc {
-  font: 400 var(--fs-name)/1.6 var(--sans);
-  color: var(--ink2);
-  margin: 10px 0 16px;
-}
-.mod-stats {
-  font: 400 var(--fs-note)/1.8 var(--mono);
-  color: var(--ink3);
 }
 .commitments {
   display: grid;
@@ -311,6 +387,31 @@ a.mod-card:hover { background: color-mix(in oklab, var(--accent) 4%, var(--raise
 }
 .verify-line { margin-top: 14px; word-break: break-all; }
 .verify-cmd { color: var(--ink2); }
+/* launch M7b (R34, LD30): each section is a `<details open>` whose summary is
+   the section head. Open at every width without JavaScript; the page script
+   closes them at ≤720px under the sticky contents menu. Required notices
+   (`.metho-notices`) are not a fold. */
+.metho-summary { cursor: pointer; list-style: none; }
+.metho-summary::-webkit-details-marker { display: none; }
+.metho-summary .section-h2 { display: inline; }
+.metho-summary::after { content: "▾"; margin-left: auto; padding-left: 12px; color: var(--ink3); font: 400 var(--fs-body)/1 var(--sans); }
+.metho-fold:not([open]) > .metho-summary::after { content: "▸"; }
+.metho-summary:not(.metho-section-head) { display: flex; align-items: baseline; gap: 16px; }
+.metho-fold > .metho-summary { min-height: var(--hit-min); }
+@media (max-width: 720px) {
+  /* the contents menu sticks below the header and scrolls sideways as one
+     named chip row; anchors land below both */
+  .metho-toc { position: sticky; top: var(--masthead-h, 0px); z-index: 4; flex-wrap: nowrap; overflow-x: auto; gap: 8px; margin: 16px 0 0; padding: 8px 0; background: var(--paper); border-bottom: 1px solid var(--rule2); scrollbar-width: none; }
+  .metho-toc a { flex: 0 0 auto; white-space: nowrap; }
+  .methodology [id] { scroll-margin-top: calc(var(--masthead-h, 0px) + 64px); }
+  .metho-section { margin-top: 24px; padding-top: 12px; }
+}
+/* Paper opens every section even if the page script never ran. */
+@media print {
+  .metho-fold::details-content { content-visibility: visible !important; }
+  .metho-toc { position: static; }
+  .metho-summary::after { content: none; }
+}
 
 /* ---------- module shells ---------- */
 

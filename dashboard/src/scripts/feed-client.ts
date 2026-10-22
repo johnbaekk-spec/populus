@@ -21,16 +21,27 @@ import {
 import { windowMembership, type WindowVerdict } from "../lib/derive.ts";
 import {
   classifyFeedPartsIndex,
+  classifyTickerOffsets,
   decodeFeedPart,
+  feedPageCount,
   feedPartHref,
   pageSliceFrom,
   partsForPage,
+  tickerPageCount,
+  tickerPageSliceFrom,
+  tickerPartsForPage,
+  TICKER_VIEW_NOUN,
   type FeedPartsIndex,
+  type FeedTickerOffsets,
 } from "../lib/feed-parts.ts";
 import { fetchFeedPartsIndex, loadFeedCorpus } from "./feed-corpus.ts";
 import { initSortableTable } from "./table-sort.ts";
+import { rolesFor } from "./table-roles.ts";
 
 interface State {
+  /** Launch M3a (LD20): the default "With ticker" view shows transactions
+      whose ticker is set; "All rows" is the merged feed with paper filings. */
+  view: "ticker" | "all";
   chamber: "all" | "house" | "senate";
   party: "all" | "D" | "R" | "I";
   side: "all" | "buy" | "sell" | "exch";
@@ -52,6 +63,7 @@ interface State {
 }
 
 const DEFAULTS: State = {
+  view: "ticker",
   chamber: "all",
   party: "all",
   side: "all",
@@ -65,6 +77,16 @@ const DEFAULTS: State = {
   dateTo: "",
   dateBasis: "filed",
 };
+
+/** I7: the count string's view clause — the "With ticker" noun and the
+    whole-set sizes of what it hides — or undefined in All rows. */
+function viewClause(
+  view: "ticker" | "all",
+  hiddenNoTicker: number,
+  hiddenPaper: number,
+): { noun: string; hiddenNoTicker: number; hiddenPaper: number } | undefined {
+  return view === "ticker" ? { noun: TICKER_VIEW_NOUN, hiddenNoTicker, hiddenPaper } : undefined;
+}
 
 /** F-16 sort key: the disclosed lower bound, or null when the row has no
     rankable key (wholly unknown). Exported for tests. */
@@ -207,6 +229,16 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
   } catch {
     partsIndex = null;
   }
+  /* Launch M3a (rule 2b): the "With ticker" view's offsets, accepted only when
+     they belong to THIS index part for part; otherwise the view pages from the
+     full corpus rather than against a stale map. */
+  let tickerOffsets: FeedTickerOffsets | null = null;
+  try {
+    const raw = document.getElementById("feed-ticker-offsets")?.textContent;
+    tickerOffsets = raw && partsIndex ? classifyTickerOffsets(JSON.parse(raw), partsIndex) : null;
+  } catch {
+    tickerOffsets = null;
+  }
   const state: State = { ...DEFAULTS };
   resetWrap?.removeAttribute("hidden");
 
@@ -319,11 +351,14 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
     return p;
   }
 
-  /** The unfiltered, newest-first view pages through the parts. Anything
-      else needs the whole corpus. */
+  /** The unfiltered, newest-first views page through the parts — All rows by
+      rule 2a, With ticker by rule 2b. Anything else needs the whole corpus. */
   function pagesFromParts(s: State): boolean {
     return (
       partsIndex !== null &&
+      // An empty ticker view takes the corpus path, which renders the empty
+      // state (rule 4) and offers "All rows" — never a blank table.
+      (s.view === "all" || (tickerOffsets !== null && tickerOffsets.ticker_total > 0)) &&
       s.sort === "filed" &&
       s.chamber === "all" &&
       s.party === "all" &&
@@ -347,7 +382,13 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
 
   let partsApplySeq = 0;
   function applyFromParts(index: FeedPartsIndex): void {
-    const maxPage = Math.max(0, index.page_count - 1);
+    if (state.view === "ticker" && tickerOffsets) {
+      applyTickerFromParts(tickerOffsets);
+      return;
+    }
+    /* Rule 2a: the 20-row page count is the last item's position from the
+       parts' own metadata — never the index's 50-row `page_count`. */
+    const maxPage = Math.max(0, feedPageCount(index, PAGE_SIZE) - 1);
     if (state.page > maxPage) state.page = maxPage;
     const parts = partsForPage(index, state.page, PAGE_SIZE);
     const seq = ++partsApplySeq;
@@ -358,7 +399,7 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
         loadingEl?.setAttribute("hidden", "");
         const items = pageSliceFrom(lists.flat(), parts[0]?.txn_offset ?? 0, state.page, PAGE_SIZE);
         const ctx: RenderCtx = {};
-        bodyEl!.innerHTML = items.map((it) => feedItemHtml(it, ctx)).join("\n");
+        bodyEl!.innerHTML = rolesFor(bodyEl, items.map((it) => feedItemHtml(it, ctx)).join("\n"));
         announceRerender();
         setCounts(
           feedCountText({
@@ -370,6 +411,49 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
             paperOnPage: items.filter((it) => it.kind === "paper").length,
             txnTotal: totalAll,
             indeterminate: 0,
+          }),
+        );
+        setPagerState(newerBtn, state.page === 0);
+        setPagerState(olderBtn, state.page >= maxPage);
+      })
+      .catch((err) => {
+        if (seq !== partsApplySeq) return;
+        loadingEl?.setAttribute("hidden", "");
+        console.error("populus: a feed part failed to load", err);
+        renderLoadFailure();
+      });
+  }
+
+  /** Rule 2b: ticker page N fetches ONLY the part or parts holding it, keeps
+      their ticker rows in feed order and slices from the first part's offset.
+      The count states the hidden populations as whole-set figures (I7). */
+  function applyTickerFromParts(offsets: FeedTickerOffsets): void {
+    const maxPage = Math.max(0, tickerPageCount(offsets, PAGE_SIZE) - 1);
+    if (state.page > maxPage) state.page = maxPage;
+    const holding = tickerPartsForPage(offsets, state.page, PAGE_SIZE);
+    const seq = ++partsApplySeq;
+    emptyEl?.setAttribute("hidden", "");
+    Promise.all(holding.map((p) => loadPart(p.part)))
+      .then((lists) => {
+        if (seq !== partsApplySeq) return;
+        loadingEl?.setAttribute("hidden", "");
+        const items = tickerPageSliceFrom(lists.flat(), holding[0]?.ticker_before ?? 0, state.page, PAGE_SIZE);
+        const ctx: RenderCtx = {};
+        /* launch integration: the ticker view's page is a table sink too
+           (M1's R40 contract), so its rows land with their roles */
+        bodyEl!.innerHTML = rolesFor(bodyEl, items.map((it) => feedItemHtml(it, ctx)).join("\n"));
+        announceRerender();
+        setCounts(
+          feedCountText({
+            pageSize: PAGE_SIZE,
+            page: state.page,
+            txnMatched: offsets.ticker_total,
+            paperMatched: 0,
+            txnOnPage: items.length,
+            paperOnPage: 0,
+            txnTotal: offsets.ticker_total,
+            indeterminate: 0,
+            view: viewClause("ticker", offsets.no_ticker_total, offsets.paper_total),
           }),
         );
         setPagerState(newerBtn, state.page === 0);
@@ -426,12 +510,18 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
     return matchTxnExceptAmount(r, s) && amountVerdict(r, s.amountMin) === "in";
   }
 
+  /** The VIEW's own row test: "With ticker" keeps transactions whose ticker
+      is set (LD20) — the same test the server's first page applies. */
+  function inView(r: TxnRow, s: State): boolean {
+    return s.view === "all" || Boolean(r.ticker);
+  }
+
   /** Rows this threshold can neither include nor exclude: open-ended
       "Over $1M" caps and unparsed amounts. Reported, never silently dropped. */
   function indeterminateCount(s: State): number {
     if (!txns || s.amountMin <= 0) return 0;
     return txns.filter(
-      (r) => matchTxnExceptAmount(r, s) && amountVerdict(r, s.amountMin) === "indeterminate",
+      (r) => inView(r, s) && matchTxnExceptAmount(r, s) && amountVerdict(r, s.amountMin) === "indeterminate",
     ).length;
   }
 
@@ -469,6 +559,12 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
   }
 
   const relaxations: Relaxation[] = [
+    {
+      label: "All rows",
+      active: (s) => s.view === "ticker",
+      relax: (s) => ({ ...s, view: "all" }),
+      applyToUi: () => { setSeg("view", "all"); state.view = "all"; },
+    },
     {
       label: "Drop the amount floor",
       active: (s) => s.amountMin > 0,
@@ -520,7 +616,8 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
     for (const rel of relaxations) {
       if (shown >= 2) break;
       if (!rel.active(state)) continue;
-      const n = txns.filter((r) => matchTxn(r, rel.relax(state))).length;
+      const relaxed = rel.relax(state);
+      const n = txns.filter((r) => inView(r, relaxed) && matchTxn(r, relaxed)).length;
       if (n === 0) continue;
       const b = document.createElement("button");
       b.textContent = `${rel.label} (${fmtInt(n)} rows)`;
@@ -539,7 +636,7 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
     setHeading(
       unknown > 0
         ? "No disclosures are known to match."
-        : "No disclosures match — and that's an answer, not an error.",
+        : "No disclosures match these filters.",
     );
     emptyDetailEl.textContent =
       `This build holds ${fmtInt(totalAll)} transaction rows; the current ` +
@@ -581,8 +678,15 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
     }
     loadingEl?.setAttribute("hidden", "");
 
-    const fTxns = txns.filter((r) => matchTxn(r, state));
-    const fPaper = paperVisible(state) ? paper.filter((p) => matchPaper(p, state)) : [];
+    const fTxns = txns.filter((r) => inView(r, state) && matchTxn(r, state));
+    /* I7: the paper filings and no-ticker transactions the "With ticker" view
+       hides are counted over the WHOLE result set under the other filters —
+       what All rows would show for the same filters. */
+    const paperMatches = paperVisible(state) ? paper.filter((p) => matchPaper(p, state)) : [];
+    const fPaper = state.view === "all" ? paperMatches : [];
+    const hiddenNoTicker =
+      state.view === "ticker" ? txns.filter((r) => !r.ticker && matchTxn(r, state)).length : 0;
+    const viewTotal = state.view === "ticker" ? tickerTotal() : totalAll;
     // Constraint 9 disclosure: rows a trade-date window had to exclude because
     // their trade date is flagged impossible.
     const anomalyExcluded =
@@ -637,14 +741,14 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
           // A separator INSIDE a tbody must be a row, or the browser hoists it
           // out of the table and the label detaches from the rows it labels.
           parts.push(
-            `<tr class="unranked-sep"><td colspan="8">Not rankable by amount — ` +
+            `<tr class="unranked-sep" role="row"><td colspan="8" role="cell">Not rankable by amount — ` +
               `wholly undisclosed or paper (${fmtInt(nUnrankable)} ` +
               `${nUnrankable === 1 ? "row" : "rows"}) · listed after every ranked row, never coerced to $0</td></tr>`,
           );
         }
         parts.push(feedItemHtml(it, ctx));
       });
-      bodyEl!.innerHTML = parts.join("\n");
+      bodyEl!.innerHTML = rolesFor(bodyEl, parts.join("\n"));
     }
     announceRerender();
 
@@ -658,8 +762,9 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
       paperMatched: fPaper.length,
       txnOnPage: items.filter((it) => it.kind === "txn").length,
       paperOnPage: items.filter((it) => it.kind === "paper").length,
-      txnTotal: totalAll,
+      txnTotal: viewTotal,
       indeterminate: indeterminateCount(state),
+      view: viewClause(state.view, hiddenNoTicker, paperMatches.length),
     });
     setCounts(
       range +
@@ -674,6 +779,15 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
     // control that was just activated dumps keyboard focus to <body>.
     setPagerState(newerBtn, state.page === 0);
     setPagerState(olderBtn, state.page >= maxPage);
+  }
+
+  /** The "With ticker" view's whole-set total: the offsets island's, which
+      the server's count used, or the corpus's own count when no island. */
+  let tickerTotalMemo: number | null = null;
+  function tickerTotal(): number {
+    if (tickerOffsets) return tickerOffsets.ticker_total;
+    tickerTotalMemo ??= (txns ?? []).filter((r) => Boolean(r.ticker)).length;
+    return tickerTotalMemo;
   }
 
   /** Write the count to every sink at once, so none can fall out of step. */
@@ -692,9 +806,13 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
 
   function resetAll(): void {
     Object.assign(state, DEFAULTS);
+    // Reset returns to the DEFAULT view ("With ticker"), not to "all" (I7).
     document
       .querySelectorAll<HTMLButtonElement>(".seg button[data-group]")
-      .forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.value === "all")));
+      .forEach((b) => {
+        const group = b.dataset.group as "view" | "chamber" | "party" | "side";
+        b.setAttribute("aria-pressed", String(b.dataset.value === String(DEFAULTS[group])));
+      });
     if (amountSel) amountSel.value = "0";
     if (ownerSel) ownerSel.value = "all";
     if (lateChk) lateChk.checked = false;
@@ -715,8 +833,10 @@ export function initFeed(options: FeedOptions = {}): FeedHandle {
 
   document.querySelectorAll<HTMLButtonElement>(".seg button[data-group]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const group = btn.dataset.group as "chamber" | "party" | "side";
-      const value = btn.dataset.value!;
+      const group = btn.dataset.group as "view" | "chamber" | "party" | "side";
+      let value = btn.dataset.value!;
+      // The lone EXCHANGE button under More filters toggles back to All.
+      if (group === "side" && value === "exch" && state.side === "exch") value = "all";
       setSeg(group, value);
       (state as any)[group] = value;
       state.page = 0;

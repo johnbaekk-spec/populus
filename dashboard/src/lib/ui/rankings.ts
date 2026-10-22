@@ -27,6 +27,7 @@ import {
   fmtInt,
   fmtUsd,
   note,
+  noteFromHtml,
   memberHrefFor,
   tickerHrefFor,
   partyClass,
@@ -50,6 +51,9 @@ import {
   windowStatement,
   rankNetRows,
   affTextOf,
+  medianLag,
+  sumRangesText,
+  type SumRanges,
 } from "../derive.ts";
 import {
   congressRankingColumns,
@@ -58,11 +62,20 @@ import {
   type CongressColumn,
   type CongressSortKey,
 } from "../congress-columns.ts";
-import { type BuildStamps, netCellHtml } from "./shared.ts";
+import { type BuildStamps, type LedgerItem, netCellHtml } from "./shared.ts";
 import { flowCellHtml } from "./congress.ts";
+import { heldIslandHtml } from "../held-rows.ts";
 
 /** The reference displays a provable bound, never a fabricated point estimate. */
 function referenceNetHtml(net: NetInterval, overlaps: boolean): string {
+  const parts = referenceNetParts(net);
+  if (parts === null) return netCellHtml(net, overlaps);
+  return parts + (overlaps ? hangMark("≈") : "");
+}
+
+/** The board's visible bound ("≥ $X" / "≤ −$X", the full interval kept for
+    assistive technology), or null when the interval is not one-signed. */
+function referenceNetParts(net: NetInterval): string | null {
   // Rounding away from zero would overstate a guaranteed bound. Truncate at
   // the display formatter's precision, preserving a conservative guarantee.
   const boundText = (value: number): string => {
@@ -74,9 +87,32 @@ function referenceNetHtml(net: NetInterval, overlaps: boolean): string {
   let bound: string | null = null;
   if ((net.kind === "finite" || net.kind === "upper-open") && net.low > 0) bound = `≥ ${boundText(net.low)}`;
   else if ((net.kind === "finite" || net.kind === "lower-open") && net.high < 0) bound = `≤ ${boundText(net.high)}`;
-  if (bound === null) return netCellHtml(net, overlaps);
-  return `<span class="reference-net-bound ${bound.startsWith("≥") ? "positive" : "negative"}" aria-hidden="true">${esc(bound)}</span><span class="visually-hidden">${esc(netIntervalText(net))}</span>` +
-    (overlaps ? hangMark("≈") : "");
+  if (bound === null) return null;
+  return `<span class="reference-net-bound ${bound.startsWith("≥") ? "positive" : "negative"}" aria-hidden="true">${esc(bound)}</span><span class="visually-hidden">${esc(netIntervalText(net))}</span>`;
+}
+
+/** A gross side for the board's Net note: the summed range, "none" when the
+    side has no rows, "not disclosed" when every amount failed to parse. */
+function grossText(s: SumRanges): string {
+  return s.kind === "empty" ? "none" : sumRangesText(s);
+}
+
+/** Launch M3b (LD19): the members board's Net cell. The gross purchase and sale
+    ranges left the board as columns; they are this cell's note, opened from the
+    visible net (a label trigger), so every row still states both sides. The ≈
+    stays outside the trigger, hung in the cell's mark slot. */
+function boardNetCellHtml(r: LeaderRow, overlaps: boolean): string {
+  const visible = referenceNetParts(r.net) ?? esc(netIntervalText(r.net));
+  const body =
+    `Purchases ${esc(grossText(r.purchases))} · sales ${esc(grossText(r.sales))} · ` +
+    `net ${esc(netIntervalText(r.net))}, summed from the ranges as filed — no midpoints.`;
+  return (
+    noteFromHtml(body, { scope: "board-net" }, r.id, {
+      trigger: "label",
+      textHtml: visible,
+      name: `Net ${netIntervalText(r.net)}`,
+    }) + (overlaps ? hangMark("≈") : "")
+  );
 }
 
 /** The ledger ROLE classes of one ranking column, header and cells alike
@@ -100,19 +136,21 @@ function rankingRowHtml(
   ctx: RenderCtx,
 ): string {
   const cols = visualColumns(kind, ctx.referenceRankings);
+  /* R40 (launch M1 contract, emitted here by M3): every cell carries its
+     explicit role at every width, beside its ledger role class. */
   const cls = (i: number, extra = ""): string =>
-    ` class="${[rankingColumnClass(cols[i]!, kind, cols), extra].filter(Boolean).join(" ")}"`;
+    ` class="${[rankingColumnClass(cols[i]!, kind, cols), extra].filter(Boolean).join(" ")}" role="cell"`;
   const who =
     kind === "tickers"
-      ? `<a href="${tickerHrefFor(r.id, ctx)}">${esc(r.id)}</a>`
+      ? `<a data-row-link href="${tickerHrefFor(r.id, ctx)}">${esc(r.id)}</a>`
       : r.bioguide
-        ? `<a href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a> <span class="aff ${partyClass(r.party)}">${esc(
+        ? `<a data-row-link href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a> <span class="aff ${partyClass(r.party)}">${esc(
             affTextOf(r),
           )}</span>`
         : `<span class="unjoined-name">${esc(r.name)}</span> <span class="aff ${partyClass(r.party)}">${esc(affTextOf(r))}</span>`;
   if (kind === "tickers" && ctx.referenceRankings) {
     const scale = Math.max(r.buys, r.sells, 1);
-    return `<tr><td${cls(0, "c-muted")}>${pos ?? ""}</td><td${cls(1)}>${who}</td>` +
+    return `<tr role="row"><td${cls(0, "c-muted")}>${pos ?? ""}</td><td${cls(1)}>${who}</td>` +
       `<td${cls(2)}><span class="design-diverging" aria-hidden="true"><span style="right:50%;width:${r.buys / scale * 50}%"></span><span class="sale" style="left:50%;width:${r.sells / scale * 50}%"></span></span><span class="visually-hidden">${fmtInt(r.buys)} buys; ${fmtInt(r.sells)} sells</span></td>` +
       `<td${cls(3)}>${fmtInt(r.txns)}</td><td${cls(4)}>${r.memberCount == null ? "—" : fmtInt(r.memberCount)}</td>` +
       `<td${cls(5, "c-net")}>${ctx.referenceRankings ? referenceNetHtml(r.net, overlapsPrev) : netCellHtml(r.net, overlapsPrev)}</td></tr>`;
@@ -121,8 +159,21 @@ function rankingRowHtml(
     r.lateDenom === 0
       ? `<span class="none">—</span>`
       : `${fmtInt(r.late)} of ${fmtInt(r.lateDenom)}`;
+  if (ctx.referenceRankings) {
+    /* Launch M3b (LD19): # · Member · Trades · Buys · Sells · Net · Late — the
+       gross ranges are the Net cell's note; Late keeps "N of M". */
+    return (
+      `<tr role="row"><td${cls(0, "c-muted")}>${pos == null ? "" : fmtInt(pos)}</td>` +
+      `<td${cls(1)}>${who}</td>` +
+      `<td${cls(2)}>${fmtInt(r.txns)}</td>` +
+      `<td${cls(3, "c-buy")}>${fmtInt(r.buys)}</td>` +
+      `<td${cls(4, "c-sell")}>${fmtInt(r.sells)}</td>` +
+      `<td${cls(5, "c-net")}>${boardNetCellHtml(r, overlapsPrev)}</td>` +
+      `<td${cls(6)}>${lateCell}</td></tr>`
+    );
+  }
   return (
-    `<tr><td${cls(0, "c-muted")}>${pos == null ? "" : fmtInt(pos)}</td>` +
+    `<tr role="row"><td${cls(0, "c-muted")}>${pos == null ? "" : fmtInt(pos)}</td>` +
     `<td${cls(1)}>${who}</td>` +
     `<td${cls(2)}>${fmtInt(r.txns)}</td>` +
     `<td${cls(3, "c-buy")}>${fmtInt(r.buys)}</td>` +
@@ -178,17 +229,44 @@ export interface RankingSectionOpts {
   alternatives?: RankingAlternatives;
 }
 
-function visualColumns(kind: "leaders" | "tickers", reference = false): CongressColumn[] {
+/** Launch M3b (copy item congress-19): the boards' ONE Net tip, replacing the
+    three near-identical interval tips — the interval rule, the net formula,
+    the ≈ rule and where unrankable rows go, each kept. */
+export const BOARD_NET_NOTE =
+  `Summed statutory ranges, shown as intervals — no midpoints. Net = purchases' bounds minus sales' bounds; ` +
+  `≥ is the amount it is at least, shown only when the interval is one-signed. ` +
+  `≈ = overlaps the row above, so it is not ranked against it — overlapping intervals are incomparable. ` +
+  `Rows with wholly undisclosed amounts are listed separately.`;
+
+/** A board column: the contract column, optionally rendered with no note
+    (the "#" head, whose reason copy item congress-18 cut from the board). */
+type BoardColumn = CongressColumn & { plain?: boolean };
+
+/** The columns a ranking table renders — the board's set on /congress/
+    (`reference`), the full contract elsewhere. Exported so the client
+    announces a sort by the label the reader sees. */
+export function visualColumns(kind: "leaders" | "tickers", reference = false): BoardColumn[] {
   const columns = congressRankingColumns(kind);
   if (!reference) return columns;
-  if (kind === "tickers") return [columns[0]!, columns[1]!,
-    { sortable: false, key: null, label: "Buy ◂ ▸ Sell · count", numeric: false, why: "Bars show transaction counts: purchases left, sales right; each row uses the larger count as its scale." },
-    columns[2]!, { sortable: false, key: null, label: "Members", numeric: true, why: "Distinct joined members in the stated window. Unjoined filers are not inferred to be members." },
-    { ...columns[7]!, label: "Net flow" }];
-  /* The reference's short labels, MARK-FREE; each column keeps its own mark
-     from the contract, so a note is never left without its trigger. */
-  const labels = ["#", "Member", "Trades", "Buy", "Sell", "Gross bought", "Gross sales", "Net flow", "Late"];
-  return columns.map((c, i) => ({ ...c, label: labels[i]! }));
+  /* Launch M3b (LD19, copy items congress-18/19/22): the boards' short,
+     mark-free heads. Trades, Buys, Sells and Late lose their † tips; Net
+     carries the one merged tip; "#" renders bare. */
+  const bare = <C extends CongressColumn>(c: C): C => ({ ...c, mark: undefined, note: undefined });
+  const rank: BoardColumn = { ...columns[0]!, plain: true };
+  const net = { ...bare(columns[7]!), label: "Net", note: esc(BOARD_NET_NOTE) } as CongressColumn;
+  if (kind === "tickers") return [rank, columns[1]!,
+    { sortable: false, key: null, label: "Buys · Sells", numeric: false, why: "Transaction counts: purchases left, sales right; each row is scaled to its larger count." },
+    { ...bare(columns[2]!), label: "Trades" }, { sortable: false, key: null, label: "Members", numeric: true, why: "Distinct joined members in the stated window. Unjoined filers are not inferred to be members." },
+    net];
+  return [
+    rank,
+    columns[1]!,
+    { ...bare(columns[2]!), label: "Trades" },
+    { ...bare(columns[3]!), label: "Buys" },
+    { ...bare(columns[4]!), label: "Sells" },
+    net,
+    { ...bare(columns[8]!), label: "Late" },
+  ];
 }
 
 /** The sortable header row. A sortable column carries its key and a real
@@ -196,15 +274,18 @@ function visualColumns(kind: "leaders" | "tickers", reference = false): Congress
     title attribute — a tooltip is not a channel this site treats as published.
     `aria-sort` starts on the column the server actually ordered by. */
 function rankingHeadHtml(
-  cols: CongressColumn[],
+  cols: BoardColumn[],
   active: CongressSortKey,
   dir: "asc" | "desc",
   notes: NoteCtx,
   kind: "leaders" | "tickers",
 ): string {
   return cols
-    .map((c) => {
+    .map((c) => withColumnHeaderRole(headCellHtml(c)))
+    .join("");
+  function headCellHtml(c: BoardColumn): string {
       const cls = rankingColumnClass(c, kind, cols);
+      if (c.plain) return thHtml({ label: c.label, cls });
       if (!c.sortable) {
         /* The stated reason is the header's LABEL trigger (no glyph beside it). */
         return thHtml({ label: c.label, mark: c.mark ?? null, cls, noteHtml: esc(c.why), notes, noteKey: c.key ?? c.label });
@@ -223,8 +304,13 @@ function rankingHeadHtml(
         noteKey: c.key,
         sort: { attr: "data-congress-sort", key: c.key, state, extra: ` data-congress-dir="${c.defaultDir}"` },
       });
-    })
-    .join("");
+  }
+}
+
+/** R40: the shared header builder emits a bare `<th`; the ranking tables add
+    the explicit column-header role to each head they render. */
+function withColumnHeaderRole(th: string): string {
+  return th.replace(/^<th\b(?![^>]*\brole=)/, `<th role="columnheader"`);
 }
 
 /** The ranked rows for one root, at a given sort. Exported because the client
@@ -234,7 +320,7 @@ export function rankingRowsHtml(
   rows: readonly LeaderRow[],
   kind: "leaders" | "tickers",
   ctx: RenderCtx,
-  opts: { numbered?: boolean; startAt?: number; hiddenFrom?: number } = {},
+  opts: { numbered?: boolean; startAt?: number } = {},
 ): string {
   // The incomparability marker is recomputed from THIS order. Carrying a
   // marker over from a previous sort would claim an overlap against a row that
@@ -242,22 +328,63 @@ export function rankingRowsHtml(
   const flags = overlapFlags(rows);
   const numbered = opts.numbered ?? true;
   const start = opts.startAt ?? 1;
-  /* R13: rows at or past `hiddenFrom` ship in the server bytes but start
-     `hidden` — the "Show 50 more" control reveals them without any download. */
-  const hiddenFrom = opts.hiddenFrom ?? Number.MAX_SAFE_INTEGER;
-  return rows
-    .map((r, i) => {
-      const html = rankingRowHtml(r, numbered ? start + i : null, flags[i]!, kind, ctx);
-      return i >= hiddenFrom ? html.replace(/^<tr\b/, "<tr hidden data-compact-hidden") : html;
-    })
-    .join("\n");
+  return rows.map((r, i) => rankingRowHtml(r, numbered ? start + i : null, flags[i]!, kind, ctx)).join("\n");
+}
+
+/* ---------- launch F2 (R35, LD26/LD31): the boards' prefetched rows are held ----------
+
+   A board shows its first ten rows; the next step (`COMPACT_STEP`, the rows
+   the first "Show 50 more" reveals before the dataset arrives, R13) used to
+   ride in the tbody as `hidden` rows — about 1,400 elements at first load
+   that no reader could see. They now ride in the site's one held-rows island
+   (`heldIslandHtml`, pagination-and-counts.md rule 8) and the board's own
+   pager (`scripts/congress-sections.ts`) draws them through the binder's one
+   render path when the reader asks. A reader without JavaScript could never
+   reach them (the control needs a script), so no `<noscript>` copy ships;
+   the visible "1–10 of N ranked …" count still states the bound. */
+
+/** One held board row: EVERY input `rankingRowHtml` reads beyond the row's
+    place in the list — the row, its overlaps-the-row-above flag (computed
+    over the WHOLE order, so the first held row is compared with the last
+    shown one) and whether its link goes to the generic route because the
+    page budget cut its entity (`memberHrefFor` / `tickerHrefFor`). */
+export interface RankingHeldRow {
+  r: LeaderRow;
+  o: boolean;
+  c?: 1;
+}
+
+/** The island's list-wide inputs: which board, and the board columns. */
+export interface RankingHeldShared {
+  kind: "leaders" | "tickers";
+  reference: boolean;
+}
+
+/** The name the board rows' renderer is registered under on the client. */
+export const RANKING_HELD_ROWS = "congress-ranking";
+
+function heldRankingRow(r: LeaderRow, o: boolean, kind: "leaders" | "tickers", ctx: RenderCtx): RankingHeldRow {
+  const cut = kind === "tickers" ? ctx.cutTickers?.has(r.id) === true : r.bioguide !== null && ctx.cutMembers?.has(r.bioguide) === true;
+  return cut ? { r, o, c: 1 } : { r, o };
+}
+
+/** The row function a held board row renders through, on the server and in
+    the client binder alike: `index` is the row's zero-based place in the
+    whole ranked list, so its rank is `index + 1`, as `rankingRowsHtml`
+    numbers the rows it renders. */
+export function rankingHeldRowHtml(row: RankingHeldRow, index: number, shared: RankingHeldShared): string {
+  const key = shared.kind === "tickers" ? row.r.id : row.r.bioguide;
+  const cut = row.c === 1 && key ? new Set([key]) : undefined;
+  const ctx: RenderCtx =
+    shared.kind === "tickers" ? { referenceRankings: shared.reference, cutTickers: cut } : { referenceRankings: shared.reference, cutMembers: cut };
+  return rankingRowHtml(row.r, index + 1, row.o, shared.kind, ctx);
 }
 
 /** The rows an interval sort could not rank, with their own stated separator.
     They are NOT the undisclosed bucket — see `sortRankingRows`. */
 function unrankableSeparatorHtml(n: number, colspan: number, columnLabel: string): string {
   return (
-    `<tr class="unranked-sep"><td colspan="${colspan}">${fmtInt(n)} ` +
+    `<tr class="unranked-sep" role="row"><td colspan="${colspan}" role="cell">${fmtInt(n)} ` +
     `${n === 1 ? "row discloses" : "rows disclose"} no amount at all for “${esc(columnLabel)}”, ` +
     `so ${n === 1 ? "it has" : "they have"} no endpoints to rank by — listed after every ranked ` +
     `row, never coerced to $0</td></tr>`
@@ -274,16 +401,23 @@ export function rankingRootHtml(
   kind: "leaders" | "tickers",
   ctx: RenderCtx,
   opts: { compact?: number; prefetch?: number } = {},
-): { html: string; total: number; shown: number } {
+): { html: string; total: number; shown: number; held: RankingHeldRow[] } {
   const cols = visualColumns(kind, ctx.referenceRankings);
   const { ranked, unrankable } = sortRankingRows(rows, key, dir);
   const total = ranked.length + unrankable.length;
   const limit = opts.compact ?? total;
-  /* R13: `prefetch` more ranked rows ride along HIDDEN past the compact slice,
-     so the expand control has real rows to reveal before (or without) the
-     full dataset download. They are not counted as shown. */
-  const prefetch = opts.compact === undefined ? 0 : (opts.prefetch ?? 0);
-  const rankedShown = ranked.slice(0, limit + prefetch);
+  /* R13 → launch F2 (R35, LD26/LD31; rule 8): `prefetch` more ranked rows
+     ride past the compact slice as DATA (`held`, the island's rows), never as
+     hidden DOM rows, so the expand control has real rows to reveal before (or
+     without) the full dataset download. They are not counted as shown. The
+     binder appends drawn rows at the END of the root, so rows are held only
+     when nothing unrankable follows the ranked run (at a board's default sort
+     nothing does: a count sort ranks every row, and `rankNetRows` has already
+     moved every undisclosed net to its own table). */
+  const prefetch = opts.compact === undefined || unrankable.length > 0 ? 0 : (opts.prefetch ?? 0);
+  const rankedShown = ranked.slice(0, limit);
+  const flags = overlapFlags(ranked.slice(0, limit + prefetch));
+  const held = ranked.slice(limit, limit + prefetch).map((r, j) => heldRankingRow(r, flags[limit + j]!, kind, ctx));
   // The compact slice is a bound on the WHOLE table, so it consumes the ranked
   // rows first and only then the unrankable tail — otherwise collapsing could
   // drop every ranked row and show only the tail.
@@ -292,7 +426,7 @@ export function rankingRootHtml(
     cols.find((c) => c.sortable && c.key === key)?.label ?? key;
   return {
     html:
-      rankingRowsHtml(rankedShown, kind, ctx, { hiddenFrom: limit }) +
+      rankingRowsHtml(rankedShown, kind, ctx) +
       // The separator states that rows exist which this column CANNOT
       // rank. That is a stated absence, so it renders whenever the bucket is
       // non-empty — NOT only when a bucket row happens to survive the compact
@@ -308,7 +442,8 @@ export function rankingRootHtml(
             : "")
         : ""),
     total,
-    shown: Math.min(rankedShown.length, limit) + unrankableShown.length,
+    shown: rankedShown.length + unrankableShown.length,
+    held,
   };
 }
 
@@ -374,7 +509,7 @@ function exclusionParts(
       n: rollup.noTickerRows!,
       text:
         `${fmtInt(rollup.noTickerRows!)} in-window rows disclose no ticker and cannot appear in a ticker ranking — ` +
-        `the largest disclosers by flow can be entirely non-equity; the member ranking below is keyed by member instead`,
+        `the largest disclosers by flow can be entirely non-equity; the member ranking is keyed by member instead`,
     });
   return out;
 }
@@ -406,8 +541,26 @@ export function rankingWindowHtml(
   rollup: CongressRollup & { noTickerRows?: number },
   kind: "leaders" | "tickers",
   sectionId: string,
+  /** Launch M3b (copy item congress-17): the board's short statement — the
+      range and basis visible, the exact window and every exclusion clause in
+      the note, the summed excluded-row count still on the page. */
+  board?: { range: CongressRange; basis: CongressBasis },
 ): string {
   const clauses = rankingExclusions(rollup, kind);
+  if (board) {
+    const short = boardWindowText(board.range, board.basis);
+    const bounds = windowText.split(" · ").slice(1).join(" · ");
+    const body = [`${bounds || windowText}.`, ...clauses].join(" ");
+    const rows = rankingExcludedRows(rollup, kind);
+    return (
+      `${esc(short)} · ` +
+      note(body, { scope: "window" }, sectionId, {
+        trigger: "label",
+        textHtml: rows > 0 ? `${fmtInt(rows)} excluded` : "window",
+        name: rows > 0 ? `${fmtInt(rows)} excluded` : "window",
+      })
+    );
+  }
   if (clauses.length === 0) return esc(windowText);
   const rows = rankingExcludedRows(rollup, kind);
   /* LD4, the mitigation the owner directed: the SIZE of what the reader cannot
@@ -424,6 +577,12 @@ export function rankingWindowHtml(
   );
 }
 
+
+/** The board's visible window: "12 months · by trade date". */
+export function boardWindowText(range: CongressRange, basis: CongressBasis): string {
+  const span = { "7d": "7 days", "30d": "30 days", "90d": "90 days", "12m": "12 months" }[range];
+  return `${span} · by ${basis === "traded" ? "trade" : "filing"} date`;
+}
 
 /* ---------------------------------------------------- the empty window -- */
 
@@ -555,16 +714,17 @@ export function congressRankingSection(
       ? `Members ranked by net disclosed flow, ${windowText}`
       : `Tickers ranked by number of disclosures, ${windowText}`;
   const noun = kind === "leaders" ? "members" : "tickers";
+  const board = ctx.referenceRankings ? { range: rollup.range, basis: rollup.basis } : undefined;
   return (
     `<section class="panel panel-wide${ctx.referenceRankings ? " reference-ranking" : ""}" id="${esc(opts.sectionId)}" aria-label="${esc(caption)}">` +
     `<div class="panel-head"><h2 class="section-h">${esc(opts.heading)}</h2>` +
     `<span class="panel-note" id="${esc(opts.sectionId)}-window">` +
-    rankingWindowHtml(windowText, rollup, kind, opts.sectionId) +
+    rankingWindowHtml(windowText, rollup, kind, opts.sectionId, board) +
     `</span>` +
     /* The window control is the band head's own right-aligned control, on the
-       head's baseline, with its own words ("Window & dates") — never an
+       head's baseline, with its own word ("Window") — never an
        absolutely positioned "⋯" over the table. */
-    (opts.controls && ctx.referenceRankings ? `<details class="ranking-options"><summary>Window &amp; dates</summary>${rangeControlHtml(rollup.range, rollup.basis)}</details>` : "") +
+    (opts.controls && ctx.referenceRankings ? `<details class="ranking-options"><summary>Window</summary>${rangeControlHtml(rollup.range, rollup.basis)}</details>` : "") +
     `</div>` +
     (opts.controls && !ctx.referenceRankings ? rangeControlHtml(rollup.range, rollup.basis) : "") +
     /* The pending indicator. NOT a queue — `range` and `basis` are
@@ -583,14 +743,30 @@ export function congressRankingSection(
        The paragraph itself is gone; its `<noscript>` is NOT, because that
        sentence is about scripting rather than about a column, so no column note
        is the right home for it and a no-JavaScript reader must still get it. */
-    `<p class="section-note"><noscript>Sorting by column header needs JavaScript; the order below is by ${kind === "tickers" ? "number of disclosures" : "net disclosed flow"}, largest first.</noscript></p>` +
+    `<p class="section-note"><noscript>${
+      ctx.referenceRankings
+        ? /* launch M3b: the boards' short form of the same statement */
+          `Sorting needs JavaScript; ordered by ${kind === "tickers" ? "trades" : "net flow"}, largest first.`
+        : `Sorting by column header needs JavaScript; the order below is by ${kind === "tickers" ? "number of disclosures" : "net disclosed flow"}, largest first.`
+    }</noscript></p>` +
     /* Band C1 (DESIGN-POLISH M2): Tickers is the pair's 1fr cell, so its table
        is compact (the 10px numeric lead) — at the 16px lead its six columns
        ran 7px past the 553px cell at 1440 (G3). */
-    `<div class="table-scroll"><table class="etable${kind === "tickers" && ctx.referenceRankings ? " etable-compact" : ""}" data-sticky-first>` +
+    `<div class="table-scroll"><table class="etable${kind === "tickers" && ctx.referenceRankings ? " etable-compact" : ""}" data-sticky-first role="table" data-card="ranking">` +
     `<caption class="visually-hidden">${esc(caption)}</caption>` +
-    `<thead><tr>${rankingHeadHtml(cols, defaultKey, "desc", { scope: `rank-${opts.sectionId}` }, kind)}</tr></thead>` +
-    `<tbody id="${esc(opts.rootId)}">${main.html}</tbody></table></div>` +
+    `<thead role="rowgroup"><tr role="row">${rankingHeadHtml(cols, defaultKey, "desc", { scope: `rank-${opts.sectionId}` }, kind)}</tr></thead>` +
+    `<tbody id="${esc(opts.rootId)}" role="rowgroup">${main.html}</tbody></table></div>` +
+    /* launch F2 (rule 8): the next step's rows, as island data after the
+       table — offset = the rows the tbody already holds */
+    (main.held.length > 0
+      ? heldIslandHtml<RankingHeldRow, RankingHeldShared>({
+          rootId: opts.rootId,
+          render: RANKING_HELD_ROWS,
+          offset: main.shown,
+          shared: { kind, reference: ctx.referenceRankings === true },
+          rows: main.held,
+        })
+      : "") +
     /* A zero-rankable window STATES itself. The container ships
        in both states so the client can fill it when a range change empties the
        window — an element that was never rendered cannot be filled in later,
@@ -619,18 +795,22 @@ export function congressRankingSection(
       shown: main.shown,
       noun,
       boundNoun: `ranked ${noun}`,
-      // SRC §5: the sentence moved to /methodology/#published-dataset; the link stays.
-      bound: `All rows are in the <a href="/congress/data/">published dataset</a>.`,
+      // SRC §5: the sentence moved to /methodology/#published-dataset; the link
+      // stays — except on the boards, where copy item congress-20 leaves it to
+      // Methodology and the count reads "1–10 of N ranked members".
+      ...(ctx.referenceRankings ? {} : { bound: `All rows are in the <a href="/congress/data/">published dataset</a>.` }),
     }) +
     (undisclosedBucket.length > 0 && opts.undisclosedRootId
-      ? (ctx.referenceRankings ? `<details class="unrankable-block design-supplement"><summary>${undisclosedBucket.length} not rankable · amounts wholly undisclosed</summary>` : `<div class="unrankable-block"><h3 class="section-h">Not rankable — amounts wholly undisclosed</h3>`) +
-        `<p class="section-note">These rows include at least one side whose every amount failed to parse. ` +
-        `They have no endpoints, so they hold no position in the ranking — listed after it, never sorted ` +
-        `to the bottom as if small, and never merged into it by any sort.</p>` +
-        `<div class="table-scroll"><table class="etable">` +
+      ? (ctx.referenceRankings ? `<details class="unrankable-block design-supplement"><summary>${undisclosedBucket.length} unrankable</summary>` : `<div class="unrankable-block"><h3 class="section-h">Not rankable — amounts wholly undisclosed</h3>`) +
+        (ctx.referenceRankings
+          ? `<p class="section-note">Every amount on one side failed to parse, so these rows are not ranked.</p>`
+          : `<p class="section-note">These rows include at least one side whose every amount failed to parse. ` +
+            `They have no endpoints, so they hold no position in the ranking — listed after it, never sorted ` +
+            `to the bottom as if small, and never merged into it by any sort.</p>`) +
+        `<div class="table-scroll"><table class="etable" role="table" data-card="ranking">` +
         `<caption class="visually-hidden">Unrankable ${esc(noun)} — amounts wholly undisclosed</caption>` +
-        `<thead><tr>${rankingHeadHtml(cols, "name", "asc", { scope: `undisc-${opts.sectionId}` }, kind)}</tr></thead>` +
-        `<tbody id="${esc(opts.undisclosedRootId)}">${bucket.html}</tbody></table></div>` +
+        `<thead role="rowgroup"><tr role="row">${rankingHeadHtml(cols, "name", "asc", { scope: `undisc-${opts.sectionId}` }, kind)}</tr></thead>` +
+        `<tbody id="${esc(opts.undisclosedRootId)}" role="rowgroup">${bucket.html}</tbody></table></div>` +
         /* The one terminus of the five that was NOTHING but its count,
            so it is deleted outright rather than relocated — the control's own
            server-visible count clause is the same sentence. */
@@ -650,4 +830,120 @@ export function congressRankingSection(
        TOTAL stays visible on the window statement at every width (LD4). */
     `</section>`
   );
+}
+
+/* ---------- launch M3b: the Congress page ledger (R18, LD18) ----------
+
+   Four figures, each computed from the build's rows and coverage, never a
+   literal: Trades since the first filed year; Last 30 days (transaction rows
+   filed in the 30 days ending on the build date, and the members who filed
+   them); Median lag with the share filed late (late rows over rows with a late
+   status, "N of M" in the tip); E-filings read (the floored percentage over
+   House and Senate e-filings, each chamber and the paper count in the tip). */
+
+export interface CongressCoverage {
+  houseParsed: number;
+  houseEfile: number;
+  housePct: string;
+  senateParsed: number;
+  senateEfile: number;
+  senatePct: string;
+  needsOcr: number;
+  /** `pct(houseParsed + senateParsed, houseEfile + senateEfile)` — floored */
+  efilePct: string;
+}
+
+export interface CongressLedgerFigures {
+  trades: number;
+  filedFrom: string;
+  last30: { rows: number; members: number; unjoined: number; from: string; to: string };
+  lag: { median: number | null; withLag: number; late: number; withStatus: number };
+}
+
+/** The day `days` before an ISO date, as an ISO date (UTC calendar). */
+function isoDaysBefore(date: string, days: number): string {
+  const t = Date.parse(`${date}T00:00:00Z`) - days * 86_400_000;
+  return new Date(t).toISOString().slice(0, 10);
+}
+
+export function congressLedgerFigures(
+  txns: readonly TxnRow[],
+  opts: { buildDate: string; filedFrom: string },
+): CongressLedgerFigures {
+  const from = isoDaysBefore(opts.buildDate, 29);
+  const recent = txns.filter((r) => r.filed >= from && r.filed <= opts.buildDate);
+  const members = new Set(recent.filter((r) => r.bioguide).map((r) => r.bioguide));
+  const unjoined = new Set(recent.filter((r) => !r.bioguide).map((r) => r.name));
+  const withStatus = txns.filter((r) => r.late === 0 || r.late === 1);
+  return {
+    trades: txns.length,
+    filedFrom: opts.filedFrom,
+    last30: { rows: recent.length, members: members.size, unjoined: unjoined.size, from, to: opts.buildDate },
+    lag: {
+      median: medianLag(txns),
+      withLag: txns.filter((r) => r.lag != null).length,
+      late: withStatus.filter((r) => r.late === 1).length,
+      withStatus: withStatus.length,
+    },
+  };
+}
+
+/** `pct` is the site's ONE floored share (`lib/data.ts`, never rounded up to
+    100), passed in because this module stays free of Node APIs for the client. */
+export function congressLedgerItems(
+  f: CongressLedgerFigures,
+  c: CongressCoverage,
+  pct: (num: number, den: number) => string,
+): LedgerItem[] {
+  const latePct = pct(f.lag.late, f.lag.withStatus);
+  const members = `${fmtInt(f.last30.members)} ${f.last30.members === 1 ? "member" : "members"}`;
+  return [
+    {
+      label: "Trades",
+      value: fmtInt(f.trades),
+      detail: `since ${f.filedFrom}`,
+      subKind: "date",
+      noteHtml:
+        /* launch review H8: the figure counts every row — All rows — while
+           the feed's default view is With ticker, a subset */
+        `Transactions in All rows (with or without a ticker; the default With ticker view shows only those with one), filed since ${esc(f.filedFrom)}: active filings minus the originals an amendment replaced. ` +
+        `<a href="/methodology/#defaults">Default view ↗</a>`,
+    },
+    {
+      label: "Last 30 days",
+      value: fmtInt(f.last30.rows),
+      detail: `${members} filed`,
+      subKind: "count",
+      tone: "blue",
+      noteHtml:
+        `Transaction rows filed ${esc(f.last30.from)} to ${esc(f.last30.to)} inclusive — the 30 days ending on the build date — by ${members}` +
+        (f.last30.unjoined > 0
+          ? ` and ${fmtInt(f.last30.unjoined)} ${f.last30.unjoined === 1 ? "filer" : "filers"} not yet matched to a member record.`
+          : `.`),
+    },
+    {
+      label: "Median lag",
+      value: f.lag.median === null ? "—" : `${fmtInt(f.lag.median)} days`,
+      detail: `${latePct}% filed late`,
+      subKind: "count",
+      noteHtml:
+        (f.lag.median === null
+          ? `No row discloses both dates, so no lag is measured. `
+          : `Median days from trade to filing over the ${fmtInt(f.lag.withLag)} rows with both dates. `) +
+        `Filed late: ${fmtInt(f.lag.late)} of ${fmtInt(f.lag.withStatus)} rows with a late status (${latePct}%), past the 45-day deadline. ` +
+        `<a href="/methodology/#filing-lag">45-day lag ↗</a>`,
+    },
+    {
+      label: "E-filings read",
+      value: `${c.efilePct}%`,
+      detail: `${fmtInt(c.needsOcr)} paper not yet read`,
+      subKind: "count",
+      tone: "gold",
+      noteHtml:
+        `House: ${fmtInt(c.houseParsed)} of ${fmtInt(c.houseEfile)} e-filings read (${esc(c.housePct)}%). ` +
+        `Senate: ${fmtInt(c.senateParsed)} of ${fmtInt(c.senateEfile)} (${esc(c.senatePct)}%). ` +
+        `${fmtInt(c.needsOcr)} paper ${c.needsOcr === 1 ? "filing is" : "filings are"} counted but not machine-read until OCR, so their trades are not in the rows below. ` +
+        `<a href="/methodology/#coverage">Coverage ↗</a>`,
+    },
+  ];
 }

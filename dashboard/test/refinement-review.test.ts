@@ -255,18 +255,20 @@ test("R36: renderLoaded, the holders period switch and the holdings draw each di
   announcesAfter(between(client, "function renderLoaded", "function endpointFor"), "deps.render(html)", "renderLoaded");
   announcesAfter(
     between(client, "export function initHoldersPeriods", "\nexport function "),
-    "root.innerHTML = holdersTableHtml(",
+    /* launch M1a (R40): the write carries the explicit table roles; the
+       property — the write exists and the dispatch follows it — is unchanged */
+    "root.innerHTML = rolesFor(root, holdersTableHtml(",
     "the holders period switch",
   );
 
   const holdings = src("components/HoldingsTable.astro");
-  announcesAfter(between(holdings, "const draw = ", "};"), "body.innerHTML = surfaceHtml(", "HoldingsTable draw()");
+  announcesAfter(between(holdings, "const draw = ", "};"), "body.innerHTML = rolesFor(body, surfaceHtml(", "HoldingsTable draw()");
 
   /* DESIGN-POLISH M2 review R2-5: the member/ticker entity pager and the
      Congress feed pager re-render their bodies too, so they announce it. */
   announcesAfter(
     between(client, "export function initEntityPage", "\nexport function "),
-    "rowsEl!.innerHTML = entityTxnRowsHtml(",
+    "rowsEl!.innerHTML = rolesFor(rowsEl, entityTxnRowsHtml(", // launch M1a (R40): the write carries the table roles
     "the entity pager apply()",
   );
   const feed = src("scripts/feed-client.ts");
@@ -274,10 +276,10 @@ test("R36: renderLoaded, the holders period switch and the holdings draw each di
   const feedFn = between(feed, "function announceRerender", "\n  }\n");
   assert.match(feedFn, DISPATCH, "the feed's announcer dispatches populus:rerender");
   const partsApply = between(feed, "function applyFromParts", ".catch(");
-  const partsWrite = partsApply.indexOf("bodyEl!.innerHTML = items.map(");
+  const partsWrite = partsApply.indexOf("bodyEl!.innerHTML = rolesFor(bodyEl, items.map(");
   assert.ok(partsWrite >= 0 && ANNOUNCE.exec(partsApply.slice(partsWrite)) !== null, "the parts pager announces AFTER its body write");
   const fullApply = between(feed, "  function apply(): void {", "\n  }\n");
-  const lastWrite = fullApply.lastIndexOf("bodyEl!.innerHTML = parts.join(");
+  const lastWrite = fullApply.lastIndexOf("bodyEl!.innerHTML = rolesFor(bodyEl, parts.join(");
   assert.ok(lastWrite >= 0 && ANNOUNCE.exec(fullApply.slice(lastWrite)) !== null, "the full-corpus pager announces AFTER its body write");
   // control: a pager body without the announcement fails the same reading
   assert.equal(ANNOUNCE.exec(partsApply.slice(partsWrite).replace(/announceRerender\(\);/g, "")), null, "control: the write alone is caught");
@@ -331,14 +333,18 @@ const FEED_IDS = [
 ];
 
 test("F5: switching to a filtered view invalidates a part request still in flight", async () => {
-  const { planFeedParts, feedPartHref } = await import("../src/lib/feed-parts.ts");
+  const { planFeedParts, planTickerOffsets, feedPartHref } = await import("../src/lib/feed-parts.ts");
   const rows = Array.from({ length: 120 }, (_, i) =>
     txn({ txnId: `t-${i}`, ticker: `T${i}X`, filed: "2026-08-01", name: i === 5 ? "Needle Member" : "Hay Member" }),
   );
-  const plan = planFeedParts(mergeFeed(rows, []), { build_id: "b", generated_at: null });
-  const dom = makeDom(FEED_IDS);
+  const merged = mergeFeed(rows, []);
+  const plan = planFeedParts(merged, { build_id: "b", generated_at: null });
+  // Launch M3a (rule 2b): the default "With ticker" view pages through the
+  // parts by the offsets island the page ships; the race is unchanged.
+  const dom = makeDom([...FEED_IDS, "feed-ticker-offsets"]);
   dom.elements.get("congress-feed")!.dataset = { txnCount: String(rows.length) };
   dom.elements.get("feed-parts-index")!.textContent = JSON.stringify(plan.index);
+  dom.elements.get("feed-ticker-offsets")!.textContent = JSON.stringify(planTickerOffsets(merged, plan.index));
   let releasePart!: () => void;
   const partGate = new Promise<void>((r) => (releasePart = r));
   /* R19: the corpus is now assembled from the SAME part family the pager uses,

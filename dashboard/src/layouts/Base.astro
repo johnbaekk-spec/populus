@@ -25,6 +25,8 @@ import "../styles/content.css";
 import "../styles/media.css";
 import "../styles/late-additions.css";
 import { getBuildData } from "../lib/data";
+import { fmtInt, withTableRoles } from "../lib/format";
+import { getSignalArtifact } from "../lib/data";
 import Mark from "../components/Mark.astro";
 
 interface Props {
@@ -45,6 +47,36 @@ interface Props {
 
 const { title, description, active, searchEmphasis = false, footer = "standard", head = "" } = Astro.props;
 const build = getBuildData();
+
+/* launch M1a (R40, LD37): the page body is rendered once, here, and every
+   table in it leaves with its explicit roles (table, rowgroup, row,
+   columnheader/rowheader, cell) and its `data-card` layout — at every width,
+   for the first paint and for a reader without JavaScript. The client sinks
+   run the same function on what they repaint (scripts/table-roles.ts). */
+const pageBody = withTableRoles(await Astro.slots.render("default"));
+
+/* launch M1c (LD8, R8): the phone drawer is the existing #site-nav; each
+   section shows a count computed here from the memoised build, as a SIBLING
+   span after its link (so the nav stays exactly three links, link text without
+   tags), shown only in the phone drawer. The search sheet's hint counts what
+   the search index is built from. No account control of any kind (D2).
+   Launch gate (SC5): both carry `hidden`, because neither is visible at page
+   load on any device — the drawer and the sheet open by script, and the CSS
+   that shows them there (media.css, `.open`) overrides the attribute. The
+   served HTML then says what a reader sees: the SC5 ruler counted these 17
+   words on every page although no default view shows them. */
+const signalArtifact = getSignalArtifact();
+const activeHits = signalArtifact.signals.filter((s) => s.status === "active").length;
+const instFilers = build.inst.present ? build.inst.filers.length : 0;
+const navCounts = {
+  congress: `${fmtInt(build.txnCount)} trades`,
+  /* launch review H10: every filer in the build, not a count of active ones */
+  institutional: instFilers > 0 ? `${fmtInt(instFilers)} 13F filers on record` : "",
+  signals: `${fmtInt(activeHits)} hits · ${signalArtifact.coverageFrom} → ${signalArtifact.coverageTo}`,
+};
+const searchHint =
+  `${fmtInt(build.members.length)} members · ${fmtInt(build.tickers.length)} tickers` +
+  (instFilers > 0 ? ` · ${fmtInt(instFilers)} 13F filers on record` : "");
 
 /* The footer's one notice sentence (docs/design/SIGNALS-CLARITY-DECISIONS.md,
    L1). It keeps, on every page, what the former notice paragraph carried: the
@@ -67,7 +99,7 @@ const FOOTER_NOTICE = {
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>{title}</title>
     <meta name="description" content={description} />
     {head && <Fragment set:html={head} />}
@@ -97,8 +129,11 @@ const FOOTER_NOTICE = {
           </a>
           <nav class="site-nav" id="site-nav" aria-label="Modules">
             <a href="/congress/" aria-current={active === "congress" ? "page" : undefined}>Congress</a>
+            <span class="nav-count" hidden>{navCounts.congress}</span>
             <a href="/institutional/" aria-current={active === "institutional" ? "page" : undefined}>Institutional</a>
+            {navCounts.institutional && <span class="nav-count" hidden>{navCounts.institutional}</span>}
             <a href="/signals/" aria-current={active === "signals" ? "page" : undefined}>Signals</a>
+            <span class="nav-count" hidden>{navCounts.signals}</span>
           </nav>
         </div>
         <div class="masthead-right">
@@ -117,9 +152,10 @@ const FOOTER_NOTICE = {
               aria-haspopup="listbox"
             />
             <kbd class="search-kbd" aria-hidden="true">/</kbd>
+            <span class="search-sheet-hint" hidden>{searchHint}</span>
             <div class="search-panel" id="search-panel" hidden>
               <div id="search-panel-list" role="listbox" aria-label="Search results"></div>
-              <div class="search-panel-foot">free text never leaves this device — the index ships with the build</div>
+              <div class="search-panel-foot">Search runs on this device.</div>
             </div>
           </div>
 
@@ -128,7 +164,7 @@ const FOOTER_NOTICE = {
       </div>
     </header>
 
-    <slot />
+    <Fragment set:html={pageBody} />
 
     {/* One row — brand, three links, the theme toggle — and one notice
         sentence. Nothing here is hidden at any width; at ≤720px the row wraps.
@@ -195,7 +231,11 @@ const FOOTER_NOTICE = {
     <script>
       import { initSearch } from "../scripts/search-client";
       import { initHitAreas } from "../scripts/hit-areas";
+      import { initScrollRegions } from "../scripts/scroll-regions";
       initSearch();
+      // R-8 / R10 (launch integration): every named sideways scroller, on
+      // every page, is a focusable named region exactly while it overflows.
+      initScrollRegions();
       // DESIGN-POLISH M1 (H-16): each trigger's hit square stops at the
       // midpoint to its neighbour; an enhancement, never a layout change.
       initHitAreas();

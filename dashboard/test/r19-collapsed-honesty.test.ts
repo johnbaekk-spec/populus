@@ -164,21 +164,27 @@ test("R19: collapsing omits DATA ROWS and only data rows", () => {
   const collapsed = membersSection(rows, 5);
   const expanded = membersSection(rows);
 
+  /* Launch M3 (R40): rows and roots carry explicit table roles; a visible row
+     is `<tr role="row">`, a held one `<tr hidden data-compact-hidden …>` —
+     the count still separates the two. */
   const bodyOf = (html: string, id: string): string => {
-    const at = html.indexOf(`<tbody id="${id}">`);
+    const at = html.indexOf(`<tbody id="${id}" role="rowgroup">`);
     return html.slice(at, html.indexOf("</tbody>", at));
   };
-  const collapsedRows = (bodyOf(collapsed, CONGRESS_ROOTS.membersRanked).match(/<tr>/g) ?? []).length;
-  const expandedRows = (bodyOf(expanded, CONGRESS_ROOTS.membersRanked).match(/<tr>/g) ?? []).length;
+  const collapsedRows = (bodyOf(collapsed, CONGRESS_ROOTS.membersRanked).match(/<tr role="row">/g) ?? []).length;
+  const expandedRows = (bodyOf(expanded, CONGRESS_ROOTS.membersRanked).match(/<tr role="row">/g) ?? []).length;
   assert.equal(collapsedRows, 5, "the collapsed slice renders exactly the compact count");
   assert.ok(expandedRows > collapsedRows, "expanding reveals more rows");
 
   // Everything OUTSIDE the roots is byte-identical between the two states,
   // apart from the terminus row and the control, which exist precisely to
   // describe the bound. Strip the two roots and compare the rest.
+  /* launch F2 (rule 8): the collapsed table's next step rides in the island
+     after the table — rows, as data — so the strip takes it with the roots */
   const strip = (html: string): string =>
     html
-      .replace(/<tbody id="[^"]+">[\s\S]*?<\/tbody>/g, "<tbody/>")
+      .replace(/<tbody id="[^"]+"[^>]*>[\s\S]*?<\/tbody>/g, "<tbody/>")
+      .replace(/<script type="application\/json" data-held-for="[^"]+"[^>]*>[\s\S]*?<\/script>/g, "")
       .replace(/<div class="terminus"[\s\S]*?<\/div>/g, "")
       // SL-R10: the terminus row's content is inside the control now, so the
       // strip has to reach the whole wrapper — `[\s\S]*?</div>` stops at the
@@ -195,7 +201,8 @@ test("R19: no honesty element is rendered INSIDE a collapsible root", () => {
   // A caveat that lives inside the tbody would leave the tree the moment the
   // table collapsed, which is exactly the failure this requirement names.
   const html = membersSection(corpus(25), 5);
-  const at = html.indexOf(`<tbody id="${CONGRESS_ROOTS.membersRanked}">`);
+  const at = html.indexOf(`<tbody id="${CONGRESS_ROOTS.membersRanked}" role="rowgroup">`);
+  assert.ok(at >= 0, "the ranked root is found");
   const body = html.slice(at, html.indexOf("</tbody>", at));
   /* SL-R5: `col-why` -> `note-pop`; the enumerated honesty element is the
      explanation itself, and it is still in the tree — now in a channel a touch
@@ -261,11 +268,10 @@ test("R3: the client's default view is byte-identical to the server's", () => {
     ctx,
     { rootId: CONGRESS_ROOTS.momentum, heading: "Ticker momentum", sectionId: "momentum-section", controls: true },
   );
-  const at = serverSection.indexOf(`<tbody id="${CONGRESS_ROOTS.momentum}">`);
-  const serverBody = serverSection.slice(
-    at + `<tbody id="${CONGRESS_ROOTS.momentum}">`.length,
-    serverSection.indexOf("</tbody>", at),
-  );
+  const open = `<tbody id="${CONGRESS_ROOTS.momentum}" role="rowgroup">`;
+  const at = serverSection.indexOf(open);
+  assert.ok(at >= 0, "the server's root is found");
+  const serverBody = serverSection.slice(at + open.length, serverSection.indexOf("</tbody>", at));
 
   // What the client computes for the same range and basis, by the same path
   // the island uses: rollup → rankNetRows → rankingRootHtml at the default sort.

@@ -70,7 +70,7 @@
 .rail-filed { font: 400 var(--fs-cell) var(--mono); color: var(--ink3); }
 .rail-caption { font: 400 var(--fs-note) var(--mono); color: var(--ink3); margin-top: 8px; }
 
-/* C-3: member v2 panels (the mix-bucket cell style is in the ledger region) */
+/* C-3: member v2 panels */
 .non-allegation { font-weight: 600; }
 
 /* The exact rule inside per-entity signal rows */
@@ -299,7 +299,7 @@ tbody[data-collapsed="true"] tr[data-compact-extra] {
 @media screen and (max-width: 720px) {
   .note-pop:popover-open {
     position: fixed;
-    inset: auto 10px 10px 10px;
+    inset: auto max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); /* launch M1c (LD10) */
     width: auto;
     max-width: none;
     max-height: 70vh;
@@ -443,7 +443,7 @@ tbody[data-collapsed="true"] tr[data-compact-extra] {
 /* Claude Design four-screen system. Reference: docs/design/reference/*.dc.html.
    Existing table markup, controls, notes and mobile honesty folds are retained. */
 body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: antialiased; }
-.shell { max-width: 1440px; width: 100%; padding-left: 32px; padding-right: 32px; }
+.shell { max-width: 1440px; width: 100%; padding-left: var(--gutter-l); padding-right: var(--gutter-r); } /* launch M1c (LD10): the safe gutters */
 .masthead-inner { min-height: 52px; gap: 16px; }
 .masthead-left { gap: 24px; }
 .brand-name { font: 700 var(--fs-brand)/1 var(--sans); letter-spacing: .22em; text-transform: uppercase; }
@@ -535,7 +535,7 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
   .design-ledger { flex-basis: 100%; justify-content: flex-start; }
 }
 @media (max-width: 720px) {
-  .shell { padding-left: 16px; padding-right: 16px; }
+  .shell { padding-left: var(--gutter-l); padding-right: var(--gutter-r); }
   .page { padding-top: 20px; }
   .brand-name { font-size: var(--fs-small); }
   .masthead-left { gap: 16px; }
@@ -587,25 +587,14 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 /* Reference canvas geometry: adjoining bands share one-pixel seams. */
 .design-page, .entity-page { --design-gutter:32px; }
 .page-title, .entity-title { font-size:var(--fs-display); line-height:1.1; }
-.design-page > .design-briefing, .entity-page > .design-briefing { margin-left:calc(-1 * var(--design-gutter)); margin-right:calc(-1 * var(--design-gutter)); margin-bottom:0; }
-.design-band { display:grid; gap:0; margin:0 calc(-1 * var(--design-gutter)); border-bottom:1px solid var(--rule); }
-.design-band > * { min-width:0; padding:10px var(--gutter) 14px; }
-/* D-11: 28px gutters only on the inner gutters of the member's Filing
-   history │ Signals pair, as the exports draw them; every other pair keeps
-   32px (Institutional's band I1, whose left cell also took 28px, moved to
-   /signals/#institutional as a different band in signals-v4 M2). The table
-   inside follows its cell. */
-@media (min-width: 1081px) {
-  .design-member-history-band:not([data-collapsed]) > :first-child { padding-right: 28px; }
-  .design-member-history-band:not([data-collapsed]) > :first-child .table-scroll { --gutter-r: 28px; }
-  .design-member-history-band:not([data-collapsed]) > :last-child { padding-left: 28px; }
-  .design-member-history-band:not([data-collapsed]) > :last-child .table-scroll { --gutter-l: 28px; }
-}
+.design-page > .design-briefing, .entity-page > .design-briefing { margin-left:calc(-1 * var(--gutter-l)); margin-right:calc(-1 * var(--gutter-r)); margin-bottom:0; } /* launch M1c (LD10): full-bleed bands pull out and pad back by the safe gutters */
+.design-band { display:grid; gap:0; margin:0 calc(-1 * var(--gutter-r)) 0 calc(-1 * var(--gutter-l)); border-bottom:1px solid var(--rule); }
+.design-band > * { min-width:0; padding:10px var(--gutter-r) 14px var(--gutter-l); }
+/* launch M4b: the member page's Filing history │ Signals pair and its
+   net-flow band are retired (Signals joined the side column, the history
+   stands alone), so their 28px inner-gutter rules went with them. */
 .design-band > * + * { border-left:1px solid var(--rule); }
 .design-band .panel { margin:0; border:0; }
-.design-member-band { grid-template-columns:minmax(0,1.7fr) minmax(0,1fr); }
-/* A paired band (R10): two cells of equal width with the 1px seam. */
-.design-pair { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
 /* Band F1: Reported positions (1.7fr) │ Book shape + Filing history (1fr). */
 .design-filer-band { grid-template-columns:minmax(0,1.7fr) minmax(0,1fr); }
 .design-filer-band > [data-holdings-surface] { margin:0; border:0; }
@@ -628,17 +617,15 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 .design-supplement > summary { cursor:pointer; padding:10px 0; color:var(--ink3); }
 .design-supplement .entity-grid { margin:0; }
 .design-activity .inst-data-note { font-size:var(--fs-meta); }
-.design-rankings { gap:0; margin:0 -32px; border-bottom:1px solid var(--rule); }
-.design-rankings > * { padding:10px var(--gutter) 16px; margin:0; border:0; }
+.design-rankings { gap:0; margin:0 calc(-1 * var(--gutter-r)) 0 calc(-1 * var(--gutter-l)); border-bottom:1px solid var(--rule); } /* pulled out by the shell's own gutters (launch review m3) */
+.design-rankings > * { padding:10px var(--gutter-r) 16px var(--gutter-l); margin:0; border:0; }
 .design-rankings > * + * { border-left:1px solid var(--rule); }
 /* The ≤1080px two-line feed block moved into the ledger region (entities.css)
    together with the ≤720px fold, so the two keep their own order (A-4). */
 @media(max-width:720px) {
  .design-page, .entity-page { --design-gutter:16px; }
- .design-band > *, .design-rankings > * { padding:10px 16px 16px; }
+ .design-band > *, .design-rankings > * { padding:10px var(--gutter-r) 16px var(--gutter-l); } /* launch M1c (LD10): the safe gutters */
  .design-story { padding:16px; }
- .design-rankings { margin-left:-16px; margin-right:-16px; }
- .design-unavailable .etable { min-width:480px; }
  .design-provenance { padding:6px 0 14px; }
 }
 .design-provenance { display:flex; flex-wrap:wrap; gap:8px 20px; }
@@ -681,9 +668,14 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
    here is page composition (recomposed in DESIGN-POLISH M2). */
 @media(max-width:1080px) {
  /* Bands stack below 1080px. This stays HERE, after every band's own
-    column rule (.design-member-band and its siblings), or those win. */
+    column rule (.design-filer-band and its siblings), or those win. */
  .design-band, .design-rankings { grid-template-columns:minmax(0,1fr); }
  .design-band > * + *, .design-rankings > * + * { border-left:0; border-top:1px solid var(--rule); }
+}
+/* The boards keep their scrolling widths only ABOVE the fold (launch review
+   B1): at ≤720px every table is a card (D4) and its wrapper no longer scrolls,
+   so a min-width there made the whole page scroll sideways on every phone. */
+@media (min-width: 721px) and (max-width: 1080px) {
  .design-rankings .reference-ranking .etable { min-width:680px; }
  #momentum-section.reference-ranking .etable { min-width:440px; }
 }
@@ -796,6 +788,7 @@ body { font-size: var(--fs-body); line-height: 1.5; -webkit-font-smoothing: anti
 .si-card-context { font: 400 var(--fs-note)/1.5 var(--sans); color: var(--ink3); margin: 8px 0 0; }
 /* signals-v4 LD5: the card's "open the row" link stretches over the card,
    UNDER the card's own links and notes, which sit above it. */
+.si-card-open { position: static; } /* its ::after spans the card (.si-card), not the link (launch review M1) */
 .si-card-open::after { content: ""; position: absolute; inset: 0; }
 .si-card-open:focus-visible::after { outline: 2px solid var(--accent); outline-offset: -2px; }
 .si-card :is(a:not(.si-card-open), .note, .cell-src) { position: relative; z-index: 1; }
@@ -990,7 +983,7 @@ details.si-tier > summary > .si-tier-h { display: inline; }
 .si-withheld-carried { color: var(--ink3); }
 
 /* R14: Methodology's signal sections. */
-.si-method { margin: 24px 0 0; }
+.si-method { margin: 24px 0 0; overflow-wrap: break-word; } /* a cited URL wraps rather than widen a phone's page (launch review, the phone-surfaces suite) */
 .si-method-list { margin: 8px 0 0; padding-left: 18px; font: 400 var(--fs-body)/1.7 var(--sans); color: var(--ink2); }
 .si-method-list li { margin: 0 0 6px; }
 .si-direct-table td.si-direct-ranges { font-family: var(--mono); white-space: normal; }
@@ -1006,7 +999,6 @@ details.si-tier > summary > .si-tier-h { display: inline; }
 @media (max-width: 720px) {
   .si-lags li { grid-template-columns: 110px minmax(0,1fr) 48px; }
   .si-rate-row { grid-template-columns: 90px minmax(0,1fr) 60px; }
-  .si-table { min-width: 720px; }
   .si-card, .si-card:first-child { flex-basis: 88%; }
   /* R3 / LD4: a row is three lines — ticker, side, range, filed date and the
      receipt's cell; the filer, party and state, owner and tags beside the
@@ -1050,7 +1042,7 @@ details.si-tier > summary > .si-tier-h { display: inline; }
 /* LD8: the tab strip. The sticky box that scrolls sideways is the ROLE-LESS
    wrapper (a named region only while it overflows); the tablist inside it
    keeps its role at every width and never wraps. */
-.sig-tabs-scroll { position: sticky; top: 0; z-index: 5; margin: 18px 0 0; background: var(--paper); overflow-x: auto; overflow-y: hidden; }
+.sig-tabs-scroll { position: sticky; top: var(--masthead-h); z-index: 5; margin: 18px 0 0; background: var(--paper); overflow-x: auto; overflow-y: hidden; }
 .sig-tabs-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .sig-tabs { position: static; flex-wrap: nowrap; margin: 0; min-width: max-content; }
 .sig-panel { padding-top: 16px; }
@@ -1266,17 +1258,29 @@ details.si-tier > summary > .si-tier-h { display: inline; }
 .pb-verdict { max-width: 820px; margin: 8px 0 0; font: 400 var(--fs-body)/1.55 var(--sans); color: var(--amber); }
 .pb-sec { margin-top: 16px; }
 .pb-k { margin: 0 0 4px; font: 500 var(--fs-meta)/1.5 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-meta); }
-.pb-row { padding: 2px 0; border-bottom: 1px solid var(--rule-row); }
-.pb-row-open, .pb-line { font: 400 var(--fs-note)/1.5 var(--sans); }
-.pb-line { margin: 6px 0 0; }
+/* R28 (launch M5): "Triggers now" is a table — ticker, member · owner, side,
+   range, its own dates column (traded → filed, the lag, late in amber) and
+   its own receipt column. Its heads fold through the clip pattern (each cell
+   reads on its own, as in the approved board); the phone card is M1's, keyed
+   on the role classes and `data-card`. */
+.pb-tg { width: 100%; border-collapse: collapse; font: 400 var(--fs-small)/1.5 var(--sans); color: var(--ink2); }
+.pb-tg thead th { padding: 0; border: 0; }
+.pb-row > td { padding: 7px 14px 7px 0; border-bottom: 1px solid var(--rule-row); vertical-align: baseline; text-align: left; }
+.pb-row > td:last-child { padding-right: 0; text-align: right; }
+.pb-tg .cl-amt { font: 400 var(--fs-control)/1.5 var(--mono); white-space: nowrap; }
+.pb-tg .cl-dates { font: 400 var(--fs-control)/1.5 var(--mono); color: var(--ink3); }
+.pb-tg .si-row-traded, .pb-tg .si-row-filed { white-space: nowrap; }
+.pb-row-open { font: 600 var(--fs-small)/1.5 var(--mono); white-space: nowrap; }
+.pb-line { margin: 6px 0 0; font: 400 var(--fs-note)/1.5 var(--sans); }
 .pb-needs { margin: 0; padding-left: 18px; font: 400 var(--fs-small)/1.55 var(--sans); color: var(--ink2); }
 .pb-ev { list-style: none; margin: 0; padding: 0; }
-.ev { display: grid; grid-template-columns: 76px minmax(0,1fr) auto; grid-template-areas: "d c src" "d v v" "d f f"; gap: 2px 12px; align-items: baseline; padding: 9px 0; border-bottom: 1px solid var(--rule-row); }
+.ev { display: grid; grid-template-columns: 76px minmax(0,1fr) auto; grid-template-areas: "d c src" "d f f"; gap: 2px 12px; align-items: baseline; padding: 9px 0; border-bottom: 1px solid var(--rule-row); }
 .ev-d { grid-area: d; font: 600 var(--fs-label)/1.5 var(--mono); letter-spacing: .1em; text-transform: uppercase; }
 .ev-supports { color: var(--buy); } .ev-against { color: var(--sell); } .ev-indirect { color: var(--ink2); }
 .ev-c { grid-area: c; font: 500 var(--fs-small)/1.5 var(--sans); color: var(--ink); }
 .ev-src { grid-area: src; font: 400 var(--fs-control)/1.5 var(--mono); white-space: nowrap; }
-.ev-v { grid-area: v; font: 400 var(--fs-note)/1.5 var(--sans); color: var(--ink3); }
+/* R28: a study's venue and sample read in its tip */
+.ev-v { display: block; }
 .ev-f { grid-area: f; font: 400 var(--fs-small)/1.55 var(--sans); color: var(--ink2); }
 .mv-ov-link { margin: 6px 0 0; font: 400 var(--fs-small)/1.5 var(--sans); }
 @media (max-width: 1080px) {
@@ -1291,12 +1295,13 @@ details.si-tier > summary > .si-tier-h { display: inline; }
   .ov-iss, .ov-who, .ov-mw { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
   .ov-det { grid-template-columns: minmax(0,1fr); padding: 4px 2px 14px; }
   .pb-nav { flex-basis: 100%; max-width: none; }
-  .pb-list { flex-direction: row; overflow-x: auto; gap: 8px; border-top: 0; padding-bottom: 4px; }
+  .pb-list { flex-direction: row; overflow-x: auto; gap: 8px; border-top: 0; padding-bottom: 4px; scroll-snap-type: x mandatory; } /* launch M1c (LD11): a swipe strip snaps */
+  .pb-list > * { scroll-snap-align: start; flex: 0 0 88%; } /* the next item peeks (about 12%) */
   /* square-cornered chips: a rounded corner would fall outside the hit area G12 measures */
-  .pbi { flex: 0 0 auto; border: 1px solid var(--rule2); border-radius: 3px; padding: 8px 12px; }
+  .pbi { border: 1px solid var(--rule2); border-radius: 3px; padding: 8px 12px; } /* its 88% comes from .pb-list > *, so the next item peeks (launch review m4) */
   .pbi[aria-current="true"] { box-shadow: none; border-color: var(--amber); }
   .pbi-n { white-space: nowrap; }
-  .ev { grid-template-columns: minmax(0,1fr) auto; grid-template-areas: "d src" "c c" "v v" "f f"; }
+  .ev { grid-template-columns: minmax(0,1fr) auto; grid-template-areas: "d src" "c c" "f f"; }
 }
 @media print {
   .pb-main[hidden] { display: block !important; }
@@ -1343,6 +1348,12 @@ details.si-tier > summary > .si-tier-h { display: inline; }
 .tl-axis { display: flex; justify-content: space-between; padding: 6px 0 0; font: 500 var(--fs-label)/1 var(--mono); color: var(--ink3); }
 .design-members-active .c-amber, .c-amber { color: var(--amber); }
 .agree-unavailable .design-diverging { opacity: .35; }
+/* launch integration (F1 ticker-13 + M1c R7): the "not computed" value's ⓘ
+   sits on the row's right edge, and its layout-neutral 44px hit square
+   reached half a pixel past a phone's viewport, scrolling the ticker page
+   sideways (R4). The block clips its own horizontal overflow; the mark and
+   its square inside the block are unchanged. */
+.design-agree { overflow-x: clip; }
 @media (max-width: 1080px) {
   .design-ticker-time, .design-ticker-holders { grid-template-columns: minmax(0,1fr); }
 }
@@ -1355,7 +1366,7 @@ details.si-tier > summary > .si-tier-h { display: inline; }
    is opaque and above the tables' sticky columns, and every anchor under it
    keeps clear of it (`scroll-margin-top`), so a deep link never lands under
    the bar. The tabs wrap rather than scroll on a narrow screen. */
-.tk-tabs { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: stretch; margin: 18px 0 0; background: var(--paper); border-bottom: 1px solid var(--rule2); }
+.tk-tabs { position: sticky; top: var(--masthead-h); z-index: 5; display: flex; flex-wrap: wrap; align-items: stretch; margin: 18px 0 0; background: var(--paper); border-bottom: 1px solid var(--rule2); }
 .tk-tab { display: inline-flex; align-items: center; gap: 6px; min-height: var(--hit-min); padding: 10px 20px; font: 500 var(--fs-name)/1.2 var(--sans); color: var(--ink2); text-decoration: none; white-space: nowrap; border-bottom: 2px solid transparent; margin-bottom: -1px; }
 .tk-tab:hover { color: var(--ink); }
 .tk-tab[aria-selected="true"] { font-weight: 600; color: var(--ink); border-bottom-color: var(--accent); }
@@ -1371,8 +1382,15 @@ details.si-tier > summary > .si-tier-h { display: inline; }
 .tk-onsig .si-row { border-bottom: 0; }
 /* R19: a pinned row says so beside its member, on the row's own text line */
 .on-signals-mark { font: 600 var(--fs-label)/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--amber); white-space: nowrap; }
-/* R21: holders 11..N behind one disclosure, in the same HTML */
+/* R21 → launch M7b (R33): holders 26..N behind one disclosure — drawn from
+   the island 25 at a time, with a search over them; the no-JS copy is the
+   `<noscript>` second table inside it. Shared by the ticker tab and the
+   holders page. */
 .tk-holders-more > summary { cursor: pointer; display: flex; align-items: center; min-height: var(--hit-min); padding: 6px 0; font: 500 var(--fs-control)/1.2 var(--mono); color: var(--accent); }
+.tk-holders-more .held-tools { margin: 6px 0 8px; }
+.tk-holders-more .held-tools .filter-text { width: 100%; max-width: 320px; }
+.tk-holders-more .held-count { margin: 6px 0 0; font: 400 var(--fs-note)/1.5 var(--sans); color: var(--ink3); }
+.tk-holders-more [data-held-step] { display: inline-flex; align-items: center; min-height: var(--hit-min); }
 @media (max-width: 720px) {
   .tk-tab { padding: 10px 14px; }
 }
@@ -1382,6 +1400,7 @@ details.si-tier > summary > .si-tier-h { display: inline; }
   .tk-panel[hidden] { display: block !important; }
   .tk-tabs { position: static; }
   .tk-holders-more::details-content { content-visibility: visible !important; }
+  .tk-holders-more .held-tools, .tk-holders-more [data-held-step] { display: none; }
 }
 
 /* D1 (L10): Leaders and Tickers are ONE paired band (the 1.6fr/1fr
@@ -1389,14 +1408,8 @@ details.si-tier > summary > .si-tier-h { display: inline; }
    "Notes on this data" line directly under the provenance strip. */
 #congress-notes .design-briefing { margin-top:12px; }
 
-.planned-line { margin: 12px 0 0; font: 400 var(--fs-note)/1.6 var(--sans); color: var(--ink3); }
-.planned-line .badge-planned { margin-right: 6px; }
-
-/* R18: home — one claim, three live tiles. */
-.hero-claim { grid-template-columns: minmax(0,1fr); }
-.home-tiles { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 24px; margin: 24px 0 32px; }
-.home-tiles > .home-tile { min-width: 0; margin: 0; }
-@media (max-width: 1080px) { .home-tiles { grid-template-columns: minmax(0,1fr); } }
+/* R18's home (one claim, three tiles) is replaced by Home A (launch M2): its
+   rules live in content.css's home region. */
 .metho-section#principles .commitments { margin-top: 18px; }
 
 /* R19: the overlap band — two halves, then the merged timeline. */
@@ -1420,3 +1433,111 @@ details.si-tier > summary > .si-tier-h { display: inline; }
 /* R21 */
 .card-foot-more summary { cursor: pointer; }
 
+
+/* ==================================================== launch M4b — member pages
+   Desktop layout only (the phone cards are the M1 contract's, keyed on the
+   role classes these tables emit). The active layout is a main column (the
+   quarterly chart, then the trades) beside a side column (Top tickers,
+   Profile, Sectors, Signals); the compact layout is one card per trade and
+   three computed facts. Every honesty element stays visible at every width. */
+.member-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 8px 40px; align-items: start; }
+.member-main, .member-side { min-width: 0; }
+@media (max-width: 1100px) { .member-grid { grid-template-columns: minmax(0, 1fr); } }
+.member-side-sec { margin-bottom: 6px; }
+.member-cmte { white-space: nowrap; }
+.chair-badge { font: 600 var(--fs-label)/1.3 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--gold, var(--ink2)); border: 1px solid var(--rule2); border-radius: 2px; padding: 0 4px; margin-left: 2px; }
+.member-side-filter, .member-top-window { display: inline-flex; gap: 4px; margin-left: auto; }
+.member-side-filter button, .member-top-window button { font: 500 var(--fs-control) var(--mono); border: 1px solid var(--rule2); border-radius: 2px; background: transparent; color: var(--ink3); padding: 4px 10px; min-height: var(--hit-min, 24px); cursor: pointer; }
+.member-side-filter button[aria-pressed="true"], .member-top-window button[aria-pressed="true"] { color: var(--ink); border-color: var(--ink3); }
+.member-side-filter .n { color: var(--ink3); margin-left: 4px; }
+.member-top .c-bs { white-space: nowrap; }
+.sx-bar { display: block; height: 6px; background: var(--rule); position: relative; min-width: 40px; }
+.sx-bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--ink3); }
+/* the quarterly ribbon's labelled axis (R24, LD13) */
+.ribbon-axis .rb-plot { position: relative; display: flex; gap: 8px; outline-offset: 2px; }
+.ribbon-axis .rb-yaxis { position: relative; flex: 0 0 48px; height: 190px; }
+.ribbon-axis .rb-ytick { position: absolute; right: 0; transform: translateY(50%); font: 400 var(--fs-meta) var(--mono); color: var(--ink3); white-space: nowrap; }
+.ribbon-axis .rb-track { flex: 1; min-width: 0; }
+.ribbon-axis .rb-down { flex: 1; }
+.ribbon-axis .rb-col { position: relative; cursor: crosshair; }
+.ribbon-axis .rb-col[data-selected] { background: var(--rule); }
+.ribbon-axis .rb-hi { opacity: .4; }
+.ribbon-axis .rb-cutoff { opacity: .3; border-style: dashed; }
+.ribbon-axis .rb-cut { position: absolute; left: 50%; transform: translateX(-50%); font: 600 var(--fs-label)/1 var(--mono); color: var(--ink2); white-space: nowrap; }
+.ribbon-axis .rb-up .rb-cut { top: -2px; }
+.ribbon-axis .rb-down .rb-cut { bottom: -2px; }
+.ribbon-axis .rb-up, .ribbon-axis .rb-down { position: relative; }
+.ribbon-axis .rb-none { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); font: 500 var(--fs-meta) var(--mono); color: var(--ink3); }
+.ribbon-axis .rb-labels { padding-left: 56px; }
+.ribbon-axis .rb-label-cur { color: var(--ink2); }
+.rb-legend { display: flex; flex-wrap: wrap; gap: 14px; font: 500 var(--fs-meta) var(--mono); color: var(--ink2); margin-bottom: 6px; }
+.rb-lg { display: inline-block; width: 10px; height: 10px; vertical-align: -1px; margin-right: 6px; }
+.rb-lg-buy { background: var(--buy); }
+.rb-lg-sell { background: var(--sell); }
+.rb-lg-max { background: var(--rule2); }
+.rb-readout { font: 500 var(--fs-note) var(--mono); color: var(--ink2); margin: 6px 0 0; }
+/* the compact layout (R23) */
+.one-trades { list-style: none; margin: 6px 0 0; padding: 0; border-top: 1px solid var(--rule); }
+.one-r { display: grid; grid-template-columns: 62px minmax(0, 1fr) auto; gap: 6px 18px; align-items: center; padding: 16px 6px; border-bottom: 1px solid var(--rule); }
+.one-side { font: 600 var(--fs-small)/1 var(--mono); letter-spacing: .08em; }
+.one-what { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.one-l1, .one-l2 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+.one-tk { font: 600 var(--fs-display) var(--mono); }
+.one-iss { font: 400 var(--fs-body) var(--sans); color: var(--ink2); }
+.one-l2 { font: 500 var(--fs-small) var(--mono); color: var(--ink3); }
+.one-amt { font: 600 var(--fs-title) var(--mono); color: var(--ink); }
+.member-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; border-bottom: 1px solid var(--rule); }
+.member-facts > div { padding: 14px 18px 16px; border-left: 1px solid var(--rule); min-width: 0; }
+.member-facts > div:first-child { border-left: 0; padding-left: 6px; }
+.member-facts dt { font: 500 var(--fs-label) var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink3); }
+.member-facts dd { margin: 8px 0 0; font: 400 var(--fs-small)/1.5 var(--sans); color: var(--ink); }
+.fact-dim { color: var(--ink3); }
+@media (max-width: 720px) { .member-facts { grid-template-columns: minmax(0, 1fr); } .member-facts > div { border-left: 0; padding-left: 6px; border-top: 1px solid var(--rule); } .member-facts > div:first-child { border-top: 0; } }
+
+/* ==================================================== launch gate — R7 at the fold
+   The owner-tier phone run on 20261019.2 (75e9920) found targets the midpoint
+   split (scripts/hit-areas.ts) cannot make 44px, because their neighbours sit
+   closer than a square: a receipt and its ⓘ 2px apart, a tip 4px above the
+   next line, a summary 15px tall. At ≤720px those targets are 44px BOXES of
+   their own, so no neighbour can cut them (R7: 44×44, nothing covered). The
+   size is spelled 2 × --hit-half, never --hit-min: hit-areas.ts writes a
+   control's own, wider --hit-min when it shifts a square, and a box sized by
+   that would grow on every run. */
+@media (max-width: 720px) {
+  /* every tip (a mark or a label) and every disclosure summary — not a
+     table head's: a card's head is folded, and while focus unfolds it its
+     triggers keep the square clamped to the head row (holders L9, G12), nor
+     a header ledger's label (gate 2, 67b9a8d on 20261019.2): a 44px label
+     box made its figure's value 33px lower than its row neighbour's (T2.8 on
+     the ticker pages); the ledger's labels sit a whole figure apart, so their
+     layout-neutral ::before squares reach 44 uncut (phone.spec R7) */
+  .note-btn:not(thead .note-btn, .design-ledger .note-btn) { min-height: calc(2 * var(--hit-half)); min-width: calc(2 * var(--hit-half)); }
+  summary { min-height: calc(2 * var(--hit-half)); }
+  .etable td.c-pos details.holding-group-rows > summary { display: inline-flex; align-items: center; }
+  .ranking-options > summary { min-width: calc(2 * var(--hit-half)); }
+  /* a card's receipts; the receipt cell keeps its marks beside them (in a card
+     the columns are gone, so a mark no longer hangs in a 0-width slot) */
+  table[data-card] :is(.cell-src, .c-src) a[href] { display: inline-flex; align-items: center; justify-content: center; min-height: calc(2 * var(--hit-half)); min-width: calc(2 * var(--hit-half)); }
+  table[data-card]:not([data-card="feed"]) > tbody > tr > td.c-src,
+  .table-scroll > table[data-card]:not([data-card="feed"]) > tbody > tr > td.c-src { flex: 0 0 auto; display: inline-flex; flex-wrap: wrap; align-items: center; }
+  table[data-card]:not([data-card="feed"]) > tbody > tr > td .note:has(> .note-mark) { width: auto; }
+  /* links that stand on their own line or in a row of links (not running prose) */
+  :is(.section-link, a.mono-note, .view-note a, .mf-notes a, .si-card-h a)[href],
+  .si-foot a, .inst-moved a, .ev-src { display: inline-flex; align-items: center; min-height: calc(2 * var(--hit-half)); }
+  :is(.section-link, a.mono-note, .view-note a, .mf-notes a, .si-card-h a)[href] { min-width: calc(2 * var(--hit-half)); }
+  .filter-count .linklike { min-height: calc(2 * var(--hit-half)); min-width: calc(2 * var(--hit-half)); }
+  /* the tier's ⓘ sits in its 44px head line, never over the first row */
+  .si-tier-tip { top: 0; }
+  section.si-tier > .si-tier-h { display: flex; align-items: center; min-height: calc(2 * var(--hit-half)); margin-top: 0; margin-bottom: 0; }
+  /* whole-row taps (LD7): the feed's row link stretches over the ROW, not
+     its cell, and a card's stretch covers the row's bottom rule too (the
+     row's 44px includes that 1px border; the stretch is its padding box) */
+  .reference-feed .reference-row > .cell:has(a[data-row-link]) { position: static; }
+  /* the asset line's qualifiers (owner, partial) and a Senate exchange's
+     given-up leg sit ABOVE that stretch, as the row's targets do (gate 2,
+     67b9a8d: the row's link covered them, T3.3 and T7b on /congress/ at 390) */
+  .reference-feed .reference-row :is(.owner-note, .exchanged-leg) { position: relative; z-index: 2; }
+  table[data-card] > tbody > tr a[data-row-link]:not(:is(.cell-src, .c-src) a)::after { bottom: -1px; }
+  /* R4: a committee name wraps instead of widening a phone page */
+  .member-cmte { white-space: normal; }
+}

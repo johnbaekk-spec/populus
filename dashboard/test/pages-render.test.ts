@@ -121,41 +121,41 @@ const HOLDERS: TopHolderRow[] = [
 
 /* ---------- member body ---------- */
 
+/* launch M4b (R23–R26) — the honesty invariants, re-pinned on BOTH member
+   layouts: MEMBER (two trades) renders the compact layout; ACTIVE (four)
+   the active one. member-01 moved the member ID to the breadcrumb and
+   "serving since" became "since"; the § clause now qualifies Top tickers'
+   Net column; the owner qualifiers ride on the asset line. Nothing honest is
+   weaker: every assertion below survives, on the layout that carries it. */
 test("memberBody: honesty invariants — dual dates, no watch control, § resolves, S5 block, caption", () => {
-  const html = memberBody(MEMBER, STAMPS, CTX);
-  assert.ok(html.includes("member ID T000001"));
-  assert.ok(html.includes("serving since 1999"));
-  assert.ok(html.includes("spouse (SP), dependent children (DC), and joint accounts (JT)"));
-  /* signals-v3 M1 (R1): the header's watch star is gone — the title is the
-     member's name alone, and nothing on the page offers to save to the device */
-  assert.equal(visibleText(domOf(html).querySelector("h1.entity-title")!).trim(), "Fixture Member");
-  assert.doesNotMatch(html, /data-watch|watch-btn|star-btn|saved in this browser|★|☆/, "no watch control or its copy");
-  // § marker on the flow column resolves to a printed line in the same body
-  /* RETARGETED — RUN SURFACES-LEGIBILITY, SL-R7 (LD6). `#member-footnotes`
-     held ONE clause and it is now a note on the Flow range column and on the
-     quarterly-flow panel's "derived ·§" marker. The § marker still renders;
-     the clause is still in the same body. Both are asserted, so nothing about
-     the honesty property is weaker than before — only the wrapper moved. */
-  /* DESIGN-POLISH M1 (R2, R6): the mark HANGS in the column's slot (`.hang`)
-     and the header label is the note's trigger. The § still renders on the
-     Flow range header and its clause is still in the same body. */
-  assert.match(html, /aria-label="Flow range, explain">Flow range<\/button><span class="note-pop" popover id="n-member-top-flow-range"[^>]*>[^<]*<\/span><\/span><span class="hang">·§<\/span><\/th>/);
-  assert.ok(html.includes('id="n-member-top-flow-range"'));
-  assert.ok(html.includes("flow range = sum of statutory bucket bounds"));
-  assert.ok(html.includes("an interval, not an estimate of value"));
+  const ACTIVE: MemberEntity = { ...MEMBER, txns: [...MEMBER.txns, txn({ txnId: "t-3", ticker: "XOM", filed: "2026-06-20" }), txn({ txnId: "t-4", ticker: "XOM", side: "sale", filed: "2026-06-10" })] };
+  for (const [name, html] of [["compact", memberBody(MEMBER, STAMPS, CTX)], ["active", memberBody(ACTIVE, STAMPS, CTX)]] as const) {
+    assert.match(html, /<span>T000001<\/span><\/nav>/, `${name}: the member ID is in the breadcrumb`);
+    assert.ok(html.includes("since 1999"), name);
+    /* signals-v3 M1 (R1): the header's watch star is gone */
+    assert.equal(visibleText(domOf(html).querySelector("h1.entity-title")!).trim(), "Fixture Member");
+    assert.doesNotMatch(html, /data-watch|watch-btn|star-btn|saved in this browser|★|☆|Follow/, `${name}: no watch or follow control (D2)`);
+    assert.ok(html.includes("an interval, not an estimate of value"), `${name}: the net-flow figure keeps its interval caveat`);
+    assert.ok(html.includes("Counted in totals, but not machine-readable until OCR"), `${name}: S5 paper block present`);
+    assert.ok(html.includes("LATE·51d"), `${name}: the late lag`);
+    assert.ok(html.includes('class="design-dates"'), `${name}: both dates`);
+    assert.ok(html.includes("cell-src"), `${name}: SRC receipt present`);
+  }
+  const html = memberBody(ACTIVE, STAMPS, CTX);
+  assert.ok(html.includes("spouse (SP), dependent children (DC), and joint accounts (JT)"), "the owner codes are named on the Asset · owner header");
+  // the § mark HANGS on Top tickers' Net header and its clause is in the same body
+  const netHead = domOf(html).querySelectorAll("thead th").find((th) => th.querySelector('.note-pop[id="n-member-top-24m-tbody-h-net"]'));
+  assert.ok(netHead, "the Net header carries its note");
+  assert.equal(netHead!.querySelector(".hang")?.textContent, "·§", "…and the § mark hangs in its slot");
+  assert.ok(html.includes("net disclosed flow = sum of purchase bucket bounds"), "the § clause is in the same body");
   assert.ok(html.includes("<caption"), "real table semantics");
-  assert.ok(html.includes("retained and counted"), "S5 paper block present");
-  assert.ok(html.includes("LATE·51d"));
-  // R12a: fold-mode honesty content present in markup — both dates + combined string
-  assert.ok(html.includes('class="design-dates"'));
-  assert.ok(html.includes("visually-hidden"));
-  /* DESIGN-POLISH M3 (R17, T3.10): the owner qualifier is present, UNPREFIXED
-     — the Owner cell reads "partial · JT", never "· partial · JT", so no cell
-     opens with a separator (read by DOM parse, the cell a reader sees). */
-  const owners = domOf(html).querySelectorAll("td.c-owner").map((td) => visibleText(td).replace(/\s*\(.*\)$/, "").trim());
+  // the owner qualifier is present, UNPREFIXED, on the asset line
+  const owners = domOf(html).querySelectorAll("td.c-asset .owner-note").map((el) => visibleText(el).replace(/\s*\(.*\)$/, "").trim());
   assert.ok(owners.includes("partial · JT"), `owner qualifier present, unprefixed (${owners.join(" | ")})`);
-  assert.ok(owners.every((o) => !o.startsWith("·")), "no Owner cell begins with a separator");
-  assert.ok(html.includes("cell-src"), "SRC receipt present");
+  assert.ok(owners.every((o) => !o.startsWith("·")), "no qualifier begins with a separator");
+  // the compact card says the owner in words; a missing owner is never "self"
+  const compact = memberBody({ ...MEMBER, txns: [txn({ owner: null })] }, STAMPS, CTX);
+  assert.match(compact, /<span class="owner-note">owner not stated<\/span>/);
 });
 
 test("memberBody: page 2 renders different rows through the same function", () => {
@@ -169,7 +169,8 @@ test("memberBody: page 2 renders different rows through the same function", () =
   const p0 = memberBody(many, STAMPS, CTX, 0);
   const p1 = memberBody(many, STAMPS, CTX, 1);
   assert.notEqual(p0, p1);
-  assert.ok(p1.includes("51–60 of 60"), "count line describes the page it renders");
+  // launch M4b (R25): member trades page 25 rows
+  assert.ok(p1.includes("26–50 of 60 transactions"), "count line describes the page it renders");
 });
 
 /* ---------- unified ticker body: every institutional state ---------- */
@@ -230,7 +231,8 @@ test("unified ticker: data state — published columns only, stamp, terminus, �
   assert.ok(!html.includes(">Shares<"), "unpublished columns stay out");
   assert.ok(html.includes('data-terminus-author="populus"'));
   assert.ok(html.includes("derived&nbsp;·§"));
-  assert.ok(html.includes("full holders view ↗"));
+  // launch M7b (ticker-09): the link reads "All holders ↗"
+  assert.ok(html.includes("All holders ↗"));
   assert.ok(!html.toLowerCase().includes("current holdings"));
 });
 
@@ -245,7 +247,8 @@ test("R2: the unified ticker's holders link renders only when that page is built
     topn: 25,
     holders: [],
   });
-  assert.ok(html.includes("Institutional holders"), "the section still renders");
+  // launch M7b (ticker-09): the section head reads "13F holders"
+  assert.ok(html.includes("13F holders"), "the section still renders");
   assert.ok(!html.includes("/holders/"), "no link to an unbuilt holders page");
 });
 
@@ -275,11 +278,15 @@ test("R16/R17: two real tabs over two panels, both visible in the HTML; no Finan
   for (const gone of ["Financials", "Macro", "PLANNED", "SOON", "section-index", "si-soon", "entity-lede", "design-briefing", "design-story", "planned-card"]) {
     assert.ok(!html.includes(gone), `no ${gone}`);
   }
-  // the clock sentence moved, it did not vanish (LD9)
+  // the clock sentence moved, it did not vanish (LD9). Launch copy audit
+  // ticker-04: each regime's clock is stated once, in the provenance line,
+  // without the sentence that restated them.
   const prov = dom.querySelector(".design-provenance")!;
-  assert.match(visibleText(prov.querySelector(".tk-clock")!), /^Each section keeps its own clock — congressional trades on the 45-day PTR clock, 13F holdings as quarter-end snapshots\.$/);
-  assert.equal(html.split("keeps its own clock").length - 1, 1, "stated once, in the provenance line");
-  assert.ok(html.includes("full congressional view ↗"));
+  assert.match(visibleText(prov.querySelector(".tk-clock")!), /^Congress: statutory ranges, filed up to 45 days after the trade · 13F: quarter-end snapshots, filed up to 45 days later$/);
+  assert.equal(html.split("statutory ranges, filed up to 45 days").length - 1, 1, "stated once, in the provenance line");
+  assert.doesNotMatch(html, /keeps its own clock|Congress = transactions|no price data/, "control: the restating sentence and the old line are gone");
+  assert.match(visibleText(prov.querySelector(".stamp-line")!), /^as of \d{4}-\d{2}-\d{2}$/, "the as-of date stays in the provenance line");
+  assert.match(html, /<a class="section-link" href="\/congress\/tickers\/WMB\/">All \d+ rows? ↗<\/a>/, "one link to every row (ticker-08)");
 });
 
 /* ---------- TD-7: the ticker surface CI actually deploys ---------- */
@@ -420,17 +427,18 @@ test("filerBody: explainer, period-correct tiles, EDGAR block with the decision 
      decision and the §3 amendment (holdings-publication.md:3, :83) — never
      "has served … since", and never 2026-08-02 (only when parameters were
      locked). The contract's name leaves the reader copy. */
-  assert.ok(html.includes("Public Filings decided on 2026-08-01 to serve this list from its published build"), "the EDGAR link-out names the decision and its date");
-  assert.ok(html.includes("filings newer than this build are on EDGAR"));
-  assert.ok(html.includes("where the page cannot embed every reported row, the list says how many it leaves out"));
-  assert.ok(!/has served|has published [^.]* since|2026-08-02|M2-CONTRACT §3/.test(html), "control: no served-since claim, no parameter-lock date");
+  /* Launch copy audit filer-11: the block keeps its receipt and names the
+     filing as the record (newer filings included); the internal decision log
+     left the reader copy, and the list's terminus states any cap. */
+  assert.ok(html.includes("The filing on EDGAR is the record, including any filed after this build."), "the EDGAR link-out names the record");
+  assert.ok(html.includes("13F filings on SEC EDGAR ↗"), "and keeps the receipt link");
+  assert.ok(!/has served|has published [^.]* since|2026-08-02|M2-CONTRACT §3|decided on 2026-08-01/.test(html), "control: no served-since claim, no parameter-lock date, no decision log");
   // M2-CONTRACT §3 was amended 2026-08-01: holdings will be SERVED, not federated.
   // Until RUN M2-8 publishes the projection the page must say so honestly, and it
   // must never re-assert the retired "never served" claim.
   // T11 landed: the holdings table renders, so the EDGAR block is now
   // PROVENANCE rather than a stand-in. Asserting the retired copy would pin the
   // page to a claim it no longer makes.
-  assert.ok(html.includes("provenance, not a substitute"));
   assert.ok(!html.includes("not rendered here yet"));
   assert.ok(!html.includes("never served"));
   /* R20 (DESIGN-POLISH M3, T3.4): the CIK a reader sees has no leading zeros —
@@ -513,6 +521,18 @@ const MOCKUP_LITERALS = [
   "0000950123-25-001799",
   "61% of expected",
   "93.1%",
+  /* launch M2 (R3): the launch mock's distinctive names and figures, from
+     build 20261020.2 — every home number and name is computed from the build
+     it renders, so none of these may sit in a renderer or a page. */
+  "Jim Jordan",
+  "Tommy Tuberville",
+  "Berkshire Hathaway",
+  "Bloom Energy",
+  "72,409",
+  "59,844",
+  "9,451",
+  "95.4%",
+  "12:07 UTC",
 ];
 
 function sourceFiles(dir: string, exts: string[]): string[] {
@@ -581,7 +601,9 @@ test("unified ticker: ledger totals count the full 12-month population, not a di
   // DESIGN-POLISH M2 (T2.8): the figure is read from the ONE ledger's <dl> (DOM parse).
   const figs = ledgerFigures(html);
   // signals-v3 M3 (R17): exactly five figures, in order
-  assert.deepEqual(figs.map((f) => f.label), ["Congress txns", "Members · 12m", "Latest PTR", "Filed late", "13F holders"]);
+  // launch copy audit ticker-03 (the remainder #163 left): the PTR jargon left the labels
+  assert.deepEqual(figs.map((f) => f.label), ["Congress trades", "Members · 12m", "Latest filing", "Filed late", "13F holders"]);
+  assert.deepEqual(figs.filter((f) => f.label === "Congress trades" || f.label === "Latest filing").map((f) => f.sub), ["all time", "2026-07-20"]);
   assert.equal(figs.find((f) => f.label === "Members · 12m")?.value, "6", "six members, not a display slice");
   assert.match(html, /6 buys · 0 sells/);
   /* LD9: the timeliness card's three states moved into the Filed late figure —
@@ -593,7 +615,11 @@ test("unified ticker: ledger totals count the full 12-month population, not a di
   assert.doesNotMatch(unknown, /every row filed inside/i, "no claim that every row was on time");
   assert.match(unknown, /1 row discloses no trade date: the lag is unknown there, not zero/, "the figure's note says why");
   const lateRows = tickerUnifiedBody({ ticker: "T", txns: [...txns.slice(1), { ...base, txnId: "l", bioguide: "A000010", late: 1, lag: 60, traded: "2026-05-21" }] }, { state: "no-map" }, stamps, {}, { fullTable: false });
-  assert.deepEqual([late(lateRows).value, late(lateRows).tone, late(lateRows).sub], ["1", "sell", "filed past the 45-day window"], "a late row: the SELL tone");
+  /* launch copy audit ticker-03: a late row's state is the value and the SELL
+     tone (the figure's note names the 45-day window); the sub-line is kept for
+     the two states it alone tells apart — undated, and every row on time */
+  assert.deepEqual([late(lateRows).value, late(lateRows).tone, late(lateRows).sub], ["1", "sell", null], "a late row: the SELL tone, no sub-line");
+  assert.match(lateRows, /Rows filed past the STOCK Act&#39;s 45-day window/, "the figure's note names the window");
   const both = tickerUnifiedBody({ ticker: "T", txns: [...txns.slice(2), { ...base, txnId: "l", bioguide: "A000010", late: 1, lag: 60, traded: "2026-05-21" }, { ...base, txnId: "u", bioguide: "A000009", traded: null, lag: null, late: 0 }] }, { state: "no-map" }, stamps, {}, { fullTable: false });
   assert.deepEqual([late(both).value, late(both).tone, late(both).sub], ["1", "sell", "1 of 6 undated: timeliness unknown"], "late AND undated: the sub carries the undated count");
   const empty = tickerUnifiedBody({ ticker: "T", txns: [] }, { state: "no-map" }, stamps, {}, { fullTable: false });
@@ -744,8 +770,8 @@ test("T3.6 (R27): Methodology renders #signals-overlap and #signals-playbooks th
    ====================================================================== */
 
 import { tickerOnSignalsHtml } from "../src/lib/ui/index.ts";
-import { onSignalsLines, COMMITTEE_CAVEAT } from "../src/lib/ui/signals.ts";
-import { TICKER_HOLDERS_VISIBLE, TICKER_PREVIEW_ROWS, TIMELINE_GRIDLINES } from "../src/lib/ui/ticker.ts";
+import { onSignalsLines, COMMITTEE_CAVEAT, COMMITTEE_CAVEAT_SHORT } from "../src/lib/ui/signals.ts";
+import { TICKER_HOLDER_HELD, TICKER_HOLDERS_VISIBLE, TICKER_PREVIEW_ROWS, TIMELINE_GRIDLINES } from "../src/lib/ui/ticker.ts";
 import { amountText, sideLabel, universalFlags, effectiveFlagKeys } from "../src/lib/format.ts";
 import { affTextOf, excludeDateAnomalies, legacyTrailingMonthsBounds, windowMembership } from "../src/lib/derive.ts";
 import { loadTriageFixture } from "./lib/triage-fixture.ts";
@@ -807,31 +833,40 @@ function fullBlockProblems(html: string, row: TRIAGE.TriageRow): string[] {
   const receipt = block.querySelector(".si-row-src a");
   if (receipt?.getAttribute("href") !== L.doc) out.push(`receipt ${receipt?.getAttribute("href")} is not the lead filing ${L.doc}`);
   const back = block.querySelector("a.tk-onsig-back");
-  if (back?.getAttribute("href") !== "/signals/" || visibleText(back).trim() !== "← Back to Signals") out.push("back to Signals");
+  // launch copy audit ticker-05: the link names its page ("Signals ↗"), no "back"
+  if (back?.getAttribute("href") !== "/signals/" || visibleText(back).trim() !== "Signals ↗") out.push("back to Signals");
   /* the block's own caveat paragraph (the opened row's Cmte line says
      "context, never an allegation" on every row) */
   const caveat = block.querySelector("p.si-cmte-context");
-  if (row.meters.cmte >= 1 && (caveat ? visibleText(caveat).trim() : "") !== COMMITTEE_CAVEAT) out.push("the committee caveat is missing");
+  /* launch M7a (signals-03): the block states the short caveat; the full wording is the bars tip's */
+  if (row.meters.cmte >= 1 && (caveat ? visibleText(caveat).trim() : "") !== COMMITTEE_CAVEAT_SHORT) out.push("the committee caveat is missing");
   if (row.meters.cmte < 1 && caveat) out.push("a committee caveat with no committee context");
   return out;
 }
 
-test("T3.2 (R17): the title keeps today's name source — ticker — mapped name exactly as supplied with its † link and footnote; no mapped name, the ticker alone", () => {
+test("T3.2 (R17): the title keeps today's name source — ticker — mapped name exactly as supplied with its † and the †'s tip; no mapped name, the ticker alone", () => {
+  /* Launch copy audit ticker-02 (reversal record, docs/frontend/launch-redesign.md):
+     the † no longer links to a footnote at the foot of the page; it is the
+     trigger of its own tip, which says the same thing (G14). Property kept:
+     the mapped name carries a † that explains it is a present-day mapping, and
+     an unmapped title carries neither. */
   const name = "Williams Cos Inc. (Mixed Case)";
-  const mapped = domOf(unified({ state: "resolved-no-data", name, cik: "0000107263" }));
+  const html = unified({ state: "resolved-no-data", name, cik: "0000107263" });
+  const mapped = domOf(html);
   const h1 = mapped.querySelector("h1.entity-title")!;
-  const own = (el: MiniElement): string => el.nodes.map((n) => (typeof n === "string" ? n : n.classList.contains("fn-ref") ? "" : own(n))).join("");
+  const own = (el: MiniElement): string => el.nodes.map((n) => (typeof n === "string" ? n : n.classList.contains("note") ? "" : own(n))).join("");
   assert.equal(own(h1), `${TICKER.ticker} — ${name}`, "ticker + ' — ' + the mapped name, never re-cased");
-  const dagger = h1.querySelector('a.fn-ref[href="#ticker-footnotes"]');
-  assert.equal(dagger && visibleText(dagger), "†");
-  const foot = mapped.querySelector("#ticker-footnotes")!;
-  assert.match(visibleText(foot), /present-day mapping, not the name as of each filing/);
+  const dagger = h1.querySelector("button.note-btn.note-mark")!;
+  assert.equal(visibleText(dagger), "†");
+  const tip = h1.querySelector(`#${dagger.getAttribute("popovertarget")}`)!;
+  assert.match(visibleText(tip), /present-day mapping, not the name as of each filing/);
+  assert.ok(!mapped.querySelector("#ticker-footnotes") && !html.includes("company_tickers.json"), "no footnote block at the foot; no file name");
   for (const inst of [{ state: "no-map" }, { state: "ambiguous" }, { state: "module-absent" }] as TickerInstSection[]) {
     const html = unified(inst);
     const plain = domOf(html).querySelector("h1.entity-title")!;
     assert.equal(visibleText(plain), TICKER.ticker, `${inst.state}: the ticker alone`);
-    assert.ok(!visibleText(plain).includes("—") && !plain.querySelector(".fn-ref"), `${inst.state}: no dash, no † link`);
-    assert.ok(!html.includes("†") && !html.includes("present-day mapping"), `${inst.state}: no † footnote`);
+    assert.ok(!visibleText(plain).includes("—") && !plain.querySelector(".note"), `${inst.state}: no dash, no † tip`);
+    assert.ok(!html.includes("†") && !html.includes("present-day mapping"), `${inst.state}: no † at all`);
   }
 });
 
@@ -845,6 +880,12 @@ test("T3.3 (R18): a Stands-out ticker renders the FULL block once, before the ta
   assert.deepEqual(fullBlockProblems(html, row), []);
   // the same function the triage row uses: rendered OPEN, with no link to the page it is on (signals-v4 LD4)
   const block = domOf(html).querySelector("#on-signals")!;
+  /* launch copy audit ticker-05: the caps meta is the count it carried and a
+     tip with the ranking basis; the link names its page */
+  const meta = block.querySelector(".panel-head .panel-note")!;
+  assert.match(visibleText(meta), /^(Strongest of \d+ rows|1 row) ⓘ$/);
+  assert.equal(visibleText(meta.querySelector(".note-pop")!), "Ranked against each filer's own record as of its filing.");
+  assert.doesNotMatch(html, /FILINGS TO READ · AGAINST|THE STRONGEST OF|← Back to Signals/, "control: the caps meta and the back link are gone");
   assert.ok(block.querySelector("details.si-row-d")!.hasAttribute("open"), "the block's row is open");
   assert.ok(!block.querySelectorAll(".si-row-links a").some((a) => (a.getAttribute("href") ?? "").startsWith("/tickers/")), "no link to the ticker page it is on");
   assert.ok(block.querySelectorAll(".si-row-links a").some((a) => a.getAttribute("href") === row.lead.doc), "the opened row links the receipt");
@@ -881,7 +922,7 @@ test("T3.3 (R18): a full block with no committee context carries no committee ca
   assert.ok(row.meters.cmte < 1, `precondition: Cmte ${row.meters.cmte}`);
   const html = goldenPage("MLM");
   assert.deepEqual(fullBlockProblems(html, row), []);
-  assert.ok(!html.includes(COMMITTEE_CAVEAT), "no caveat without committee context");
+  assert.ok(!html.includes(COMMITTEE_CAVEAT) && !html.includes(COMMITTEE_CAVEAT_SHORT), "no caveat without committee context");
 });
 
 /** Every R18 field of the COMPACT block, per hit row. */
@@ -908,7 +949,7 @@ function compactBlockProblems(html: string, hits: readonly import("../src/lib/si
     if (tr.querySelector("td.c-src a")?.getAttribute("href") !== s.receipts[0]) out.push(`${s.id}: the receipt`);
   }
   const caveat = block.querySelector(".si-cmte-context");
-  if (committee && !(caveat && visibleText(caveat).includes(COMMITTEE_CAVEAT))) out.push("the committee caveat is missing beside a COMMITTEE hit");
+  if (committee && !(caveat && visibleText(caveat).toLowerCase().includes(COMMITTEE_CAVEAT_SHORT.toLowerCase()))) out.push("the committee caveat is missing beside a COMMITTEE hit");
   if (!committee && caveat) out.push("a committee caveat with no COMMITTEE hit");
   return out;
 }
@@ -944,7 +985,7 @@ test("T3.3 (R18): a ticker with hits and no Stands-out or Worth-a-look row rende
   const snow = t.hitsByTicker.get("SNOW")!;
   assert.ok(snow.every((h) => h.kind !== "s5-jurisdiction") && !(t.byTicker.get("SNOW") ?? []).some((r) => r.tier !== "routine"));
   assert.deepEqual(compactBlockProblems(goldenPage("SNOW"), snow), []);
-  assert.ok(!goldenPage("SNOW").includes(COMMITTEE_CAVEAT));
+  assert.ok(!goldenPage("SNOW").includes(COMMITTEE_CAVEAT) && !goldenPage("SNOW").includes(COMMITTEE_CAVEAT_SHORT));
 });
 
 test("T3.3 (R18): no active hit, no block; /e/ (no deps) never renders one, and the parity capture holds none", () => {
@@ -991,7 +1032,8 @@ test("T3.4 (R19, R20): the block's triggering lines on THIS ticker are pinned fi
     for (const r of pinned) {
       assert.ok(r.querySelector("td.c-filed") && r.querySelector("td.c-traded") && r.querySelector("td.c-src a"), `${ticker}: a pinned row keeps both dates and its receipt`);
     }
-    assert.match(goldenPage(ticker), new RegExp(`<a href="/congress/tickers/${ticker}/">all ${entity.txns.length.toLocaleString("en-US")} rows ↗</a>`), `${ticker}: the full Congress view`);
+    // launch copy audit ticker-08: the full Congress view is the head's one link
+    assert.match(goldenPage(ticker), new RegExp(`<a class="section-link" href="/congress/tickers/${ticker}/">All ${entity.txns.length.toLocaleString("en-US")} rows ↗</a>`), `${ticker}: the full Congress view`);
   }
   // the full block's lines: lead first, LD4 line order, only this ticker's (BAC's row holds three lines, one on BAC)
   const bac = strongRow("BAC");
@@ -1008,7 +1050,7 @@ test("T3.4 (R19, R20): the block's triggering lines on THIS ticker are pinned fi
   const plain = previewRows(goldenPage("TJX"));
   assert.ok(plain.every((r) => !r.classList.contains("on-signals")));
   assert.match(goldenPage("TJX"), /aria-sort="descending"/, "unpinned, the Filed column claims its sort");
-  assert.match(goldenPage("BAC"), /ON SIGNALS ROWS FIRST, THEN FILED ↓/, "pinned, the panel states the order");
+  assert.match(goldenPage("BAC"), /<span class="panel-note">Signals rows first, then newest<\/span>/, "pinned, the panel states the order");
 });
 
 test("T3.4 (R19): universalFlags covers the pinned rows — a flag the newest rows share but a pinned row lacks is never hoisted", () => {
@@ -1042,39 +1084,64 @@ test("T3.4 (R19, R20): the timeline draws the $15K, $250K and $5M gridlines and 
   assert.equal(domOf(goldenPage("AAPL", null)).querySelectorAll(".tl-ring").length, 0);
 });
 
-test("T3.5 (R21): holders 1–10 show; 11..N sit in 'Show all N holders'; the hoist and the terminus are computed over all N; the full holders link only with holdersPage", () => {
+test("T3.5 (R21) → launch M7b (R33): holders 1–25 show; 26..N are held — an island the binder draws and a no-JS second table inside 'Show all N holders'; the hoist and the terminus are computed over all N; the holders link only with holdersPage", () => {
+  /* Reversal record (launch M7b, LD30): the visible window moved from 10 to 25
+     and holders past it left the DOM for an island plus a `<noscript>` copy.
+     Property kept: every holder is reachable (with and without JavaScript),
+     the disclosure states all N, the hoist and the terminus read all N. */
   const holder = (i: number, flags: string[] = []) => ({ rank: i, cik: String(i).padStart(10, "0"), name: `HOLDER ${i}`, value: 100_000 - i, securities: 1, keySource: "entity", flags });
   const data = (n: number, over: Partial<TickerInstSection> = {}, flags: (i: number) => string[] = () => []): string =>
     unified({ state: "data", name: "Fixture Corp", cik: "0000320193", period: "2026-03-31", latestFiled: "2026-05-15", topn: 25, holders: Array.from({ length: n }, (_, i) => holder(i + 1, flags(i + 1))), ...over } as TickerInstSection);
-  const html = data(25);
+  const range = (a: number, b: number): string[] => Array.from({ length: b - a + 1 }, (_, i) => String(a + i));
+  const ranksIn = (html: string): string[] => [...html.matchAll(/<tr role="row"><td role="cell" class="c-num c-muted">(\d+)<\/td>/g)].map((m) => m[1]!);
+  const html = data(40);
   const sec = domOf(html).querySelector("#ticker-holders")!;
-  const tables = sec.querySelectorAll("table");
-  assert.equal(tables.length, 2);
+  const firstTable = sec.querySelector("table")!;
   const ranks = (el: MiniElement): string[] => el.querySelectorAll("tbody tr").map((tr) => visibleText(tr.querySelectorAll("td")[0]!).trim());
-  assert.deepEqual(ranks(tables[0]!), Array.from({ length: TICKER_HOLDERS_VISIBLE }, (_, i) => String(i + 1)), "holders 1–10 visible");
+  assert.deepEqual(ranks(firstTable), range(1, TICKER_HOLDERS_VISIBLE), "holders 1–25 visible");
+  assert.equal(TICKER_HOLDERS_VISIBLE, 25);
   const more = sec.querySelector("details.tk-holders-more")!;
   assert.ok(more && !more.hasAttribute("open"), "closed by default");
-  assert.equal(visibleText(more.querySelector("summary")!), "Show all 25 holders");
-  assert.deepEqual(ranks(more), Array.from({ length: 15 }, (_, i) => String(i + 11)), "holders 11..N inside, none lost");
-  assert.ok(tables.every((t) => t.getAttribute("data-paged") === "1"), "each part says it shows part of the collection");
-  assert.match(visibleText(sec), /ranks the top 25 holders per issuer/, "the terminus");
-  // ten or fewer: one table, no disclosure, nothing marked partial
-  const ten = domOf(data(10)).querySelector("#ticker-holders")!;
-  assert.equal(ten.querySelectorAll("table").length, 1);
-  assert.ok(!ten.querySelector("details.tk-holders-more") && !ten.querySelector("table[data-paged]"));
+  assert.equal(visibleText(more.querySelector("summary")!), "Show all 40 holders", "the disclosure keeps its count of ALL N");
+  // the no-JS copy: a SECOND table inside <noscript>, holding 26..N, never in a tbody
+  const noscript = /<noscript>([\s\S]*?)<\/noscript>/.exec(html.slice(html.indexOf("tk-holders-more")))![1]!;
+  assert.deepEqual(ranksIn(noscript), range(26, 40), "holders 26..N in the no-JS table, none lost");
+  for (const m of html.matchAll(/<noscript>/g)) {
+    const before = html.slice(0, m.index);
+    assert.ok(before.lastIndexOf("<tbody") <= before.lastIndexOf("</tbody>"), "no <noscript> opens inside a tbody");
+  }
+  // the island: rows 26..N with every input the row function reads; drawn byte-identically
+  /* launch integration: the site's one held-rows island (lib/held-rows.ts):
+     `offset` is the 25 shown; `shared` carries the row function's ctx and the
+     stepped view's step, total and noun */
+  const island = JSON.parse(/<script type="application\/json" data-held-for="ticker-holders-held" data-held-render="ticker-holder">([\s\S]*?)<\/script>/.exec(html)![1]!) as { offset: number; shared: { step: number; total: number; ctx: unknown }; rows: unknown[] };
+  assert.deepEqual([island.offset, island.shared.step, island.shared.total, island.rows.length], [25, 25, 40, 15]);
+  const noscriptBody = /<tbody role="rowgroup">([\s\S]*?)<\/tbody>/.exec(noscript)![1]!;
+  assert.equal(island.rows.map((r, j) => TICKER_HOLDER_HELD.row(r, island.offset + j, island.shared)).join("\n"), noscriptBody, "the binder's rows are the server's rows, byte for byte");
+  // the rows past 25 are not in the DOM: the held table the binder fills is empty
+  assert.equal(domOf(html).querySelector("#ticker-holders-held")!.querySelectorAll("tr").length, 0);
+  assert.match(html, /data-paged="1"/, "each part says it shows part of the collection");
+  assert.match(visibleText(sec), /Top 25 holders per issuer, set by the site/, "the terminus");
+  // twenty-five or fewer: one table, no disclosure, no island, nothing marked partial
+  const few = data(25);
+  assert.equal(domOf(few).querySelector("#ticker-holders")!.querySelectorAll("table").length, 1);
+  assert.ok(!few.includes("tk-holders-more") && !few.includes("data-held-for") && !few.includes("data-paged") && !few.includes("<noscript>"));
   // the terminus counts ALL N on the mapped path
-  const mapped = data(25, { mapped: { issuer: "FIXTURE CORP", titleOfClass: "COM", holderCount: 700 } } as never);
-  assert.match(mapped, /The 25 largest of the 700 13F filers reporting this share class for the quarter are listed/);
-  // the hoist reads ALL N: a flag on every holder is stated once; one on the first ten only stays on their rows
+  const mapped = data(40, { mapped: { issuer: "FIXTURE CORP", titleOfClass: "COM", holderCount: 700 } } as never);
+  assert.match(mapped, /Top 40 of 700 holders shown; the rest are on EDGAR\./);
+  // the hoist reads ALL N: a flag on every holder is stated once; one on the first 25 only stays on their rows
   const flag = "security_not_in_mapping";
-  const every = data(25, {}, () => [flag]);
+  const every = data(40, {}, () => [flag]);
   assert.equal((every.match(/class="caveat-line table-caveat"/g) ?? []).length, 1, "every holder carries it: stated once");
   assert.ok(domOf(every).querySelectorAll("#ticker-holders td.c-flags").every((td) => visibleText(td).trim() === ""), "and on no row");
-  const topOnly = data(25, {}, (i) => (i <= TICKER_HOLDERS_VISIBLE ? [flag] : []));
-  assert.ok(!topOnly.includes("table-caveat"), "the first ten carry it, holders 11..25 do not: never hoisted from the visible ten");
-  const cells = domOf(topOnly).querySelectorAll("#ticker-holders td.c-flags").map((td) => visibleText(td).trim() !== "");
-  assert.deepEqual(cells, Array.from({ length: 25 }, (_, i) => i < TICKER_HOLDERS_VISIBLE), "it stays on the ten rows that carry it");
+  const topOnly = data(40, {}, (i) => (i <= TICKER_HOLDERS_VISIBLE ? [flag] : []));
+  assert.ok(!topOnly.includes("table-caveat"), "the first 25 carry it, holders 26..40 do not: never hoisted from the visible 25");
+  const firstCells = domOf(topOnly).querySelector("#ticker-holders table")!.querySelectorAll("td.c-flags").map((td) => visibleText(td).trim() !== "");
+  assert.deepEqual(firstCells, Array.from({ length: 25 }, () => true), "it stays on the 25 rows that carry it");
+  const heldIsland = JSON.parse(/data-held-render="ticker-holder">([\s\S]*?)<\/script>/.exec(topOnly)![1]!) as { shared: { ctx: { stated: string[] } } };
+  assert.deepEqual(heldIsland.shared.ctx.stated, [], "the held rows' renderer gets the same all-N hoist");
   // the full holders view: only when that page is built
-  assert.ok(data(25, { holdersPage: true }).includes("full holders view ↗"));
-  assert.ok(!data(25, { holdersPage: false }).includes("/holders/"));
+  assert.ok(data(40, { holdersPage: true }).includes("All holders ↗"));
+  assert.ok(!data(40, { holdersPage: false }).includes("/holders/"));
 });
+

@@ -519,15 +519,6 @@ export function bandGeometry(r: Pick<TxnRow, "low" | "high">): BandGeom {
 
 /* ---------- row field presentation ---------- */
 
-/** A note key that is INJECTIVE over tickers (CD3-4 (a), M3 review): `slug`
-    folds every non-alphanumeric run to "-", so "BRK.B" and "BRK-B" would
-    share an id; each punctuation character is spelled as its code point
-    instead ("BRK.B" → "brk_1a_b" → id "n-mf-brk-1a-b"). A plain ticker is its
-    own key ("AAPL" → "n-mf-aapl"). */
-export function tickerNoteKey(ticker: string): string {
-  return ticker.replace(/[^A-Za-z0-9]/g, (ch) => `_${ch.codePointAt(0)!.toString(36)}_`);
-}
-
 /** No-ticker cell (B-7/F-6): the 16.1% of rows without a ticker used to show a
     bare "—" — but the filing names the asset. Render the asset name AS FILED
     (with its verbatim source asset-type value, when stated) instead of
@@ -1383,9 +1374,12 @@ export function amountVerdict(
 /* ---------- merge + pagination (shared so SSR page 1 === client page 1) ---- */
 
 export const PAGE_SIZE = 50;
-/** R12: the Congress feed pages 50 rows; page 1 is server-rendered from the
-    same slice the client pages through the byte-bounded feed parts. */
-export const DESIGN_FEED_PAGE_SIZE = 50;
+/** Launch M3a (LD20, pagination-and-counts.md rule 1a): the Congress feed
+    pages 20 rows in both views; page 1 is server-rendered from the same slice
+    the client pages through the byte-bounded feed parts. The published part
+    index keeps `page_size` 50 (`PAGE_SIZE`) byte-for-byte: a 20-row page is
+    derived from part metadata (`feedPageCount`, rule 2a), never from it. */
+export const DESIGN_FEED_PAGE_SIZE = 20;
 
 /** Merge transactions with paper filings by filed date (desc); transactions
     first within a date. Both inputs must already be sorted filed-desc. */
@@ -1473,6 +1467,12 @@ export interface CountInputs {
   txnTotal: number;
   /** rows whose amount can be neither ruled in nor out of the threshold */
   indeterminate: number;
+  /** I7 (launch M3a): a VIEW that hides populations — the "With ticker"
+      default. `noun` names the view's transactions ("transactions with a
+      ticker"); `hiddenNoTicker` and `hiddenPaper` are WHOLE-SET sizes under the
+      reader's other filters, stated as the rows All rows holds. Absent in All
+      rows. */
+  view?: { noun: string; hiddenNoTicker: number; hiddenPaper: number };
 }
 
 /** THE range-of-total count (DESIGN-POLISH M1, R8): "1–10 of 608 tickers",
@@ -1497,10 +1497,21 @@ export function rangeOfTotal(
   return `${fmtInt(first)}–${fmtInt(last)} of ${opts.definite ? "the " : ""}${fmtInt(total)} ${noun}`;
 }
 
+/** I7: the populations a view hides, as one whole-set clause naming where
+    they are. A zero population is not stated; nothing hidden, nothing said. */
+function hiddenViewText(noTicker: number, paper: number): string {
+  const papers = (n: number): string => `${fmtInt(n)} paper ${n === 1 ? "filing" : "filings"}`;
+  if (noTicker > 0 && paper > 0) return ` · ${fmtInt(noTicker)} without a ticker and ${papers(paper)} are in All rows`;
+  if (noTicker > 0) return ` · ${fmtInt(noTicker)} without a ticker ${noTicker === 1 ? "is" : "are"} in All rows`;
+  if (paper > 0) return ` · ${papers(paper)} ${paper === 1 ? "is" : "are"} in All rows`;
+  return "";
+}
+
 export function feedCountText(i: CountInputs): string {
+  const noun = i.view?.noun ?? "transactions";
   let txnPart: string;
   if (i.txnMatched === 0) {
-    txnPart = `0 of ${fmtInt(i.txnTotal)} transactions`;
+    txnPart = `0 of ${fmtInt(i.txnTotal)} ${noun}`;
   } else if (i.txnOnPage === 0) {
     // A reachable page can hold only trailing paper filings; a numeric range
     // would have to invert to describe it.
@@ -1508,7 +1519,7 @@ export function feedCountText(i: CountInputs): string {
   } else {
     const lo = i.page * (i.pageSize ?? PAGE_SIZE) + 1;
     const hi = Math.min(lo + i.txnOnPage - 1, i.txnMatched);
-    txnPart = rangeOfTotal(lo, hi, i.txnMatched, "transactions");
+    txnPart = rangeOfTotal(lo, hi, i.txnMatched, noun);
   }
   const paperPart =
     i.paperMatched === 0
@@ -1517,7 +1528,8 @@ export function feedCountText(i: CountInputs): string {
         (i.paperOnPage > 0 ? ` (${fmtInt(i.paperOnPage)} here)` : "");
   const unknownPart =
     i.indeterminate === 0 ? "" : ` · ${fmtInt(i.indeterminate)} amount not comparable`;
-  return txnPart + paperPart + unknownPart;
+  const hiddenPart = i.view ? hiddenViewText(i.view.hiddenNoTicker, i.view.hiddenPaper) : "";
+  return txnPart + paperPart + unknownPart + hiddenPart;
 }
 
 /* ---------- row renderers (single source for SSR + client) ---------- */
@@ -1608,9 +1620,10 @@ export function srcLink(doc: string, extraClass = ""): string {
   return `<div class="cell cell-src${extraClass ? " " + extraClass : ""}">${srcLinkInner(doc)}</div>`;
 }
 
-/** The feed row's provenance CELL. Same content, table-row container. */
+/** The feed row's provenance CELL. Same content, table-row container, with
+    the receipt role class and its explicit cell role (R40). */
 export function srcLinkCell(doc: string): string {
-  return `<td class="cell cell-src">${srcLinkInner(doc)}</td>`;
+  return `<td class="cell cell-src c-src" role="cell">${srcLinkInner(doc)}</td>`;
 }
 
 /** SrcLink, aggregate form (G7): derived rows carry "derived ·§" resolving to
@@ -1634,22 +1647,29 @@ export function srcLinkDerived(footnoteHref: string | null, edgarUrl: string | n
   );
 }
 
+/** Launch M3a (copy item congress-27): the † explains itself on the row it
+    marks — the footnote block under the feed is retired. */
+export const UNJOINED_FILER_NOTE = "Name as printed on the filing — not yet matched to a member record, so no member page is linked.";
+
 function memberCellHtml(r: {
   name: string; bioguide: string | null; party: string;
   state: string | null; district: string | null; chamber: "house" | "senate";
-}, ctx: RenderCtx): string {
+}, ctx: RenderCtx, rowKey: string): string {
   const aff = affText(r);
   const affCls = partyClass(r.party);
   if (r.bioguide) {
     return (
-      `<a href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a>` +
+      /* the feed row's main link (launch review M2) */
+      `<a data-row-link href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a>` +
       ` <span class="aff ${affCls}">${esc(aff)}</span>`
     );
   }
-  // unjoined filer: name as printed on the filing, dotted underline + dagger
+  // unjoined filer: name as printed on the filing, dotted underline, and the
+  // dagger as the trigger of its own note (never linked to a member page)
   return (
-    `<a href="#feed-footnote" class="unjoined" title="filer not yet joined to a member record — name as printed on the filing">${esc(r.name)}</a>` +
-    `<sup>†</sup> <span class="aff ${affCls}">${esc(aff)}</span>`
+    `<span class="unjoined">${esc(r.name)}</span>` +
+    note(UNJOINED_FILER_NOTE, { scope: "feed-filer" }, rowKey, { trigger: "mark", textHtml: "†", name: "Member not identified" }) +
+    ` <span class="aff ${affCls}">${esc(aff)}</span>`
   );
 }
 
@@ -1740,32 +1760,35 @@ export function txnRowHtml(r: TxnRow, ctx: RenderCtx): string {
       }) +
       `</span>`
     : "";
-  return `<tr class="feed-row feed-grid-cols reference-row ${esc(side.cls)}${r.late === 1 ? " reference-late" : ""}"${edge ? ` data-edge="${edge}"` : ""}>` +
+  /* R40 (launch M1 contract, emitted here by M3a): explicit table roles on the
+     row and every cell, at every width, so the ≤720px card keeps its table
+     semantics where WebKit drops them on a `display` change. */
+  return `<tr class="feed-row feed-grid-cols reference-row ${esc(side.cls)}${r.late === 1 ? " reference-late" : ""}"${edge ? ` data-edge="${edge}"` : ""} role="row">` +
     /* L4 (DESIGN-POLISH M3, T3.2): a late row keeps its side word — the
        lateness is the gold edge and the dates cell's LATE·Nd, never a
        replacement for the side, which is honesty content (§1). */
-    `<td class="cell cell-side c-kind ${esc(side.cls)}">${esc(side.text)}</td>` +
-    `<td class="cell cell-member c-member"><span class="visually-hidden">Member </span>${memberCellHtml(r, ctx)}</td>` +
-    `<td class="cell cell-ticker c-ticker">${r.ticker ? `<a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>` : '<span class="none">—</span>'}</td>` +
+    `<td class="cell cell-side c-kind ${esc(side.cls)}" role="cell">${esc(side.text)}</td>` +
+    `<td class="cell cell-member c-member" role="cell"><span class="visually-hidden">Member </span>${memberCellHtml(r, ctx, r.txnId)}</td>` +
+    `<td class="cell cell-ticker c-ticker" role="cell">${r.ticker ? `<a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>` : '<span class="none">—</span>'}</td>` +
     /* R17 (M3, T3.3): the default asset text, its as-filed note, and the
        qualifiers OUTSIDE the ellipsis — one separator, never "· ·" (A9). */
-    `<td class="cell cell-asset c-secondary">${assetLineHtml(r, { notes: { scope: "feed-asset" }, qualifiers: true })}</td>` +
-    `<td class="cell cell-amount c-num${amountUnknown ? " unknown" : ""}">${esc(amount)}${capMark}</td>` +
+    `<td class="cell cell-asset c-secondary" role="cell">${assetLineHtml(r, { notes: { scope: "feed-asset" }, qualifiers: true })}</td>` +
+    `<td class="cell cell-amount c-num${amountUnknown ? " unknown" : ""}" role="cell">${esc(amount)}${capMark}</td>` +
     /* H-17: the row's flags are VISIBLE chips in the range cell — never folded
        behind a note. Each chip is the label trigger of its OWN definition
        (FEED_FLAG_DEFINITIONS). */
-    `<td class="cell cell-range c-bar">${rangeBand(r)}${flagTags(r.flags, r, { definitions: { notes: { scope: "feed-flag" }, key: r.txnId } })}</td>` +
-    `<td class="cell cell-traded c-num">${dualDate(r, true)}</td>` +
-    `<td class="cell cell-src c-src">${srcLinkInner(r.doc)}</td></tr>`;
+    `<td class="cell cell-range c-bar" role="cell">${rangeBand(r)}${flagTags(r.flags, r, { definitions: { notes: { scope: "feed-flag" }, key: r.txnId } })}</td>` +
+    `<td class="cell cell-traded c-num" role="cell">${dualDate(r, true)}</td>` +
+    `<td class="cell cell-src c-src" role="cell">${srcLinkInner(r.doc)}</td></tr>`;
 }
 
 export function paperRowHtml(r: PaperRow, ctx: RenderCtx): string {
   /* The ledger's grid row (DESIGN-POLISH M1): the kind word, the member, one
      cell spanning the four columns a paper filing cannot fill, the filed
      date in the dates column, the receipt. */
-  return `<tr class="feed-row paper reference-paper"><td class="cell cell-side c-kind">Paper</td><td class="cell cell-member c-member">${memberCellHtml(r, ctx)}</td>` +
-    `<td colspan="4" class="paper-main c-secondary">Paper filing · needs OCR · no machine-readable transactions</td>` +
-    `<td class="cell cell-traded c-num"><span class="visually-hidden">Filed </span>${esc(r.filed)}</td>${srcLinkCell(r.doc)}</tr>`;
+  return `<tr class="feed-row paper reference-paper" role="row"><td class="cell cell-side c-kind" role="cell">Paper</td><td class="cell cell-member c-member" role="cell">${memberCellHtml(r, ctx, `paper-${r.doc}`)}</td>` +
+    `<td colspan="4" class="paper-main c-secondary" role="cell">Paper filing · needs OCR · no machine-readable transactions</td>` +
+    `<td class="cell cell-traded c-num" role="cell"><span class="visually-hidden">Filed </span>${esc(r.filed)}</td>${srcLinkCell(r.doc)}</tr>`;
 }
 
 /* ---------- the feed table's COLUMN CONTRACT ----------
@@ -1787,6 +1810,8 @@ export interface FeedColumn {
   /** why this column has no defined order — required on every column that
       carries no `sortKey`, so a mute column cannot be added by omission */
   why?: string;
+  /** `why` as trusted html, when the reason carries a link */
+  whyHtml?: string;
   /** extra class on the `<th>`, matching the grid track it heads */
   cls?: string;
 }
@@ -1800,16 +1825,28 @@ export interface FeedHeadOpts {
 }
 
 export function feedHeadHtml(opts: FeedHeadOpts): string {
+  /* Launch M3a (LD22): "Kind" → "Side", "Amount range" → "Size", "Source" →
+     "Src"; each keeps its definition as the header note, and a paper row keeps
+     "Paper" in the Side column. */
   const columns: readonly FeedColumn[] = [
-    { label: "Kind", why: "Purchase, sale or exchange as disclosed.", cls: "c-kind" },
+    { label: "Side", why: "Purchase, sale or exchange as disclosed; a paper filing reads Paper.", cls: "c-kind" },
     { label: "Member", why: "Member and affiliation as recorded in the filing.", cls: "c-member" },
     { label: "Ticker", why: TICKER_ABSENT_NOTE, cls: "c-ticker" },
-    /* CD3-4 (b)/(c), M3 review: the asset rule, stated once on the column */
-    { label: "Asset · Owner", why: `${assetColumnNote()} The partial-sale and owner qualifiers are kept beside it.`, cls: "c-secondary" },
+    /* CD3-4 (b)/(c), M3 review: the asset rule, stated once on the column —
+       shortened for the feed by copy item congress-25, keeping the pinned
+       "without the parts that repeat the row" and the as-filed note. */
+    {
+      label: "Asset · owner",
+      whyHtml:
+        `The asset as filed, without the parts that repeat the row (its ticker, the [ST] code, a trailing “Common Stock”). ` +
+        `Any other difference makes the name a button whose note gives the text as filed; the partial-sale and owner qualifiers are kept beside it. ` +
+        `<a href="/methodology/#owner-codes">Owner codes ↗</a>`,
+      cls: "c-secondary",
+    },
     { label: "Range", sortKey: "amount", cls: "c-num" },
-    { label: "Amount range", why: "The statutory interval on a fixed log scale ($1K–$50M+); hatching identifies open or unknown bounds.", cls: "range c-bar" },
-    { label: "Traded → Filed", sortKey: "filed", cls: "c-num" },
-    { label: "Source", why: "Each link opens the original disclosure.", cls: "src c-src" },
+    { label: "Size", why: "The statutory interval on a fixed log scale ($1K–$50M+); hatching identifies open or unknown bounds.", cls: "range c-bar" },
+    { label: "Traded → filed", sortKey: "filed", cls: "c-num" },
+    { label: "Src", why: "Each link opens the original disclosure.", cls: "src c-src" },
   ];
   const cells = columns.map((c) => {
     const cls = c.cls ? ` class="${c.cls}"` : "";
@@ -1821,7 +1858,7 @@ export function feedHeadHtml(opts: FeedHeadOpts): string {
             : "descending"
           : "none";
       return (
-        `<th scope="col"${cls} data-feed-sort="${c.sortKey}" data-feed-dir="desc" ` +
+        `<th scope="col"${cls} role="columnheader" data-feed-sort="${c.sortKey}" data-feed-dir="desc" ` +
         `aria-sort="${dir}"><button class="th-sort" type="button">${thLabelHtml(c.label)}</button>` +
         SORT_CARET +
         `</th>`
@@ -1830,8 +1867,8 @@ export function feedHeadHtml(opts: FeedHeadOpts): string {
     /* The stated reason is the header's own LABEL trigger: the label is the
        button, so the header adds no inline width. */
     return (
-      `<th scope="col"${cls}>` +
-      noteFromHtml(esc(c.why ?? ""), opts.notes, c.label, {
+      `<th scope="col"${cls} role="columnheader">` +
+      noteFromHtml(c.whyHtml ?? esc(c.why ?? ""), opts.notes, c.label, {
         trigger: "label",
         textHtml: thLabelHtml(c.label),
         name: c.label,
@@ -1839,7 +1876,7 @@ export function feedHeadHtml(opts: FeedHeadOpts): string {
       `</th>`
     );
   }).join("");
-  return `<thead><tr class="feed-head feed-grid-cols reference-head">${cells}</tr></thead>`;
+  return `<thead role="rowgroup"><tr class="feed-head feed-grid-cols reference-head" role="row">${cells}</tr></thead>`;
 }
 
 export function feedItemHtml(item: FeedItem, ctx: RenderCtx): string {
@@ -2712,7 +2749,171 @@ export function thHtml(o: ThOpts): string {
     : o.order
       ? ` aria-sort="${o.order}"`
       : "";
-  return `<th scope="col"${cls ? ` class="${cls}"` : ""}${o.col ? ` data-col="${esc(o.col)}"` : ""}${sortAttrs}${o.attrs ?? ""}>${inner}</th>`;
+  /* `data-label` (launch M1b, LD6): the column's mark-free label, which a
+     body cell prints before its value once the ≤720px fold turns the row into
+     a card and the head folds away. `withTableRoles` copies it onto the
+     column's cells. */
+  return `<th scope="col"${cls ? ` class="${cls}"` : ""}${o.col ? ` data-col="${esc(o.col)}"` : ""} data-label="${esc(text)}"${sortAttrs}${o.attrs ?? ""}>${inner}</th>`;
+}
+
+/* ---------- explicit table semantics (launch M1a: R40, LD37) ----------
+
+   At ≤720px every ledger table folds into row cards (D4, LD6): the row and its
+   cells stop being `display: table-*`. WebKit — every browser on iOS — can then
+   drop the table's native semantics, and a screen reader hears a heap of text
+   instead of a table. So every table carries its roles EXPLICITLY, at every
+   width (a redundant role on a native table element is valid):
+
+     table → role="table" (plus `data-card`, the card layout the fold selects)
+     thead, tbody, tfoot → role="rowgroup"
+     tr → role="row"
+     th → role="columnheader" (scope="col", or any th in the head) or
+          role="rowheader" (scope="row", or a th in a body row)
+     td → role="cell" (plus `data-label`, copied from its column head's
+          `data-label`, which a card prints before the cell's value)
+
+   ONE pure function, applied wherever table markup enters a page: the layout's
+   render of the page body (`Base.astro`, so every server page and the no-JS
+   reader carry the roles from the first paint), and every client sink that
+   paints table markup (`scripts/table-roles.ts`, called by each sink), so a
+   repaint through the same row function carries them too. A role an element
+   already states is kept; nothing else in the markup changes. Roles added by a
+   client script after load were rejected (the first paint and no-JS readers
+   would lose them); see docs/frontend/design-principles.md §5. */
+
+/** A card row's MAIN link (launch review M2, R7): the one link the ≤720px fold
+    stretches over the whole card (entities.css), so a tap anywhere else on the
+    card opens the row. It is the first link of the row's main cell — the
+    member, else the filer, position or issuer, else the ticker — and never a
+    receipt. Its renderer marks it, and only it, with `data-row-link`; the fold
+    no longer guesses it by position (`a:first-of-type` also matched the
+    receipt inside a position cell). `rowLink` marks the first link of one
+    link's markup — for a link a shared helper builds (`filerLinkHtml`). */
+export const ROW_LINK_ATTR = "data-row-link";
+export function rowLink(linkHtml: string): string {
+  return linkHtml.replace(/<a(?=[\s>])(?![^>]*\sdata-row-link\b)/, `<a ${ROW_LINK_ATTR}`);
+}
+
+/** The ≤720px card layouts a table can select through `data-card` (LD6). */
+export const CARD_KINDS = ["feed", "ranking", "member-trades", "holders", "moves", "generic"] as const;
+export type CardKind = (typeof CARD_KINDS)[number];
+
+export interface TableRoleOpts {
+  /** The column labels (attribute-encoded, one per column; null = none) of
+      the table a FRAGMENT of rows is painted into. A client sink reads them off
+      the live head; markup holding a whole table takes them from its own head. */
+  labels?: readonly (string | null)[];
+}
+
+/* Comments and raw-text elements are passed through untouched; the attribute
+   group honours quoted values, so a `>` inside one cannot end the tag. Every
+   OTHER start tag is consumed whole and passed through too (launch review m2):
+   otherwise the scan, stopping at every `<`, would find a `<td>` written inside
+   another tag's quoted attribute value and rewrite it there. */
+const TABLE_MARKUP_TOKEN =
+  /<!--[\s\S]*?-->|<(script|style|textarea)\b[^>]*>[\s\S]*?<\/\1\s*>|<(\/?)(table|thead|tbody|tfoot|tr|th|td)\b((?:[^>"']|"[^"]*"|'[^']*')*)>|<[a-z][\w:-]*(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
+
+function attrValue(attrs: string, name: string): string | null {
+  const m = new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>\`]+))`, "i").exec(attrs);
+  return m ? (m[1] ?? m[2] ?? m[3] ?? "") : null;
+}
+function hasAttr(attrs: string, name: string): boolean {
+  return new RegExp(`(?:^|\\s)${name}(?:\\s*=|\\s|$)`, "i").test(attrs);
+}
+
+/** The card layout a table selects when it does not state one: the feed, a
+    member's (or any entity's) transactions, a holders table; else generic. */
+export function cardKindOf(attrs: string): CardKind {
+  const stated = attrValue(attrs, "data-card");
+  if (stated && (CARD_KINDS as readonly string[]).includes(stated)) return stated as CardKind;
+  const cls = ` ${attrValue(attrs, "class") ?? ""} `;
+  if (/\s(reference-feed|feed-table)\s/.test(cls)) return "feed";
+  if (hasAttr(attrs, "data-entity-table")) return "member-trades";
+  if (hasAttr(attrs, "data-holders-table")) return "holders";
+  return "generic";
+}
+
+/** Does a body cell print its column's label on a card? A number does (a bare
+    "12" means nothing once the head folds away), and so does a cell with no
+    ledger role class at all (a plain prose table); a name, ticker, kind word,
+    asset, owner, range band, flag or receipt says what it is, so it carries no
+    label — which also keeps the attribute off most cells (bytes per page). */
+function wantsCardLabel(attrs: string): boolean {
+  const roles = (attrValue(attrs, "class") ?? "").match(/(?:^|\s)c-[a-z-]+/g);
+  return roles === null || roles.some((r) => r.trim() === "c-num");
+}
+
+interface TableScope {
+  section: "head" | "body" | "foot" | null;
+  labels: readonly (string | null)[];
+  headRow: (string | null)[] | null;
+  col: number;
+}
+
+export function withTableRoles(html: string, opts: TableRoleOpts = {}): string {
+  if (!/<(?:table|thead|tbody|tfoot|tr|th|td)\b/i.test(html)) return html;
+  /* The implicit scope of a fragment: rows painted into a table body. */
+  const fragment: TableScope = { section: "body", labels: opts.labels ?? [], headRow: null, col: 0 };
+  const stack: TableScope[] = [];
+  const add = (tag: string, attrs: string, extra: string): string => {
+    const selfClose = /\/\s*$/.test(attrs);
+    const body = selfClose ? attrs.replace(/\/\s*$/, "") : attrs;
+    return `<${tag}${body}${extra}${selfClose ? " /" : ""}>`;
+  };
+  return html.replace(TABLE_MARKUP_TOKEN, (whole, _raw: string | undefined, close: string | undefined, name: string | undefined, attrs: string | undefined) => {
+    if (name === undefined) return whole; // a comment, a raw-text element or another start tag
+    const tag = name.toLowerCase();
+    const a = attrs ?? "";
+    const scope = stack[stack.length - 1] ?? fragment;
+    if (close) {
+      if (tag === "table") stack.pop();
+      else if (tag === "thead") {
+        if (scope.headRow) scope.labels = scope.headRow;
+        scope.section = null;
+      } else if (tag === "tbody" || tag === "tfoot") scope.section = null;
+      return whole;
+    }
+    const role = hasAttr(a, "role") ? "" : null;
+    switch (tag) {
+      case "table": {
+        stack.push({ section: null, labels: [], headRow: null, col: 0 });
+        const card = hasAttr(a, "data-card") ? "" : ` data-card="${cardKindOf(a)}"`;
+        return add(name, a, `${role ?? ' role="table"'}${card}`);
+      }
+      case "thead":
+      case "tbody":
+      case "tfoot":
+        scope.section = tag === "thead" ? "head" : tag === "tbody" ? "body" : "foot";
+        return add(name, a, role ?? ' role="rowgroup"');
+      case "tr":
+        scope.col = 0;
+        if (scope.section === "head") scope.headRow = [];
+        return add(name, a, role ?? ' role="row"');
+      default: {
+        // th, td
+        const span = Math.max(1, Number.parseInt(attrValue(a, "colspan") ?? "1", 10) || 1);
+        let extra: string;
+        if (tag === "th") {
+          const sc = (attrValue(a, "scope") ?? "").toLowerCase();
+          const head = sc === "col" || sc === "colgroup" || (sc !== "row" && sc !== "rowgroup" && scope.section === "head");
+          extra = role ?? (head ? ' role="columnheader"' : ' role="rowheader"');
+        } else {
+          extra = role ?? ' role="cell"';
+        }
+        if (scope.section === "head") {
+          if (scope.headRow) {
+            scope.headRow[scope.col] = tag === "th" ? attrValue(a, "data-label") : null;
+            for (let i = 1; i < span; i++) scope.headRow[scope.col + i] = null;
+          }
+        } else if (span === 1 && !hasAttr(a, "data-label") && wantsCardLabel(a)) {
+          const label = scope.labels[scope.col];
+          if (label) extra += ` data-label="${label}"`;
+        }
+        scope.col += span;
+        return add(name, a, extra);
+      }
+    }
+  });
 }
 
 /* ---------- column presence (DESIGN-POLISH M2, R12, Architecture D) ----------

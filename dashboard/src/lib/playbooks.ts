@@ -7,15 +7,19 @@
    reads no price and computes no return, so it never says whether a pattern
    holds now, and nothing here is a recommendation (ARCHITECTURE §2.4).
 
-   The texts are `docs/design/signals-v4-mock/playbooks.py`'s (citations
-   checked against their publishers 2026-10-17), verbatim except the edits
-   the plan marks † and two the build needs (recorded in
-   docs/frontend/signals-v4.md): the best-ideas pattern without the banned
-   "highest-conviction"; the section the best-ideas trigger and verdict name,
-   written through the reference-label token below; the insider playbook's
-   name ("…purchases", not "…buying"); the leadership trigger's roster
-   sentence, which named a draft roster and the pipeline's identifier word;
-   and the Overlap trigger, which called the tab's rule a draft.
+   The texts began as `docs/design/signals-v4-mock/playbooks.py`'s (citations
+   checked against their publishers 2026-10-17), with the edits the plan
+   marks † and two the build needs (recorded in docs/frontend/signals-v4.md):
+   the best-ideas pattern without the banned "highest-conviction"; the
+   section the best-ideas trigger and verdict name, written through the
+   reference-label token below; the insider playbook's name ("…purchases",
+   not "…buying"); the leadership trigger's roster sentence, which named a
+   draft roster and the pipeline's identifier word; and the Overlap trigger,
+   which called the tab's rule a draft. The launch redesign (M5, R28) then
+   cut the visible texts to the approved mock's length (the tab's served
+   words −28%): every citation, number, sample, qualifier the research needs
+   ("we found", "average", "abnormal") and link stays; venue and sample read
+   as a study tip, the rule and horizon as tips.
 
    `playbookTriggers` computes the three Congress triggers over the build's
    triage rows (LD16), in build memory like the triage itself — never
@@ -84,73 +88,74 @@ const CMP_2012: Omit<Evidence, "sample"> = {
   dir: "supports",
   cite: "Cohen, Malloy & Pomorski (2012)",
   venue: "Journal of Finance 67(3)",
-  finding: "Opportunistic insiders’ trades earned abnormal returns of 82 bp a month value-weighted (180 bp equal-weighted). Routine insiders’ earned about zero.",
+  finding: "Opportunistic trades earned abnormal returns of 82 bp a month value-weighted (180 bp equal-weighted); routine ones, about zero.",
   url: "https://www.nber.org/papers/w16454",
 };
 
-/** LD15: the seven playbooks, in the tab's order. */
+/** LD15: the seven playbooks, in the tab's order. The launch redesign (M5,
+    R28) tightened the visible texts — pattern, verdict, each finding — to the
+    approved mock's cut, keeping every citation, number, sample and link; the
+    rule, the horizon and each study's venue and sample are tips. */
 export const PLAYBOOKS: readonly Playbook[] = [
   {
     id: "opp-buy", short: "OPP. BUY", name: "Opportunistic member buy", source: "Congress", status: "live", grade: "split",
-    pattern:
-      "Strip out routine traders — people who trade in the same calendar month year after year, for pay or liquidity — and what is left carries the information. Proven for corporate insiders; adapted here to members of Congress.",
+    pattern: "Set aside members who trade in the same month every year; the rest may carry information.",
     trigger:
-      `A listed-stock purchase in Filings to read by a member who traded in each of the ${CMP_YEARS} prior years but never in one fixed month each year (the CMP routine test). ` +
+      `A listed-stock purchase in Filings to read by a member who traded in each of the ${CMP_YEARS} prior years but never in one fixed month each year (the Cohen–Malloy–Pomorski routine test, adapted from corporate insiders). ` +
       `Members with under ${CMP_YEARS} years of history are unclassified. Broad accounts (more than ${BROAD_ACCOUNT_NAMES} names in the ${OPP_BREADTH_DAYS} days before the trade) are left out.`,
-    horizon: "CMP: portfolios formed monthly on the filing. The Congress studies: one month to a year.",
-    verdict:
-      "Split. The routine filter is proven for corporate insiders and untested on Congress; studies after the STOCK Act find no average edge for member purchases.",
+    horizon: "The insider study: portfolios formed monthly on the filing. The Congress studies: one month to a year.",
+    verdict: "Split: proven for corporate insiders, untested on Congress; studies since the STOCK Act find no average edge.",
     evidence: [
       { ...CMP_2012, sample: "Corporate insiders, 1986–2007 — not Congress" },
       {
         dir: "supports", cite: "Ziobrowski, Cheng, Boyd & Ziobrowski (2004)", venue: "JFQA 39(4)", sample: "Senate, 1993–1998",
-        finding: "A portfolio copying senators’ purchases beat the market by 85 bp a month.",
+        finding: "Copying senators’ purchases beat the market by 85 bp a month.",
         url: "https://ideas.repec.org/a/cup/jfinqa/v39y2004i04p661-676_00.html",
       },
       {
         dir: "supports", cite: "Ziobrowski, Boyd, Cheng & Ziobrowski (2011)", venue: "Business and Politics 13(1)", sample: "House members",
-        finding: "A portfolio copying House members’ purchases beat the market by 55 bp a month.",
+        finding: "Copying House members’ purchases beat the market by 55 bp a month.",
         url: "https://www.cambridge.org/core/journals/business-and-politics/article/abnormal-returns-from-the-common-stock-investments-of-members-of-the-us-house-of-representatives/BC6C6A524BBE96738BB94D37EF0FD1A5",
       },
       {
         dir: "against", cite: "Eggers & Hainmueller (2013)", venue: "Journal of Politics 75(2)", sample: "Congress, 2004–2008",
-        finding: "No information advantage in either period studied; the average member would have earned more in a passive index fund.",
+        finding: "No information advantage in either period; the average member would have done better in an index fund.",
         url: "https://eprints.lse.ac.uk/46513",
       },
       {
         dir: "against", cite: "Belmont, Sacerdote, Sehgal & Van Hoek (2022)", venue: "Journal of Public Economics 207", sample: "Congress, 2012–2020 (after the STOCK Act)",
-        finding: "No outperformance in aggregate. Over six months, stocks House members bought underperformed by 26 bp.",
+        finding: "No outperformance in aggregate; over six months, House members’ purchases underperformed by 26 bp.",
         url: "https://www.nber.org/papers/w26975",
       },
     ],
   },
   {
     id: "leader", short: "LEADER", name: "Leadership trade", source: "Congress", status: "live", grade: "one study",
-    pattern: "Members who rise into party leadership trade like their peers before, and better after.",
+    pattern: "Party leaders trade better after taking the post.",
     trigger:
       "Any trade by a member holding one of the 12 leadership posts the study uses: the Speaker, and the floor leaders, whips and conference or caucus chairs in both chambers. " +
       /* † the draft-roster sentence: the roster is now dated and sourced (LD17) */
       `Matched by congressional identifier against a dated roster from ${ROSTER_FROM} (roster v${ROSTER_VERSION}, every tenure checked against house.gov, history.house.gov or senate.gov on ${ROSTER_CHECKED}); a trade before ${ROSTER_FROM} is never classified.`,
     horizon: "Annual portfolio returns, before and after taking the post.",
-    verdict: "One study: a working paper on 20 leaders. Strong effect, small sample, not yet peer-reviewed.",
+    verdict: "One working paper on 20 leaders: strong effect, small sample, not yet peer-reviewed.",
     evidence: [
       {
         dir: "supports", cite: "Wei & Zhou (2025)", venue: "NBER Working Paper 34524", sample: "1995–2021; 20 leaders who traded before and after",
-        finding: "Similar to matched peers before taking the post, then ahead of them by 47 percentage points a year after. The authors point to political influence and corporate access.",
+        finding: "Level with matched peers before the post; 47 percentage points a year ahead of them after.",
         url: "https://www.nber.org/papers/w34524",
       },
     ],
   },
   {
     id: "cmte", short: "CMTE", name: "Committee-linked trade", source: "Congress", status: "live", grade: "thin",
-    pattern: "A member trading a company inside the jurisdiction of a committee they sit on.",
+    pattern: "A member trading a company inside their committee’s jurisdiction.",
     trigger: `Cmte reads medium: a direct match in the committee table (v${COMMITTEE_DIRECT_VERSION}). Context, never an allegation.`,
     horizon: "Varies by study.",
-    verdict: "Thin. No study we found tests a jurisdiction match like this one; the committee result we found is about committee power, not jurisdiction.",
+    verdict: "Thin: no study we found tests a jurisdiction match like this one.",
     evidence: [
       {
         dir: "indirect", cite: "Hall, Karadas & Schlosky (2017)", venue: "Journal of Financial Economic Policy 9(4)", sample: "New members of Congress",
-        finding: "Members serving on powerful committees outperform the market in their second term — a committee-power effect, not a jurisdiction test.",
+        finding: "Members on powerful committees beat the market in their second term — committee power, not a jurisdiction test.",
         url: "https://ideas.repec.org/a/eme/jfeppp/jfep-12-2016-0095.html",
       },
       {
@@ -163,59 +168,58 @@ export const PLAYBOOKS: readonly Playbook[] = [
   {
     id: "best-ideas", short: "BEST IDEA", name: "Best ideas", source: "Institutional", status: "live", grade: "supportive",
     /* † "highest-conviction" is banned wording (LD15) */
-    pattern: "A manager’s best idea — the position tilted furthest from its market weight — beat the rest of the book in the research below.",
+    pattern: "A manager’s biggest tilt from market weight.",
     trigger: `A notable manager’s largest new position at 2% or more of its 13F long book (${LEADERS_LABEL_TOKEN}).`,
     horizon: "Monthly returns after the quarter’s holdings are known.",
-    verdict: `Supportive, but measured on mutual funds with tilt against market weight; ${LEADERS_LABEL_TOKEN} ranks by raw share of book.`,
+    verdict: `Supportive, but measured on mutual funds by tilt; ${LEADERS_LABEL_TOKEN} ranks by raw share of book.`,
     evidence: [
       {
         dir: "supports", cite: "Cohen, Polk & Silli (2010); later Antón, Cohen & Polk", venue: "“Best Ideas”, LSE working paper", sample: "US mutual funds, 1991–2005",
-        finding: "Best ideas beat the market and the rest of the portfolio by about 39–127 bp a month, depending on the benchmark. The later version reports 2.8–4.5% a year.",
+        finding: "Best ideas beat the market and the rest of the book by 39–127 bp a month, by benchmark; the later version: 2.8–4.5% a year.",
         url: "https://personal.lse.ac.uk/polk/research/BestIdeas.pdf",
       },
     ],
   },
   {
     id: "consensus", short: "CONSENSUS", name: "Notable-manager consensus", source: "Institutional", status: "live", grade: "weak",
-    pattern: "A name several notable managers opened or added in the same quarter.",
+    pattern: "Names several notable managers opened or added in one quarter.",
     trigger: "Three or more notable managers moved the same name in the closed quarter (Consensus).",
     horizon: "Quarterly holdings.",
-    verdict: "Weak. No study we found shows that names several hedge funds bought go on to outperform.",
+    verdict: "Weak: no study we found shows such names outperform.",
     evidence: [
       {
         dir: "indirect", cite: "Cohen, Coval & Pástor (2005)", venue: "Journal of Finance 60(3)", sample: "US equity funds",
-        finding: "Funds whose holdings resemble those of managers with strong records earn higher future returns — a fund-level result, not a stock-level one.",
+        finding: "Funds that hold what strong managers hold earn higher future returns — a fund-level result, not a stock-level one.",
         url: "https://www.nber.org/papers/w9359",
       },
       {
         dir: "against", cite: "Griffin & Xu (2009)", venue: "Review of Financial Studies 22(7)", sample: "13F holdings, 1986–2004",
-        finding: "Hedge funds out-picked mutual funds by only 1.32% a year value-weighted, not significant equal-weighted, with weak evidence of differences in skill.",
+        finding: "Hedge funds out-picked mutual funds by only 1.32% a year value-weighted, not significant equal-weighted.",
         url: "https://ideas.repec.org/a/oup/rfinst/v22y2009i7p2331-2370.html",
       },
     ],
   },
   {
     id: "overlap", short: "OVERLAP", name: "Congress and managers on one name", source: "Overlap", status: "descriptive", grade: "no studies",
-    pattern: "Members of Congress and notable managers moving the same name, the same way, in the same quarter.",
+    pattern: "Same name, same way, same quarter.",
     /* the tab's rule is no longer a draft (LD14) */
-    trigger: "The Overlap tab’s rule.",
-    horizon: "—",
-    verdict: "No published evidence found. It stays descriptive: Public Filings uses no prices, so it cannot test the pairing itself.",
+    trigger: "The Overlap tab’s rule: members of Congress and notable managers on the same name, the same way, in the same quarter — a co-occurrence in public filings, never coordination.",
+    horizon: "Not studied: no published research found.",
+    verdict: "Descriptive only: the site uses no prices to test it.",
     evidence: [],
   },
   {
     /* † "…buying" is banned wording (LD15) */
     id: "insider-opp", short: "INSIDER", name: "Opportunistic insider purchases", source: "Form 4", status: "needs-data", grade: "needs data",
-    pattern:
-      "Over half of corporate insider trades are routine — made in the same calendar month for years, for pay or liquidity — and carry no information. Strip them out and what is left is informed money.",
+    pattern: "Routine insider trades carry no information; the rest is informed money.",
     trigger:
       "Proposed: open-market purchases (Form 4 code P) by insiders not tagged routine; routine = traded in the same calendar month in each of the 3 prior years. Extra weight when 2 or more insiders of one issuer buy within 30 days — a proposed refinement, not tested in the paper.",
     horizon: "Portfolios formed monthly on the filing.",
-    verdict: "The strongest evidence of the set, and Public Filings cannot trigger it: there is no Form 4 data here yet.",
+    verdict: "The strongest evidence of the set, but there is no Form 4 data here yet.",
     needs: [
-      "A Form 4 ingest from EDGAR ownership XML; filings are due within 2 business days of the trade.",
-      "An insider-level history of at least 3 years, for the routine test.",
-      "An issuer-to-ticker bridge, so a row can name a ticker.",
+      "A Form 4 ingest (EDGAR ownership XML, due 2 business days after the trade).",
+      "Three years of history per insider (the routine test).",
+      "An issuer-to-ticker bridge, so rows can name tickers.",
     ],
     evidence: [{ ...CMP_2012, sample: "Corporate insiders, 1986–2007" }],
   },

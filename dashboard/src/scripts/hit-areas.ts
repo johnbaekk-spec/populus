@@ -21,9 +21,20 @@
    alone cannot draw (they only cut the centred square), so such a trigger
    also gets its own, wider `--hit-min`, read only by its `::before`. */
 
-const PSEUDO = ".note-btn, .th-sort";
-const CONTROLS =
+/* launch M1c (LD7, R7): under a coarse pointer or at the ≤720px fold, links
+   carry the hit square too (layout.css) — every link not set inline in
+   running prose — so their squares join the midpoint split. */
+const LINKS = "a[href]:not(:is(p, li, dd, .note-pop, .footer-notice) a)";
+const HIT_QUERY = "(any-pointer: coarse), (max-width: 720px)";
+const linksTakeSquares = (): boolean => typeof matchMedia === "function" && matchMedia(HIT_QUERY).matches;
+const BASE_PSEUDO = ".note-btn, .th-sort";
+const BASE_CONTROLS =
   ".note-btn, .th-sort, .seg > button, .chips > button, .mgr-chips > button, .pager-btn, .compact-toggle";
+/* launch gate (75e9920): a link set inline in prose takes no square of its own,
+   but it IS a target — another control's square must stop at the midpoint to
+   it, never cover it (a tip's square reached over the triage row's link below
+   it). Measured as a neighbour only. */
+const PROSE_LINKS = "a[href]";
 
 interface Rect {
   l: number;
@@ -34,6 +45,9 @@ interface Rect {
 
 interface Box extends Rect {
   el: HTMLElement;
+  /** The control's border widths (l, r, t, b): its `::before` is placed
+      against the PADDING box, its measured box is the border box. */
+  bw: Rect;
   /** The nearest ancestor that scrolls or hides its overflow, if any. */
   sc: HTMLElement | null;
   /** The part of the box its scrollers leave on screen; null when none is. */
@@ -199,13 +213,21 @@ export function clipHitAreas(): void {
   const boxes: Box[] = [];
   const cache = new Map<Element, boolean>();
   const views = new Map<HTMLElement, Rect>();
+  const withLinks = linksTakeSquares();
+  /* the layout viewport's width: no square reaches past the page's sides */
+  const pageR = document.documentElement.clientWidth;
+  const PSEUDO = withLinks ? `${BASE_PSEUDO}, ${LINKS}` : BASE_PSEUDO;
+  const CONTROLS = withLinks ? `${BASE_CONTROLS}, ${LINKS}, ${PROSE_LINKS}` : BASE_CONTROLS;
+  const docW = document.documentElement.clientWidth;
   for (const el of Array.from(document.querySelectorAll<HTMLElement>(CONTROLS))) {
     const r = el.getBoundingClientRect();
     // not a target: unrendered, visually hidden (1px clip), invisible, or inside
     // a closed disclosure (laid out, never painted)
     if (r.width < 2 || r.height < 2) continue;
     if (typeof el.checkVisibility === "function" ? !el.checkVisibility({ visibilityProperty: true }) : getComputedStyle(el).visibility === "hidden") continue;
-    const box: Box = { el, l: r.left + sx, r: r.right + sx, t: r.top + sy, b: r.bottom + sy, sc: null, vis: null };
+    const ecs = getComputedStyle(el);
+    const bw: Rect = { l: parseFloat(ecs.borderLeftWidth) || 0, r: parseFloat(ecs.borderRightWidth) || 0, t: parseFloat(ecs.borderTopWidth) || 0, b: parseFloat(ecs.borderBottomWidth) || 0 };
+    const box: Box = { el, bw, l: r.left + sx, r: r.right + sx, t: r.top + sy, b: r.bottom + sy, sc: null, vis: null };
     /* A row scrolled out of its box still has a box — under whatever sits
        beside the scroller. It is no target there, so it clips nothing
        outside its own scroller until it scrolls back into view. */
@@ -239,6 +261,12 @@ export function clipHitAreas(): void {
        shortened the holders page's last-column square to 22.3px. */
     const table = x.sc ? x.el.closest("table") : null;
     if (table) shiftInto(sq, tableRoom(x.el, table, sx, stickyCache));
+    /* launch gate (75e9920 on 20261019.2): outside any scroller a square
+       never reaches past the viewport's sides either. A tip at a card's right
+       edge reached 14px past it and the whole page scrolled sideways (R4,
+       T2.10 at every phone width); it is SHIFTED inside, keeping its side,
+       by the same rule as the table room above. */
+    if (!x.sc) shiftInto(sq, { l: sx, r: sx + docW });
     return sq;
   });
 
@@ -248,7 +276,7 @@ export function clipHitAreas(): void {
      that window instead of scanning every earlier control (review R-5). */
   const order = squares.map((_q, i) => i).sort((x, y) => squares[x]!.t - squares[y]!.t);
   const tallest = squares.reduce((m, q) => Math.max(m, q.b - q.t), 0);
-  const writes: { el: HTMLElement; ext: Rect; ownMin: string }[] = [];
+  const writes: { el: HTMLElement; ext: Rect; ownMin: string; bw: Rect; free: Record<keyof Rect, boolean> }[] = [];
   for (let k = 0; k < order.length; k++) {
     const i = order[k]!;
     const a = boxes[i]!;
@@ -256,6 +284,10 @@ export function clipHitAreas(): void {
     const sa = squares[i]!;
     // the extension allowed beyond the box on each side; the square's own first
     const ext: Rect = { l: a.l - sa.l, r: sa.r - a.r, t: a.t - sa.t, b: sa.b - a.b };
+    /* the plain, centred square's reach on each side: a side nothing cuts,
+       shifts or clamps is left to the CSS (see the write below) */
+    const plain = square(a, min);
+    const reachOf: Rect = { l: a.l - plain.l, r: plain.r - a.r, t: a.t - plain.t, b: plain.b - a.b };
     /* A square SHIFTED inside its table reaches further on one side than the
        centred square the CSS draws (whose side is --hit-min). The CSS clips
        the centred square by --hit-x-*, never grows it, so a shifted control
@@ -265,6 +297,21 @@ export function clipHitAreas(): void {
     const w = a.r - a.l;
     const reach = Math.max(ext.l, ext.r);
     const ownMin = reach > Math.max(0, (min - w) / 2) + 0.01 ? `${(w + 2 * reach).toFixed(2)}px` : "";
+    /* A square stops at the page's sides (launch fix round, gate on 75e9920):
+       a narrow target on the 16px gutter — a card's receipt tip, 11px wide,
+       reaches 16.5px — pushed the page half a pixel sideways on a phone, and
+       no finger lands past the edge of the screen. A cut, like the midpoint
+       split: the target's own box never shrinks.
+       Only OUTSIDE a scroller (gate 2, 67b9a8d on 20261019.2), like the shift
+       above: a receipt in a swipe strip's second card sits past the page's
+       right side until the strip is swiped, so the cut read it as ON the
+       edge and wrote --hit-x-r 0 — a 40×44 "PTR ↗" square, nine phone
+       views. Inside a scroller the scroller clips the square, so it can never
+       push the page sideways, and an inner scroll re-runs this cut anyway. */
+    if (pageR > 0 && !a.sc) {
+      ext.l = Math.min(ext.l, a.l);
+      ext.r = Math.min(ext.r, pageR - a.r);
+    }
     const visit = (j: number): void => {
       const sb = squares[j]!;
       if (!squareOverlaps(sa, sb)) return;
@@ -294,19 +341,32 @@ export function clipHitAreas(): void {
     };
     for (let f = k + 1; f < order.length && squares[order[f]!]!.t < sa.b; f++) visit(order[f]!);
     for (let r = k - 1; r >= 0 && squares[order[r]!]!.t > sa.t - tallest; r--) visit(order[r]!);
-    writes.push({ el: a.el, ext, ownMin });
+    const free: Record<keyof Rect, boolean> = { l: Math.abs(ext.l - reachOf.l) < 0.01, r: Math.abs(ext.r - reachOf.r) < 0.01, t: Math.abs(ext.t - reachOf.t) < 0.01, b: Math.abs(ext.b - reachOf.b) < 0.01 };
+    writes.push({ el: a.el, ext, ownMin, bw: a.bw, free });
   }
 
   /* ---- write: only what changed ---- */
   applyScrollPadding(pads);
-  for (const { el, ext, ownMin } of writes) {
+  for (const { el, ext, ownMin, bw, free } of writes) {
     const s = el.style;
     if (s.getPropertyValue("--hit-min") !== ownMin) {
       if (ownMin) s.setProperty("--hit-min", ownMin);
       else s.removeProperty("--hit-min");
     }
-    for (const [side, v] of [["l", ext.l], ["r", ext.r], ["t", ext.t], ["b", ext.b]] as const) {
-      const value = `${Math.max(0, v).toFixed(2)}px`;
+    for (const side of ["l", "r", "t", "b"] as const) {
+      /* launch gate (75e9920 on 20261019.2): the extension is measured from
+         the BORDER box, but the ::before's insets are offsets from the
+         PADDING box — a receipt link's 1px underline border made every
+         uncut square 1px short (44×43, 630 receipts per phone run). So a cut
+         is written from the padding edge (+ the border on that side), and a
+         side nothing cut, shifted or clamped is not written at all: the CSS
+         fallback then centres the full --hit-min on the box it is drawn
+         from. */
+      if (free[side] && !ownMin) {
+        if (s.getPropertyValue(`--hit-x-${side}`) !== "") s.removeProperty(`--hit-x-${side}`);
+        continue;
+      }
+      const value = `${Math.max(0, ext[side] + bw[side]).toFixed(2)}px`;
       // an unchanged value is not rewritten: this runs on every inner scroll
       if (s.getPropertyValue(`--hit-x-${side}`) !== value) s.setProperty(`--hit-x-${side}`, value);
     }

@@ -16,6 +16,7 @@ import {
   edgarFilerUrl,
   edgarTickerUrl,
 } from "../derive.ts";
+import { quarterLabel } from "../congress-quarter.ts";
 
 /* ---------- states S1/S2/S4/S7 ---------- */
 
@@ -116,8 +117,11 @@ export function s7Banner(window: FilingWindow): string {
     and for /institutional/'s provenance tip, which carries it in place of the
     banner block (signals-v4 LD18). */
 export function s7CopyHtml(window: FilingWindow): string {
+  /* Launch copy audit filer-03 (the same sentence on the filer and holders
+     banners and in /institutional/'s tip): "provisional by construction" was
+     jargon; the calendar facts and the incompleteness stay explicit. */
   return (
-    `Quarter <strong>${esc(window.quarterEnd)}</strong>: the 13F window is open until <strong>${esc(window.deadline)}</strong>. ` +
-    `Rankings and QoQ moves that touch this quarter are <strong>provisional by construction</strong> — filers who have not yet reported are not zeros.`
+    `<strong>${esc(quarterLabel(window.quarterEnd) ?? window.quarterEnd)}</strong> filings are due by <strong>${esc(window.deadline)}</strong> — ` +
+    `figures for that quarter will change; missing filers are not zeros.`
   );
 }

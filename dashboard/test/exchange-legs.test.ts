@@ -99,7 +99,7 @@ test("v3: a v2 dataset is refused as a version mismatch, and 20-column rows as a
 test("the feed ledger row shows the exchanged leg on its asset line, outside the ellipsis", () => {
   const html = txnRowHtml(txn(), CTX);
   // the ticker cell carries ONLY the canonical received leg
-  assert.match(html, /<td class="cell cell-ticker c-ticker"><a href="[^"]*\/EQT\/">EQT<\/a><\/td>/);
+  assert.match(html, /<td class="cell cell-ticker c-ticker"[^>]*><a href="[^"]*\/EQT\/">EQT<\/a><\/td>/);
   assert.ok(!/cell-ticker[^]*ETRN[^]*cell-asset/.test(html), "the exchanged leg is not in the ticker cell");
   // the leg is a sibling of the truncating .asset-text, after exactly one separator
   assert.ok(html.includes(`</span><span class="asset-sep">·</span>${LEG}`), html);

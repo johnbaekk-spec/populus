@@ -8,17 +8,16 @@
 // figures), the provenance line, a one-line pointer, the Filer directory,
 // Recent activity and the collapsed "Recently added issuers".
 import Base from "../../layouts/Base.astro";
-import { getBuildData, filerTier } from "../../lib/data";
-import { CONVICTION_LABEL_HTML, disclosureLedger, s1ModuleAbsent, s7CopyHtml, addsSectionHtml } from "../../lib/ui/index.ts";
+import { getBuildData, filerTier, instDirectoryRows, instDirectoryFamily } from "../../lib/data";
+import { disclosureLedger, s1ModuleAbsent, s7CopyHtml, addsSectionHtml } from "../../lib/ui/index.ts";
 import { concentrationPeriods, trackedValueFor } from "../../lib/inst-analytics";
 import { quarterLabel } from "../../lib/congress-quarter";
 import { filingWindow } from "../../lib/derive";
 import { serializeInlineJson } from "../../lib/inline-json";
-import { concentrationFor, deltasFor, typingFor, addsFor, addsExclusionCount } from "../../lib/inst";
+import { addsFor, addsExclusionCount } from "../../lib/inst";
 import { corpusAsOf, boundAdds, closedPeriods, instFreshnessText, type AddsMode } from "../../lib/inst-adds";
-import { biggestChange, MANAGER_TYPE_LABELS, type ManagerType } from "../../lib/manager-directory";
+import { MANAGER_TYPE_LABELS, type ManagerType } from "../../lib/manager-directory";
 import {
-  footnoteBlock,
   fmtInt,
   fmtUsd,
   esc,
@@ -29,11 +28,9 @@ import {
   thHtml,
   COMPACT_ROWS,
   dataColumnsAttr,
-  tableFootReasonHtml,
 } from "../../lib/format";
 import { activityFeed, activitySectionHtml } from "../../lib/activity";
 import {
-  buildInstIndexRow,
   directoryColumns,
   instIndexBodyHtml,
   DESIGN_INST_INDEX_HEADS as INST_INDEX_HEADS,
@@ -59,44 +56,32 @@ if (!inst.present) {
   // A-2: period-correct index rows (constraint 4 — every number from
   // agg_filer_concentration for the filer's latest period, never the
   // registry's cross-period accumulators), ranked by reported 13(f) long
-  // value with the no-sentinel rule for missing values.
-  const indexRows: InstIndexRow[] = inst.filers.map((f) =>
-    buildInstIndexRow(
-      f,
-      concentrationFor(inst, f.cik, f.latest_period),
-      filerTier(build, f.cik),
-      // Curated typing where the registry has it, null otherwise — the
-      // directory types a curated SUBSET and says so rather than guessing.
-      typingFor(inst, f.cik),
-      // The manager's largest change in its own latest period.
-      biggestChange(deltasFor(inst, f.cik, f.latest_period), f.latest_period),
-    ),
-  );
+  // value with the no-sentinel rule for missing values. Launch M7b (R32,
+  // LD28): built ONCE per build by `instDirectoryRows`, which the directory
+  // shard family reads too, so the first rows below and the fetched shards
+  // are the same rows.
+  const indexRows: InstIndexRow[] = instDirectoryRows(build);
   /* Compact by DEFAULT, server-side, through the SAME renderer the
-     client island uses.
+     client uses after it fetches the shards.
 
      This page used to render the body itself: it sliced the RANKED rows to the
      compact budget and then appended EVERY unranked row after them, outside
-     that budget. A directory with 400 unrankable managers therefore rendered
-     410 rows while its own disclosure said 10 were shown — the bound was
-     announced and then not applied. `instIndexBodyHtml` applies ONE budget
-     across both buckets and still states the unranked bucket's size even when
-     none of its rows fit, and it is now the only renderer of this table. */
+     that budget. `instIndexBodyHtml` applies ONE budget across both buckets
+     and still states the unranked bucket's size even when none of its rows
+     fit, and it is the only renderer of this table. */
   /* R12 (DESIGN-POLISH M2; review R2-6): "Top-5" is a derived column that
      exists only when the build's concentration slices hold five positions
      (topn === 5) and some filer carries one; otherwise it is removed outright
-     and the table foot says why. ONE presence function decides it
+     (launch M7b, copy item inst-04: without a "Not shown" line — the column
+     carries no honesty field). ONE presence function decides it
      (`directoryColumns`), the set rides in `data-columns`, and the client
      re-render reads it back. The field travels only when the column does. */
-  const top5 = (cik: string, period: string): number | null =>
-    concentrationFor(inst, cik, period)?.topn_share_bps ?? null;
-  for (const row of indexRows) {
-    row.reference = true;
-    if (inst.topn === 5) row.top5Share = top5(row.cik, row.period);
-  }
   const dirCols = directoryColumns(indexRows, inst.topn);
   const top5Present = dirCols.columns.includes("top5");
-  if (!top5Present) for (const row of indexRows) delete row.top5Share;
+  /* Launch M7b (R32, LD28): the rows ship as a versioned shard family the
+     client fetches on the first search, chip or sort; the page inlines only
+     the shard list (a few hundred bytes), never the rows. */
+  const directoryFamily = instDirectoryFamily(build);
   /* R14: *Hedge funds* is selected by default, for every visitor; the client
      island starts from the same pressed chip, so its first render equals this
      one. */
@@ -124,10 +109,19 @@ if (!inst.present) {
     `The rest render the name exactly as filed and carry no type — that is a gap in the curation, ` +
     `not a statement that the manager is uncategorised. Automatic classification across the full ` +
     `filer population is future work.`;
+  /* Launch M7b (copy item inst-05): the § footnote under the table becomes
+     the Value header's tip, opened from its § mark — the same § every "n/a ·§"
+     cell prints. Every clause a reader needs stays: not AUM, what it
+     excludes, n/a is never zero, and a valueless position is counted beside
+     the sum (the HHI rule rides each row's own value note). */
+  const valueNote =
+    `Sum of disclosed 13F long positions for the filer's latest quarter, named in each value's note — ` +
+    `not assets under management (no cash, shorts or non-13F assets), so a large multi-asset manager can look small. ` +
+    `n/a means no usable value, never zero; a position reported without a value is counted beside the sum, not in it.`;
   // `h.why` is plain text and is escaped here; `typeNote` is pre-escaped html
   // carrying the `<strong>` emphasis the deleted paragraph published.
   const headNoteBody = (h: (typeof INST_INDEX_HEADS)[number]): string =>
-    noteBody(h.why ? esc(h.why) : null, h.label === "Filer" ? typeNote : null);
+    noteBody(h.why ? esc(h.why) : null, h.label === "Filer" ? typeNote : null, h.label === "Value" ? esc(valueNote) : null);
   /* Ledger roles (DESIGN-POLISH M1, R2): the filer name takes the slack. */
   const headClass: Record<string, string> = {
     Filer: "c-filer c-flex", Manager: "c-filer c-flex", CIK: "c-num", Value: "c-num", Pos: "c-num",
@@ -135,7 +129,9 @@ if (!inst.present) {
   };
   const heads = INST_INDEX_HEADS.filter((h) => top5Present || h.label !== "Top-5").map((h) =>
     thHtml({
-      label: h.label,
+      /* the § mark rides the Value label so `thHtml` hangs it as the tip's
+         trigger beside the sort button (inst-05) */
+      label: h.label === "Value" ? "Value ·§" : h.label,
       cls: headClass[h.label] ?? "",
       noteHtml: headNoteBody(h) || null,
       notes: headNotes,
@@ -189,7 +185,9 @@ if (!inst.present) {
        is what `headNotes` renders. The `<noscript>` stays visible here, because
        it is about scripting rather than about a column and no column note is
        the right home for it. */
-    `<p class="caveat-line"><noscript>Filtering by chip needs JavaScript; every manager is listed below regardless.</noscript></p>`;
+    /* launch M7b: true of the rows a reader without JavaScript gets — the
+       server's default view (the pressed chip, by value), not every manager */
+    `<p class="caveat-line"><noscript>Filtering by chip needs JavaScript; the rows below are the default view.</noscript></p>`;
   /* The page's figures are bound to ONE closed quarter — the newest whose
      45-day filing window has passed — never each filer's latest period folded
      into a falsely uniform total. The period comes from the concentration
@@ -223,7 +221,7 @@ if (!inst.present) {
   );
   bodyHtml =
     `<header class="entity-head"><div class="entity-head-copy">` +
-    `<div class="kicker">Public record / Institutional · Form 13F</div>` +
+    /* launch M7b (inst-01): the kicker repeated the nav and the H1 */
     `<div class="page-title-row"><h1 class="entity-title">Institutional</h1>${aboutTip}</div>` +
     `<p class="entity-lede">Every 13F filer, and what each changed.</p>` +
     `</div>` + disclosureLedger([
@@ -239,8 +237,9 @@ if (!inst.present) {
     (window?.open ? `<span class="sig-pchip sig-pchip-warn">${esc(quarterLabel(window.quarterEnd) ?? window.quarterEnd)} window open → ${esc(window.deadline)}</span>` : "") +
     provTip +
     `</div>` +
-    /* LD18: the one-line pointer to where the moved sections live now */
-    `<p class="inst-moved">Named moves, Consensus and ${CONVICTION_LABEL_HTML} are on Signals now. <a href="/signals/#institutional">Open →</a></p>` +
+    /* LD18: the one-line pointer to where the moved sections live now
+       (launch M7b, inst-02: one short line) */
+    `<p class="inst-moved">Moves and Consensus are on <a href="/signals/#institutional">Signals →</a></p>` +
     `<section class="panel panel-wide" id="inst-managers-section" aria-label="Manager directory">` +
     `<div class="panel-head"><h2 class="section-h">Filer directory</h2>` +
     `<span class="panel-note"><input class="filter-select filter-text" type="search" id="inst-index-q" ` +
@@ -259,51 +258,33 @@ if (!inst.present) {
       { trigger: "mark", name: "About the directory" },
     ) +
     `<noscript> · sorting and search need JavaScript; the default order below is by value, largest first</noscript></p>` +
+    /* Launch M7b (R32, LD28): the VISIBLE load and failure line. The rows
+       arrive on the first search, chip or sort; while they load this says so,
+       and if they cannot be fetched it says what still holds — the rows above
+       are the server's, unchanged and correct. Hidden only while it has
+       nothing to say. */
+    `<p class="caveat-line inst-index-load" id="inst-index-load" role="status" aria-live="polite" hidden></p>` +
     `<div class="table-scroll"><table class="etable" data-sticky-first${dataColumnsAttr(dirCols)}>` +
     `<caption class="visually-hidden">13F filers ranked by reported 13(f) long value for each filer's latest period</caption>` +
     `<thead><tr>${heads}</tr></thead>` +
     `<tbody id="inst-managers-tbody">${rows}</tbody></table></div>` +
-    tableFootReasonHtml(dirCols) +
-    footnoteBlock(
-      [
-        {
-          mark: "§",
-          html:
-            /* Architecture H (H-18), true of the rows: a null value renders
-               "n/a ·§" (inst-index.ts), "+N null" is printed beside the sum,
-               and HHI is null — and sorts after — with any null-valued
-               position. The reference directory names each filer's quarter
-               in the value's own note, so the sentence says so (M3-D). */
-            `'Reported 13(f) long value' is the sum of a filer's disclosed long positions for its ` +
-            `latest quarter, which the value's note names — not assets under management: it excludes ` +
-            `cash, shorts and non-13(f) assets, so a large multi-asset manager can appear small. n/a ` +
-            `means the filing disclosed no usable value — never zero. A position reported without a ` +
-            `value is left out of the sum and counted beside it; the concentration index (HHI) is ` +
-            `withheld from display and from ordering whenever any value is missing.`,
-        },
-      ],
-      { id: "inst-index-footnotes" },
-    ) +
     /* The named bound is stated by the control itself, VISIBLE
        from the server. Nothing reveals this control at load — the directory's
-       `syncDisclosure` runs only from a render, and `initSortableTable`
-       deliberately does not paint at init — so a bound that lived on the button
-       was stated to nobody until the reader sorted or filtered. That is why
-       the separate terminus row above it existed, and why deleting it was only
-       honest once the statement moved into the control.
+       `syncDisclosure` runs only from a render — so a bound that lived on the
+       button was stated to nobody until the reader sorted or filtered.
 
-       "Every filer has its own page" is the state-independent remainder: true
-       collapsed and expanded alike, so it survives an expansion that retracts
-       the count. */
+       The bound's remainder (each filer's own page) is state-independent:
+       true collapsed and expanded alike, so it survives an expansion that
+       retracts the count (launch M7b, inst-03: shortened, the fact kept). */
     compactDisclosure({
       rootId: "inst-managers-tbody",
       total: directory.total,
       shown: directory.shown,
       noun: "managers",
-      bound: `Every filer in this build has its own page, linked from its row here.`,
+      bound: `Every filer has its own page.`,
     }) +
     `<p class="visually-hidden" id="inst-index-status" role="status" aria-live="polite"></p>` +
-    `<script type="application/json" id="inst-index-data">${serializeInlineJson(indexRows)}</script>` +
+    `<script type="application/json" id="inst-index-shards">${serializeInlineJson(JSON.parse(directoryFamily.listJson))}</script>` +
     `</section>` +
     /* Recent activity, full width — never inside a pair. */
     `<div class="design-activity">` +

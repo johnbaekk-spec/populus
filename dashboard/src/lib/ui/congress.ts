@@ -1,4 +1,4 @@
-import { briefingCards, disclosureLedger, pairBandHtml, plannedLine, unavailableDesignPanel } from "./shared.ts";
+import { disclosureLedger, unavailableDesignPanel } from "./shared.ts";
 import { memberProfileStats, type ChamberBenchmark } from "../inst-analytics.ts";
 /* Pure page/section renderers. Every entity body is a string function called
    by the thin .astro page for SSR AND by the generic-route client driver —
@@ -19,7 +19,6 @@ import {
   type NoteCtx,
   assetNameCell,
   assetColumnNote,
-  tickerNoteKey,
   note,
   noteFromHtml,
   esc,
@@ -27,11 +26,8 @@ import {
   fmtMoney,
   amountText,
   sideLabel,
-  ownerNote,
   ownerQualifiersHtml,
-  joinQualifiers,
   assetLineHtml,
-  ownerNoteLong,
   rangeBand,
   dualDate,
   flagTags,
@@ -47,8 +43,8 @@ import {
   pageCountFor,
   feedCountText,
   cardFoot,
+  rangeOfTotal,
   thHtml,
-  hangMark,
   txnEdge,
   compactDisclosure,
   presentColumns,
@@ -61,6 +57,7 @@ import {
   type MemberEntity,
   type TickerEntity,
   type SumRanges,
+  type NetInterval,
   type QuarterlyFlowResult,
   excludeDateAnomalies,
   sumRanges,
@@ -79,14 +76,12 @@ import {
   type MonthlyFlowResult,
   type MonthCompleteness,
   type LagCdf,
-  topTickers,
   membersDisclosing,
   medianLag,
   lateCount,
   legacyTrailingMonthsBounds,
   windowMembership,
   affTextOf,
-  partyLabel,
   netOverlaps,
   netFlow,
   netIntervalText,
@@ -103,6 +98,7 @@ import {
 } from "../derive.ts";
 import { RANKING_FOOTNOTES as RANKING_FOOTNOTES_LIST } from "../congress-columns.ts";
 import { type BuildStamps, breadcrumb, asOfNote, netCellHtml, netKindWord, sectorLabel } from "./shared.ts";
+import { heldIslandHtml, heldTableParts } from "../held-rows.ts";
 
 /* ---------- flow ribbon ---------- */
 
@@ -113,25 +109,6 @@ function ribbonAxisMax(sums: SumRanges[]): number {
     else if (s.kind === "open") max = Math.max(max, s.low);
   }
   return max;
-}
-
-function barHtml(s: SumRanges, axisMax: number, cls: string): string {
-  if (s.kind === "empty") return `<div class="rb-bar rb-gap" aria-hidden="true"></div>`;
-  if (s.kind === "undisclosed") {
-    return `<div class="rb-bar ${cls} rb-hatch" style="bottom:0;height:100%" aria-hidden="true"></div>`;
-  }
-  const basePct = Math.min(100, (s.low / axisMax) * 100);
-  if (s.kind === "open") {
-    // The provable minimum is solid to `low`; above it the source discloses no
-    // upper bound, so the remainder is hatch to the axis top — never a solid
-    // bar pretending a maximum exists.
-    const solid = `<div class="rb-bar ${cls}" style="bottom:0;height:${basePct.toFixed(1)}%" aria-hidden="true"></div>`;
-    const hatch = `<div class="rb-bar ${cls} rb-hatch" style="bottom:${basePct.toFixed(1)}%;height:${(100 - basePct).toFixed(1)}%" aria-hidden="true"></div>`;
-    return solid + hatch;
-  }
-  const topPct = Math.min(100, (s.high / axisMax) * 100);
-  const height = Math.max(topPct - basePct, 1.5);
-  return `<div class="rb-bar ${cls}" style="bottom:${basePct.toFixed(1)}%;height:${height.toFixed(1)}%" aria-hidden="true"></div>`;
 }
 
 function quarterSummary(q: { q: string; buy: SumRanges; sell: SumRanges }): string {
@@ -189,41 +166,156 @@ export function flowWindowEmptyLine(flow: QuarterlyFlowResult, latestTraded: str
   );
 }
 
+/** LD13 / LD25: a nice ceiling — 1, 2, 2.5, 4, 5, 8 or 10 × 10^k — at or
+    above `v`, the quarterly ribbon's axis top. */
+export function niceCeil(v: number): number {
+  if (!(v > 0)) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(v)));
+  for (const step of [1, 2, 2.5, 4, 5, 8, 10]) if (step * p >= v) return step * p;
+  return 10 * p;
+}
+
+/** LD25 (R24): the ribbon's ONE axis top, shared by purchases above and sales
+    below — a nice ceiling over 1.12 × the largest PROVABLE MINIMUM on either
+    side, so the axis fits what the filings prove; a maximum past it is cut and
+    marked. When every minimum is zero (all "Under $X" or unparsed), the
+    ceiling is over the largest maximum instead; 1 for an empty window. */
+export function ribbonAxisTop(sums: readonly SumRanges[]): number {
+  let maxLo = 0;
+  let maxHi = 0;
+  for (const s of sums) {
+    if (s.kind === "closed") {
+      maxLo = Math.max(maxLo, s.low);
+      maxHi = Math.max(maxHi, s.high);
+    } else if (s.kind === "open") {
+      maxLo = Math.max(maxLo, s.low);
+    }
+  }
+  const basis = maxLo > 0 ? maxLo : maxHi;
+  return basis > 0 ? niceCeil(basis * 1.12) : 1;
+}
+
+/** A y-axis tick label in the site's money format, or null when that format
+    would round the value (a half tick of $2.5K is $1.25K, which `fmtMoney`
+    prints as $1.3K — a label must never misstate its gridline). */
+function axisTickLabel(v: number): string | null {
+  if (v === 0) return "$0";
+  const unit = v >= 1_000_000 ? 1_000_000 : 1_000;
+  const scaled = v / unit;
+  return Math.round(scaled * 10) / 10 === scaled ? fmtMoney(v) : null;
+}
+
+/** The y-axis ticks of a two-sided ribbon: the top, its half and zero above;
+    the same mirrored below. `pos` is the tick's height in the whole plot. */
+export function ribbonAxisTicks(top: number): { pos: number; label: string | null; zero: boolean }[] {
+  const half = top / 2;
+  return [
+    { pos: 100, label: axisTickLabel(top), zero: false },
+    { pos: 75, label: axisTickLabel(half), zero: false },
+    { pos: 50, label: "$0", zero: true },
+    { pos: 25, label: axisTickLabel(half), zero: false },
+    { pos: 0, label: axisTickLabel(top), zero: false },
+  ];
+}
+
+/** One side's bar in one quarter, inside its half of the plot. The solid part
+    is the provable minimum (0 → low); the lighter part runs to the maximum,
+    and a maximum past the axis top — or an open one — is cut at the top with a
+    marker that states it. Never a midpoint. An all-unparsed sum is hatched. */
+function axisBarHtml(s: SumRanges, top: number, side: "buy" | "sell"): string {
+  if (s.kind === "empty") return "";
+  const cls = side === "buy" ? "rb-buy" : "rb-sell";
+  const anchor = side === "buy" ? "bottom" : "top";
+  const arrow = side === "buy" ? "↑" : "↓";
+  const pct = (v: number): number => Math.min(100, (v / top) * 100);
+  if (s.kind === "undisclosed") {
+    return `<div class="rb-bar ${cls} rb-hatch" style="${anchor}:0;height:100%" aria-hidden="true"></div>` +
+      `<span class="rb-cut" aria-hidden="true">${arrow} not disclosed</span>`;
+  }
+  const lo = pct(s.low);
+  const solid = `<div class="rb-bar ${cls} rb-lo" style="${anchor}:0;height:${lo.toFixed(1)}%" aria-hidden="true"></div>`;
+  if (s.kind === "open") {
+    return solid +
+      `<div class="rb-bar ${cls} rb-hi rb-hatch rb-cutoff" style="${anchor}:${lo.toFixed(1)}%;height:${(100 - lo).toFixed(1)}%" aria-hidden="true"></div>` +
+      `<span class="rb-cut" aria-hidden="true">${arrow} open</span>`;
+  }
+  const cut = s.high > top;
+  const hi = cut ? 100 - lo : pct(s.high) - lo;
+  return solid +
+    `<div class="rb-bar ${cls} rb-hi${cut ? " rb-cutoff" : ""}" style="${anchor}:${lo.toFixed(1)}%;height:${hi.toFixed(1)}%" aria-hidden="true"></div>` +
+    (cut ? `<span class="rb-cut" aria-hidden="true">${arrow} ${esc(fmtMoney(s.high))}</span>` : "");
+}
+
+function rowsOf(s: SumRanges): number {
+  return s.kind === "empty" ? 0 : s.rows;
+}
+
+/** The readout a quarter states when it is selected (LD13): its count of
+    purchases and sales and both full ranges — the same facts the
+    screen-reader summary carries. Launch review H2: the count is named for
+    what it counts (purchases and sales, never "trades": exchanges are not
+    drawn, and the readout says how many were not); a quarter the build date
+    has not closed says it is so far, inside the 45-day filing window. */
+export function quarterReadout(q: { q: string; quarterEnd?: string; buy: SumRanges; sell: SumRanges; other?: number }, asOf: string | null = null): string {
+  const n = rowsOf(q.buy) + rowsOf(q.sell);
+  const part = (s: SumRanges): string => (s.kind === "empty" ? "none" : sumRangesText(s));
+  const open = asOf !== null && q.quarterEnd !== undefined && asOf < q.quarterEnd;
+  const other = q.other ?? 0;
+  /* launch gate (SC5): a quarter with nothing drawn says so once — "0
+     purchases and sales · purchases none · sales none" stated it three times.
+     With exchange rows (not drawn) it names what is absent, and the suffix
+     below counts the rest. */
+  const empty = n === 0 && q.buy.kind === "empty" && q.sell.kind === "empty";
+  const facts = empty
+    ? (q.other ?? 0) > 0 ? "no purchases or sales" : "none disclosed"
+    : `${fmtInt(n)} ${n === 1 ? "purchase or sale" : "purchases and sales"} · purchases ${part(q.buy)} · sales ${part(q.sell)}`;
+  return (
+    `${q.q}${open ? " so far (inside the 45-day filing window)" : ""}: ` +
+    facts +
+    (other > 0 ? ` · ${fmtInt(other)} exchange/unparsed-side ${other === 1 ? "row" : "rows"} not drawn` : "")
+  );
+}
+
+/** The quarterly flow ribbon — ONE renderer for both callers, the member page
+    and `/congress/tickers/<T>/` (R24, LD13, LD25): purchases above and sales
+    below one axis; a labelled y-axis whose top is `ribbonAxisTop`; a cut
+    marker on every maximum past the top; "–" in an empty quarter; one plot
+    control (a Tab stop whose arrow keys step through the quarters, a tap or
+    pointer move selecting the nearest) feeding a polite readout; and the
+    screen-reader summary with every full range. Zero-based (C3); a quarter
+    with no rows stays a visible gap (C2); no midpoints.
+
+    `twoSided` is kept for the callers' signature: the one-sided split the
+    member page used is retired (R24), so both sides always share the axis.
+    `notes` is OPTIONAL and only the member page passes one: without a scope
+    the caption stays the visible `.rb-caption` it always was. `emptyWindow`
+    (R13) is member-only: a window with nothing to plot becomes ONE line. */
 export function flowRibbon(
   flow: QuarterlyFlowResult,
-  /* `notes` is OPTIONAL and only the member page passes one.
-     The other caller is the deep ticker page (`ui.ts` `tickerUnifiedBody`),
-     which this run does not own, so without a scope this renderer emits the
-     visible `.rb-caption` byte-for-byte as before.
-
-     `emptyWindow` (R13) is also member-only: when the window holds nothing to
-     plot, the chart becomes ONE line (`flowWindowEmptyLine`) and keeps its
-     method note; with any excluded side the plot renders as before. */
-  opts: { twoSided: boolean; sourceLine: string; notes?: NoteCtx; emptyWindow?: { latestTraded: string | null; asOf?: string } },
+  opts: { twoSided: boolean; sourceLine: string; notes?: NoteCtx; emptyWindow?: { latestTraded: string | null; asOf?: string }; asOf?: string },
 ): string {
+  /* H2: the build date, so the open quarter's readout says "so far" */
+  const asOf = opts.asOf ?? opts.emptyWindow?.asOf ?? null;
   const empty = opts.emptyWindow !== undefined && flowWindowEmpty(flow);
-  const axisMax = ribbonAxisMax(flow.quarters.flatMap((q) => [q.buy, q.sell]));
+  const top = ribbonAxisTop(flow.quarters.flatMap((q) => [q.buy, q.sell]));
   const cols = flow.quarters
     .map((q) => {
-      if (opts.twoSided) {
-        return (
-          `<div class="rb-col">` +
-          `<div class="rb-up">${barHtml(q.buy, axisMax, "rb-buy")}</div>` +
-          `<div class="rb-axis" aria-hidden="true"></div>` +
-          `<div class="rb-down">${barHtml(q.sell, axisMax, "rb-sell")}</div>` +
-          `</div>`
-        );
-      }
+      const none = q.buy.kind === "empty" && q.sell.kind === "empty";
       return (
-        `<div class="rb-col">` +
-        `<div class="rb-up rb-split"><div class="rb-half">${barHtml(q.buy, axisMax, "rb-buy")}</div>` +
-        `<div class="rb-half">${barHtml(q.sell, axisMax, "rb-sell")}</div></div>` +
+        `<div class="rb-col" data-rb-col data-readout="${esc(quarterReadout(q, asOf))}">` +
+        `<div class="rb-up">${axisBarHtml(q.buy, top, "buy")}</div>` +
+        `<div class="rb-axis" aria-hidden="true"></div>` +
+        `<div class="rb-down">${axisBarHtml(q.sell, top, "sell")}</div>` +
+        (none ? `<span class="rb-none" aria-hidden="true">–</span>` : "") +
         `</div>`
       );
     })
     .join("");
+  const ticks = ribbonAxisTicks(top)
+    .map((t) => `<span class="rb-ytick${t.zero ? " rb-y0" : ""}" style="bottom:${t.pos}%">${t.label === null ? "" : esc(t.label)}</span>`)
+    .join("");
   const labels = flow.quarters
-    .map((q) => `<div class="rb-label">${esc(q.q)}</div>`)
+    .map((q, i) => `<div class="rb-label${i === flow.quarters.length - 1 ? " rb-label-cur" : ""}">${esc(q.q)}</div>`)
     .join("");
   const hatched = flow.quarters
     .map((q) => {
@@ -243,6 +335,8 @@ export function flowRibbon(
     exclusions.push(`${fmtInt(flow.dateAnomalies)} date-anomaly rows excluded (${DATE_ANOMALY_NOTE})`);
   const caption = [
     hatched,
+    "purchases above the axis, sales below",
+    "solid = the provable minimum, lighter = up to the maximum; a maximum past the axis top is cut and marked",
     "gaps are gaps — no interpolation",
     "y from $0 · no midpoints — bar spans the disclosed bounds",
     ...exclusions,
@@ -250,41 +344,40 @@ export function flowRibbon(
   ]
     .filter(Boolean)
     .join(" · ");
+  const captionHtml = opts.notes
+    ? `<div class="rb-caption rb-caption-note"><span class="src-derived">` +
+      note(caption, opts.notes, "chart-method", {
+        trigger: "label",
+        textHtml: "how this chart is drawn&nbsp;·§",
+        name: "how this chart is drawn",
+      }) +
+      `</span></div>`
+    : `<div class="rb-caption">${esc(caption)}</div>`;
   const summary = flow.quarters.map(quarterSummary).join("; ");
   if (empty) {
     return (
       `<div class="ribbon ribbon-empty">` +
       flowWindowEmptyLine(flow, opts.emptyWindow!.latestTraded, opts.emptyWindow!.asOf ?? null) +
-      (opts.notes
-        ? `<div class="rb-caption rb-caption-note"><span class="src-derived">` +
-          note(caption, opts.notes, "chart-method", {
-            trigger: "label",
-            textHtml: "how this chart is drawn&nbsp;·§",
-            name: "how this chart is drawn",
-          }) +
-          `</span></div>`
-        : `<div class="rb-caption">${esc(caption)}</div>`) +
+      captionHtml +
       `</div>`
     );
   }
+  const first = flow.quarters[0]!;
+  const last = flow.quarters[flow.quarters.length - 1]!;
   return (
-    `<div class="ribbon${opts.twoSided ? " ribbon-two" : ""}">` +
+    `<div class="ribbon ribbon-two ribbon-axis">` +
+    `<div class="rb-legend" aria-hidden="true"><span><i class="rb-lg rb-lg-buy"></i>Purchases</span><span><i class="rb-lg rb-lg-sell"></i>Sales</span><span><i class="rb-lg rb-lg-max"></i>Up to the max</span></div>` +
+    `<div class="rb-plot" data-rb-plot tabindex="0" role="group" aria-label="Disclosed flow by quarter, ${esc(first.q)} to ${esc(last.q)}: arrow keys step through the quarters" aria-describedby="rb-readout">` +
+    `<div class="rb-yaxis" aria-hidden="true">${ticks}</div>` +
     `<div class="rb-track">${cols}</div>` +
+    `</div>` +
     `<div class="rb-labels">${labels}</div>` +
+    `<p class="rb-readout" id="rb-readout" role="status" aria-live="polite">${esc(quarterReadout(last, asOf))}</p>` +
     /* The caption is a DEFINITION — how the chart is drawn, what the
-       hatching means, what is excluded — so it moves into a note anchored on
-       the chart, with the marker left visible as its cue (LD3). The
-       accessibility summary below is untouched: it is the chart's data, not its
-       method, and it was never the channel this requirement moves. */
-    (opts.notes
-      ? `<div class="rb-caption rb-caption-note"><span class="src-derived">` +
-        note(caption, opts.notes, "chart-method", {
-          trigger: "label",
-          textHtml: "how this chart is drawn&nbsp;·§",
-          name: "how this chart is drawn",
-        }) +
-        `</span></div>`
-      : `<div class="rb-caption">${esc(caption)}</div>`) +
+       hatching means, what is excluded — so on the member page it is a note
+       anchored on the chart, with the marker left visible as its cue (LD3).
+       The accessibility summary below is the chart's data, not its method. */
+    captionHtml +
     `<p class="visually-hidden">Disclosed flow by quarter. ${esc(summary)}</p>` +
     `</div>`
   );
@@ -304,10 +397,13 @@ export function flowRibbon(
    (L6). Recent months are shaded by ESTIMATED filing completeness from the
    build's own lag distribution (R17), and every estimate says it is one.
 
-   Two variants render at build time — listed stocks (the default) and all
+   Two variants are built at build time — listed stocks (the default) and all
    asset types — and a small client script flips `hidden` between them; there
    is no fetch (L4). Each variant carries its own caption, exclusion counts,
-   shading labels and a visually-hidden table of every month (R19). */
+   shading labels and a visually-hidden table of every month (R19). Launch F2
+   (R35, LD31): the views no reader sees at load — Dollars on listed stocks
+   and the whole All-assets variant — travel as island data built from the
+   same rows and are drawn on first use; the default view is in the page. */
 
 const MONTHLY_FLOW_MONTHS = 36;
 
@@ -418,17 +514,130 @@ function monthSummary(m: MonthFlow, c: MonthCompleteness): string {
   );
 }
 
-function monthlyFlowVariantHtml(
-  variant: "stocks" | "all",
-  flow: MonthlyFlowResult,
-  cdf: LagCdf,
-  buildDate: string,
-  hidden: boolean,
-): string {
-  const comp = flow.months.map((m) => estimatedCompleteness(cdf, m, buildDate));
+/** Launch M3b (R11, LD13): a nice member-count ceiling over the largest
+    month and its ticks — 0 to the top in at most four equal steps. */
+export function memberAxisTicks(max: number): { top: number; ticks: number[] } {
+  const m = Math.max(1, max);
+  const steps = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000];
+  const step = steps.find((x) => Math.ceil(m / x) <= 4) ?? Math.ceil(m / 4);
+  const top = Math.ceil(m / step) * step;
+  const ticks: number[] = [];
+  for (let v = 0; v <= top; v += step) ticks.push(v);
+  return { top, ticks };
+}
+
+/** The x position of a month's centre, as a percentage of the plot. */
+function monthX(i: number, n: number): number {
+  return ((i + 0.5) / n) * 100;
+}
+
+/** One month's readout in each measure — the numbers the screen-reader table
+    carries, in one line (R21: a readout per month). The estimate is stated
+    only for a month still filling in, and always as an estimate. */
+function monthReadouts(m: MonthFlow, c: MonthCompleteness, buildDate: string): { members: string; dollars: string } {
+  const open = buildDate < m.end ? " (so far)" : "";
+  const est = c.tone !== null ? ` · ${c.est !== null ? completenessLabel(c.est) : "completeness not estimated"}` : "";
+  const part = (label: string, sum: SumRanges): string => `${label} ${sum.kind === "empty" ? "none" : monthSumWords(sum)}`;
+  return {
+    members:
+      `${m.month}${open} · ${fmtInt(m.buyers)} ${m.buyers === 1 ? "member" : "members"} with a purchase · ` +
+      `${fmtInt(m.sellers)} with a sale${est}`,
+    dollars:
+      `${m.month}${open} · ${part("purchases", m.buy)} · ${part("sales", m.sell)} · net ${netIntervalText(netFlow(m.buy, m.sell))}${est}`,
+  };
+}
+
+/** Launch M3b (R21, LD23): the default Members view — distinct members with a
+    disclosed purchase and with a disclosed sale per trade month, as two lines
+    on a labelled member axis. Months still filling in form the "Filling in"
+    zone, labelled an estimate, and dash both lines. The plot is ONE control
+    (LD13): a Tab stop whose arrow keys step through the months, and a pointer
+    that selects the nearest month; the readout is a polite live region. */
+function membersChartHtml(flow: MonthlyFlowResult, comp: readonly MonthCompleteness[], buildDate: string, scope: string): string {
+  const n = flow.months.length;
+  const { top, ticks } = memberAxisTicks(Math.max(0, ...flow.months.flatMap((m) => [m.buyers, m.sellers])));
+  const firstFill = comp.findIndex((c) => c.tone !== null);
+  const fillFrom = firstFill < 0 ? n : firstFill;
+  const pt = (i: number, v: number): string => `${((i + 0.5) / n * 1000).toFixed(1)},${(1000 - (v / top) * 1000).toFixed(1)}`;
+  const line = (vals: number[], from: number, to: number, cls: string): string =>
+    to - from < 1 && !(to === from && n === 1)
+      ? ""
+      : `<polyline class="mf-line ${cls}" vector-effect="non-scaling-stroke" points="${vals.slice(from, to + 1).map((v, k) => pt(from + k, v)).join(" ")}"></polyline>`;
+  const buyers = flow.months.map((m) => m.buyers);
+  const sellers = flow.months.map((m) => m.sellers);
+  const solidTo = Math.min(n - 1, fillFrom === n ? n - 1 : fillFrom - 1);
+  const dashFrom = Math.max(0, fillFrom - 1);
+  const lines =
+    (solidTo >= 0 ? line(buyers, 0, solidTo, "mf-line-buy") + line(sellers, 0, solidTo, "mf-line-sell") : "") +
+    (fillFrom < n ? line(buyers, dashFrom, n - 1, "mf-line-buy mf-line-est") + line(sellers, dashFrom, n - 1, "mf-line-sell mf-line-est") : "");
+  const yTicks = ticks
+    .map((v) => `<span class="mf-ytick" style="bottom:${((v / top) * 100).toFixed(2)}%">${fmtInt(v)}</span>`)
+    .join("");
+  const xTicks = flow.months
+    .map((m, i) => ({ label: monthTick(m.month), i }))
+    .filter((t) => t.label !== "")
+    .map((t) => `<span class="mf-x" style="left:${monthX(t.i, n).toFixed(2)}%">${esc(t.label)}</span>`)
+    .join("");
+  const zone =
+    fillFrom < n
+      ? `<div class="mf-fill" style="left:${((fillFrom / n) * 100).toFixed(2)}%;width:${(((n - fillFrom) / n) * 100).toFixed(2)}%"><span>Filling in (est.)</span></div>`
+      : "";
+  const last = flow.months[n - 1]!;
+  return (
+    `<div class="mf-measure" data-flow-measure="members">` +
+    `<p class="mf-legend" aria-hidden="true"><span class="mf-key-buy">with a purchase</span><span class="mf-key-sell">with a sale</span></p>` +
+    `<div class="mf-chart"><span class="mf-yt" aria-hidden="true">members</span>` +
+    `<div class="mf-plot mf-hit" tabindex="0" role="group" aria-label="Members with a disclosed purchase and with a disclosed sale per trade month — arrow keys step through the months" aria-describedby="${esc(scope)}-ro-members">` +
+    `<div class="mf-yaxis" aria-hidden="true">${yTicks}</div>` +
+    zone +
+    `<svg viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true" focusable="false">${lines}</svg>` +
+    `<span class="mf-cursor" aria-hidden="true" hidden></span>` +
+    `<div class="mf-xaxis" aria-hidden="true">${xTicks}</div>` +
+    `</div></div>` +
+    `<p class="mf-readout" id="${esc(scope)}-ro-members" role="status" aria-live="polite">${esc(monthReadouts(last, comp[n - 1]!, buildDate).members)}</p>` +
+    `</div>`
+  );
+}
+
+/** Launch F2 (R35, LD31; pagination-and-counts.md rule 8): EVERYTHING one
+    Monthly flow variant draws, derived once on the server from the build's
+    rows. The visible view renders from it there; a hidden view (the stocks
+    Dollars view, the whole All-assets variant) ships it in the site's one
+    held-rows island, and the client draws it through the SAME functions, so
+    a drawn view — its bars, readout and axis — is the server's bytes. It is
+    JSON-safe: the lag sample travels as the facts the caption prints (its
+    size, its bounds and its measured points), never as its rows. */
+export interface MonthlyFlowView {
+  variant: "stocks" | "all";
+  buildDate: string;
+  flow: MonthlyFlowResult;
+  comp: MonthCompleteness[];
+  cdf: { n: number; sampleFrom: string; sampleTo: string; points: string };
+}
+
+export function monthlyFlowView(variant: "stocks" | "all", flow: MonthlyFlowResult, cdf: LagCdf, buildDate: string): MonthlyFlowView {
+  return {
+    variant,
+    buildDate,
+    flow,
+    comp: flow.months.map((m) => estimatedCompleteness(cdf, m, buildDate)),
+    cdf: { n: cdf.n, sampleFrom: cdf.sampleFrom, sampleTo: cdf.sampleTo, points: cdf.n === 0 ? "" : lagCdfPointsText(cdf) },
+  };
+}
+
+/** The names the two held views render under on the client
+    (`registerHeldRows` in `scripts/congress-sections.ts`). */
+export const MONTHLY_FLOW_HELD = { dollars: "monthly-dollars", variant: "monthly-variant" } as const;
+
+/** A variant's four parts, from its view alone: the Members view, the Dollars
+    view's content, the tips and the screen-reader table. */
+function monthlyVariantParts(view: MonthlyFlowView): { members: string; dollars: string; tips: string; table: string } {
+  const { variant, flow, comp, buildDate } = view;
+  const cdf = view.cdf;
   const axisMax = ribbonAxisMax(flow.months.flatMap((m) => [m.buy, m.sell]));
   const drawn = flow.months.some((m) => m.buy.kind !== "empty" || m.sell.kind !== "empty");
   const toneCls = (c: MonthCompleteness): string => (c.tone === null ? "" : ` mf-${c.tone}`);
+  const scope = `mf-${variant}`;
   const cols = flow.months
     .map(
       (m, i) =>
@@ -442,22 +651,14 @@ function monthlyFlowVariantHtml(
   const labels = flow.months
     .map((m) => `<div class="rb-label">${esc(monthTick(m.month))}</div>`)
     .join("");
-  const breadthMax = Math.max(1, ...flow.months.flatMap((m) => [m.buyers, m.sellers]));
-  const bar = (n: number, cls: string): string =>
-    n === 0 ? "" : `<div class="mf-bbar ${cls}" style="height:${Math.max((n / breadthMax) * 100, 4).toFixed(1)}%"></div>`;
-  const breadth = flow.months
-    .map(
-      (m, i) =>
-        `<div class="mf-bcol${toneCls(comp[i]!)}"><div class="mf-bup">${bar(m.buyers, "rb-buy")}</div>` +
-        `<div class="mf-bdown">${bar(m.sellers, "rb-sell")}</div></div>`,
-    )
-    .join("");
   const first = flow.months[0]!;
   const last = flow.months[flow.months.length - 1]!;
-  const latest = last;
   const openMonth = buildDate < last.end;
 
-  /* Shading labels: one line per shaded month, in the page's own words. */
+  /* Shading labels: one line per shaded month, every "(est.)" kept (copy item
+     congress-11). They and the completeness method below now live in the
+     "still filling in" tip (R21); the honesty classes and the full method
+     wording stay emitted there, where the visible-word budget does not reach. */
   const shaded = flow.months
     .map((m, i) => ({ m, c: comp[i]! }))
     .filter(({ c }) => c.tone !== null)
@@ -472,18 +673,18 @@ function monthlyFlowVariantHtml(
     .join("");
   const shadeHtml = shaded.length
     ? `<ul class="mf-shade-labels" aria-label="Months still filling in">${shadeItems}</ul>`
-    : `<p class="mf-shade-labels">No month in the window is under ${Math.round(COMPLETENESS_SHADE_BELOW * 100)}% filed (est.) or inside the 45-day window.</p>`;
+    : `<span class="mf-shade-labels">No month in the window is under ${Math.round(COMPLETENESS_SHADE_BELOW * 100)}% filed (est.) or inside the 45-day window.</span>`;
 
   const completenessHtml =
-    `<p class="mf-completeness">` +
+    `<span class="mf-completeness">` +
     (cdf.n === 0
       ? `Completeness is not estimated: no row traded ${esc(cdf.sampleFrom)} to ${esc(cdf.sampleTo)} carries a filing lag, so this build has no mature sample to measure. `
       : `Shading estimates how much of each month is filed so far: the share of this build's mature sample — ` +
         `${fmtInt(cdf.n)} trades made ${esc(cdf.sampleFrom)} to ${esc(cdf.sampleTo)} (${LAG_SAMPLE_MONTHS.newest}–${LAG_SAMPLE_MONTHS.oldest} months before the build), all asset types — ` +
-        `filed within the month's age at the build (the build date minus the month's midpoint; for the build's own month, the midpoint of the days elapsed so far). Filed within ${esc(lagCdfPointsText(cdf))}. ` +
+        `filed within the month's age at the build (the build date minus the month's midpoint; for the build's own month, the midpoint of the days elapsed so far). Filed within ${esc(cdf.points)}. ` +
         `Trades in that sample that are still unfiled are not observed yet, so the estimate slightly overstates completeness. ` +
         `Shaded: under ${Math.round(COMPLETENESS_SHADE_BELOW * 100)}% filed (est.); darker: the month ended fewer than ${FILING_WINDOW_DAYS} days before the build, inside the 45-day filing window. `) +
-    `<a href="/methodology/#monthly-flow">Method ↗</a></p>`;
+    `<a href="/methodology/#monthly-flow">Method ↗</a></span>`;
 
   const exclusions: string[] = [];
   if (flow.listedStockOnly && flow.notListed > 0) {
@@ -499,9 +700,9 @@ function monthlyFlowVariantHtml(
     exclusions.push(`${fmtInt(flow.undated)} ${flow.undated === 1 ? "row" : "rows"} with no parseable trade date excluded`);
   if (flow.dateAnomalies > 0)
     exclusions.push(`${fmtInt(flow.dateAnomalies)} date-anomaly ${flow.dateAnomalies === 1 ? "row" : "rows"} excluded (${DATE_ANOMALY_NOTE})`);
-  const exclusionsHtml = `<p class="mf-exclusions">${
+  const exclusionsHtml = `<span class="mf-exclusions">${
     exclusions.length ? `${esc(exclusions.join(" · "))}.` : "No row in this window was excluded."
-  }</p>`;
+  }</span>`;
 
   const kinds = new Set(flow.months.flatMap((m) => [m.buy.kind, m.sell.kind]));
   const ticked = flow.months.some((m) => monthlyBarTicked(m.buy, axisMax) || monthlyBarTicked(m.sell, axisMax));
@@ -510,13 +711,17 @@ function monthlyFlowVariantHtml(
     flow.listedStockOnly
       ? `listed stocks: rows whose filed asset type is ST (House Clerk code) or Stock (Senate eFD label) — never inferred from a name`
       : `all asset types`,
-    "purchases above the axis, sales and partial sales below",
+    "Members: distinct members per month with a disclosed purchase or sale — members, not dollars",
+    /* launch review H3: an unjoined filer is counted by its printed name */
+    flow.unjoined > 0
+      ? `${fmtInt(flow.unjoined)} ${flow.unjoined === 1 ? "filer" : "filers"} with no matched member record ${flow.unjoined === 1 ? "is" : "are"} counted in Members by the name as filed`
+      : "",
+    "Dollars: purchases above the axis, sales and partial sales below",
     drawn ? `y from $0 to ${fmtMoney(axisMax)} · no midpoints — each bar spans the summed disclosed bounds` : "y from $0",
     ticked ? "a thin tick marks a month whose range is too small to draw at this scale — the tick is a marker, not a dollar amount" : "",
     kinds.has("open") ? "a hatched cap means no upper bound is disclosed (an open-ended or unparsed amount) — the bar shows the provable minimum only, and the cap's height is not a dollar amount" : "",
     kinds.has("undisclosed") ? "a hatched stub at the axis means amounts were filed but none parsed — never counted as $0" : "",
     "gaps are gaps — no interpolation",
-    "breadth counts distinct members, not dollars",
     "source: House Clerk + Senate eFD",
   ]
     .filter(Boolean)
@@ -525,8 +730,9 @@ function monthlyFlowVariantHtml(
   const rows = flow.months
     .map((m, i) => {
       const c = comp[i]!;
+      const ro = monthReadouts(m, c, buildDate);
       return (
-        `<tr><th scope="row">${esc(m.month)}</th><td>${esc(monthSumWords(m.buy))}</td><td>${esc(monthSumWords(m.sell))}</td>` +
+        `<tr data-ro-members="${esc(ro.members)}" data-ro-dollars="${esc(ro.dollars)}"><th scope="row">${esc(m.month)}</th><td>${esc(monthSumWords(m.buy))}</td><td>${esc(monthSumWords(m.sell))}</td>` +
         `<td>${esc(netIntervalText(netFlow(m.buy, m.sell)))}</td><td>${fmtInt(m.buyers)}</td><td>${fmtInt(m.sellers)}</td>` +
         `<td>${c.est === null ? "not estimated" : esc(completenessLabel(c.est))}${c.tone === "window" ? " · inside the 45-day window" : ""}</td></tr>`
       );
@@ -542,42 +748,85 @@ function monthlyFlowVariantHtml(
     `<th scope="col">Net (interval)</th><th scope="col">Members with a purchase</th><th scope="col">Members with a sale</th>` +
     `<th scope="col">Estimated completeness</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 
-  return (
-    `<div class="mf-variant" data-flow-variant="${variant}"${hidden ? " hidden" : ""}>` +
-    `<div class="ribbon ribbon-two ribbon-monthly">` +
+  const notes = { scope };
+  /* R21: the method, completeness and exclusion text are tips now — each keeps
+     its honesty class inside the note, and each label stays on the page. */
+  const tips =
+    `<div class="mf-notes">` +
+    noteFromHtml(shadeHtml + " " + completenessHtml, notes, "filling", { trigger: "label", textHtml: "Shaded months are still filling in (est.)" }) +
+    ` · ` +
+    noteFromHtml(exclusionsHtml, notes, "excluded", { trigger: "label", textHtml: "Excluded rows" }) +
+    ` · ` +
+    noteFromHtml(`<span class="rb-caption">${esc(caption)}</span>`, notes, "drawn", { trigger: "label", textHtml: "How it’s drawn" }) +
+    ` · <a href="/methodology/#monthly-flow">Method ↗</a></div>`;
+
+  const dollarsBody =
+    `<p class="mf-legend" aria-hidden="true"><span class="mf-key-buy">purchases, above</span><span class="mf-key-sell">sales, below</span></p>` +
+    `<div class="mf-dollars">` +
+    `<div class="mf-dollar-axis" aria-hidden="true"><span>${esc(fmtMoney(axisMax))}</span><span>$0</span><span>${esc(fmtMoney(axisMax))}</span></div>` +
+    `<div class="ribbon ribbon-two ribbon-monthly mf-hit" tabindex="0" role="group" aria-label="Disclosed purchases and sales per trade month — arrow keys step through the months" aria-describedby="${esc(scope)}-ro-dollars">` +
     `<div class="rb-track">${cols}</div>` +
     `<div class="rb-labels" aria-hidden="true">${labels}</div>` +
-    `<div class="mf-breadth" aria-hidden="true">${breadth}</div>` +
-    `<p class="mf-breadth-note">Breadth — members with a disclosed purchase (above) vs with a disclosed sale (below), distinct per month; the tallest bar is ${fmtInt(breadthMax)} ${breadthMax === 1 ? "member" : "members"}. ` +
-    `${esc(latest.month)}${openMonth ? " (so far)" : ""}: ${fmtInt(latest.buyers)} with a purchase, ${fmtInt(latest.sellers)} with a sale.</p>` +
-    shadeHtml +
-    completenessHtml +
-    exclusionsHtml +
-    `<div class="rb-caption">${esc(caption)}</div>` +
-    table +
-    `</div></div>`
-  );
+    `</div></div>` +
+    `<p class="mf-readout" id="${esc(scope)}-ro-dollars" role="status" aria-live="polite">${esc(monthReadouts(last, comp[comp.length - 1]!, buildDate).dollars)}</p>`;
+  return { members: membersChartHtml(flow, comp, buildDate, scope), dollars: dollarsBody, tips, table };
 }
 
-/** The whole "Monthly flow" panel, both variants, from the build's rows. */
+/** A variant's body: the Members view; the Dollars view, drawn here or — for
+    the default variant (`dollars: "held"`) — an empty shell its island fills
+    on first use; the tips; the screen-reader table. */
+function monthlyVariantBody(view: MonthlyFlowView, dollars: "drawn" | "held"): string {
+  const p = monthlyVariantParts(view);
+  const dollarsView =
+    dollars === "held"
+      ? `<div class="mf-measure" data-flow-measure="dollars" id="mf-${view.variant}-dollars" hidden></div>`
+      : `<div class="mf-measure" data-flow-measure="dollars" hidden>${p.dollars}</div>`;
+  return p.members + dollarsView + p.tips + p.table;
+}
+
+/** The held views' row functions, on the server and in the client binder
+    alike: the Dollars view's content (its legend, axis, bars and readout),
+    and a whole variant's body. */
+export function monthlyDollarsViewHtml(view: MonthlyFlowView): string {
+  return monthlyVariantParts(view).dollars;
+}
+export function monthlyVariantViewHtml(view: MonthlyFlowView): string {
+  return monthlyVariantBody(view, "drawn");
+}
+
+/** The whole "Monthly flow" panel: Members or Dollars × Stocks or All assets,
+    all four built here from the build's rows and switched with no fetch
+    (launch M3b, R21, LD23). Members on listed stocks is the default and is in
+    the page; the three other views ride in the one held-rows island and the
+    toggle draws them through the same functions (launch F2, R35/LD31). */
 export function monthlyFlowPanel(txns: readonly TxnRow[], buildDate: string, months = MONTHLY_FLOW_MONTHS): string {
   const cdf = lagCdf(txns, buildDate);
-  const stocks = monthlyFlow(txns, buildDate, months, { listedStockOnly: true });
-  const all = monthlyFlow(txns, buildDate, months);
-  const toggle =
+  const stocks = monthlyFlowView("stocks", monthlyFlow(txns, buildDate, months, { listedStockOnly: true }), cdf, buildDate);
+  const all = monthlyFlowView("all", monthlyFlow(txns, buildDate, months), cdf, buildDate);
+  const controls =
+    `<div class="mf-controls">` +
+    `<div class="seg" role="group" aria-label="Measure">` +
+    `<button type="button" data-flow-measure-toggle="members" aria-pressed="true">Members</button>` +
+    `<button type="button" data-flow-measure-toggle="dollars" aria-pressed="false">Dollars</button>` +
+    `</div>` +
     `<div class="seg" role="group" aria-label="Asset types drawn">` +
-    `<button type="button" data-flow-toggle="stocks" aria-pressed="true">Listed stocks</button>` +
-    `<button type="button" data-flow-toggle="all" aria-pressed="false">All asset types</button>` +
-    `</div>`;
+    `<button type="button" data-flow-toggle="stocks" aria-pressed="true">Stocks</button>` +
+    `<button type="button" data-flow-toggle="all" aria-pressed="false">All assets</button>` +
+    `</div></div>`;
   return (
     `<section class="panel panel-wide" id="monthly-flow-section" aria-labelledby="monthly-flow-h">` +
     `<div class="panel-head"><h2 class="section-h" id="monthly-flow-h">Monthly flow</h2>` +
-    `<span class="panel-note">disclosed purchases vs sales by trade month · trailing ${months} months · statutory ranges</span>` +
-    toggle +
+    `<span class="panel-note">${months} months · by trade month</span>` +
+    controls +
     `</div>` +
-    `<noscript><p class="caveat-inline">The all-asset-types view needs JavaScript; the listed-stock view below states its exclusions in full.</p></noscript>` +
-    monthlyFlowVariantHtml("stocks", stocks, cdf, buildDate, false) +
-    monthlyFlowVariantHtml("all", all, cdf, buildDate, true) +
+    `<noscript><p class="caveat-inline">Dollars and All assets need JavaScript.</p></noscript>` +
+    `<div class="mf-variant" data-flow-variant="stocks">${monthlyVariantBody(stocks, "held")}</div>` +
+    /* launch F2 (R35, LD31): the three views a reader without JavaScript
+       cannot see — Dollars on listed stocks, and both views of All assets —
+       ship as island data and are drawn on first use (rule 8) */
+    `<div class="mf-variant" data-flow-variant="all" id="mf-all" hidden></div>` +
+    heldIslandHtml({ rootId: "mf-stocks-dollars", render: MONTHLY_FLOW_HELD.dollars, offset: 0, shared: null, rows: [stocks] }) +
+    heldIslandHtml({ rootId: "mf-all", render: MONTHLY_FLOW_HELD.variant, offset: 0, shared: null, rows: [all] }) +
     `</section>`
   );
 }
@@ -611,6 +860,8 @@ export interface EntityTableOpts {
      the descriptor is supplied here rather than invented at render time.
      Recorded as a deviation; the plan named four. */
   notes?: NoteCtx;
+  /** R25: the member table's side filter (default All — the server's page) */
+  side?: MemberSide;
 }
 
 /* The owner-code explanation, in ONE place in this module. The full
@@ -624,51 +875,61 @@ const OWNER_CODE_NOTE =
   `joint accounts (JT) — the STOCK Act does not distinguish who directed a trade. ` +
   `<a href="/methodology/#owner-codes">Owner codes ↗</a>`;
 
-/* R12 (DESIGN-POLISH M2): the member table's columns, decided over EVERY row
-   its pager can show. The Owner column counts a row as having a value when it
-   carries an owner code OR the partial-sale qualifier, because `ownerNote`
-   prints both in that cell (H-18). */
+/* R25 (launch M4b): the member trades table's columns — Side, Ticker,
+   Asset · owner, Range, Traded → filed, Src — decided over EVERY row its pager
+   can show (R12). The owner and partial qualifiers ride on the asset line,
+   outside its ellipsis (`assetLineHtml` with `qualifiers`), so they are never
+   a separate column a reader could lose; the Range cell carries every flag
+   chip; the dates cell keeps the lag and LATE. */
 const MEMBER_TXN_COLUMNS: readonly (readonly [string, string, string])[] = [
-  ["kind", "Kind", "c-kind"], ["ticker", "Ticker", "c-ticker"], ["asset", "Asset", "c-secondary c-flex"],
-  ["owner", "Owner", "c-secondary"], ["range", "Range", "c-num"], ["amount-range", "Amount range", "c-bar"],
-  ["dates", "Traded → Filed", "c-num"], ["src", "Source", "c-src"],
+  ["kind", "Side", "c-kind"], ["ticker", "Ticker", "c-ticker"], ["asset", "Asset · owner", "c-secondary c-flex"],
+  ["range", "Range", "c-num"], ["dates", "Traded → filed", "c-num"], ["src", "Src", "c-src"],
 ];
 export function memberTxnColumns(txns: readonly TxnRow[]): PresentColumns {
   return presentColumns<TxnRow>(txns, MEMBER_TXN_COLUMNS.map(([key]) =>
     key === "ticker"
       ? { key, hasValue: (r: TxnRow) => r.ticker != null, emptyReason: "Ticker: no row names a ticker; each filed asset is in the Asset column." }
-      : key === "owner"
-        ? {
-            key,
-            honesty: true,
-            hasValue: (r: TxnRow) => r.owner === "spouse" || r.owner === "child" || r.owner === "joint" || r.side === "sale_partial",
-            emptyReason: "Owner: no row carries a partial-sale qualifier or a spouse (SP), dependent (DC) or joint (JT) owner code.",
-          }
-        : { key, always: true },
+      : { key, always: true },
   ));
+}
+
+/** R25 / LD25: member trades page 25 rows (the `/e/` route included); the
+    feed's transport page size is unchanged. */
+export const MEMBER_PAGE_SIZE = 25;
+
+/** The member trades table's side filter (R25): All, Buys, Sells. */
+export type MemberSide = "all" | "buy" | "sell";
+
+/** The rows a side filter keeps, from the member's whole collection — a
+    partial sale is a sale; an exchange shows under All only. */
+export function memberSideRows(txns: readonly TxnRow[], side: MemberSide): TxnRow[] {
+  if (side === "buy") return txns.filter((t) => t.side === "purchase");
+  if (side === "sell") return txns.filter((t) => t.side === "sale" || t.side === "sale_partial");
+  return [...txns];
+}
+
+/** The member trades count (rule 6): "1–25 of 140 transactions", or of the
+    side the filter selected — "1–12 of 12 purchases". */
+export function memberTradesCountText(page: number, shown: number, total: number, side: MemberSide = "all"): string {
+  const noun = side === "buy" ? "purchases" : side === "sell" ? "sales" : "transactions";
+  if (total <= 0 || shown <= 0) return `0 ${noun}`;
+  const lo = page * MEMBER_PAGE_SIZE + 1;
+  return rangeOfTotal(lo, lo + shown - 1, total, noun);
 }
 
 function txnCellsMember(r: TxnRow, ctx: RenderCtx, stated: readonly string[] = [], cols: readonly string[] | null = null): string {
   const side = sideLabel(r.side, r.flags);
-  const owner = joinQualifiers(ownerNote(r));
-  const ownerLong = ownerNoteLong(r);
   const amountUnknown = r.low == null && r.high == null;
-  const tickerCell = r.ticker
-    ? `<a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>`
-    : assetNameCell(r);
   const has = (k: string): boolean => cols === null || cols.includes(k);
   return (
-    `<td class="c-side c-kind ${side.cls}">${esc(side.text)}</td>` +
-    (has("ticker") ? `<td class="c-ticker">${r.ticker ? tickerCell : "—"}</td>` : "") +
-    /* R17 (M3, T3.3): the default asset text; its as-filed note prints. The
-       qualifiers have their own Owner column here, unprefixed (no cell ever
-       begins with a separator). */
-    `<td class="c-asset c-secondary c-flex">${assetLineHtml(r, { notes: { scope: "member-asset" } })}</td>` +
-    (has("owner") ? `<td class="c-owner c-secondary">${owner ? `${esc(owner)}<span class="visually-hidden"> (${esc(ownerLong)})</span>` : "—"}</td>` : "") +
-    `<td class="c-amount c-num${amountUnknown ? " unknown" : ""}">${esc(amountText(r))}</td>` +
-    `<td class="c-range c-bar">${rangeBand(r)}${flagTags(r.flags, r, { stated })}</td>` +
-    `<td class="c-traded c-num">${dualDate(r, true)}</td>` +
-    `<td class="c-src">${srcLink(r.doc)}</td>`
+    `<td class="c-side c-kind ${side.cls}" role="cell">${esc(side.text)}</td>` +
+    (has("ticker") ? `<td class="c-ticker" role="cell">${r.ticker ? `<a data-row-link href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>` : "—"}</td>` : "") +
+    /* R17 (M3, T3.3): the default asset text, its as-filed note printing;
+       the partial and owner qualifiers follow it, outside the ellipsis */
+    `<td class="c-asset c-secondary c-flex" role="cell">${assetLineHtml(r, { notes: { scope: "member-asset" }, qualifiers: true })}</td>` +
+    `<td class="c-amount c-num${amountUnknown ? " unknown" : ""}" role="cell">${esc(amountText(r))}${flagTags(r.flags, r, { stated })}</td>` +
+    `<td class="c-traded c-num" role="cell">${dualDate(r, true)}</td>` +
+    `<td class="c-src" role="cell">${srcLink(r.doc)}</td>`
   );
 }
 
@@ -677,7 +938,7 @@ function txnCellsTicker(r: TxnRow, ctx: RenderCtx, stated: readonly string[] = [
   const owner = ownerQualifiersHtml(r);
   const amountUnknown = r.low == null && r.high == null;
   const memberCell = r.bioguide
-    ? `<a href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a> <span class="aff ${partyClass(r.party)}">${esc(
+    ? `<a data-row-link href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a> <span class="aff ${partyClass(r.party)}">${esc(
         affTextOf(r),
       )}</span>`
     : `<span class="unjoined-name">${esc(r.name)}</span> <span class="aff ${partyClass(r.party)}">${esc(affTextOf(r))}</span>`;
@@ -712,7 +973,7 @@ export function entityTxnRowsHtml(
       const edge = txnEdge(r);
       const pinned = kind === "ticker" && rowOpts.pinned?.has(r.txnId) === true;
       const cells = kind === "member" ? txnCellsMember(r, ctx, stated, columns) : txnCellsTicker(r, ctx, stated, pinned);
-      return `<tr${pinned ? ' class="on-signals"' : ""}${edge ? ` data-edge="${edge}"` : ""}${rowOpts.dataTxn ? ` data-txn="${esc(r.txnId)}"` : ""}>${cells}</tr>`;
+      return `<tr${pinned ? ' class="on-signals"' : ""}${edge ? ` data-edge="${edge}"` : ""}${rowOpts.dataTxn ? ` data-txn="${esc(r.txnId)}"` : ""}${kind === "member" ? ' role="row"' : ""}>${cells}</tr>`;
     })
     .join("\n");
 }
@@ -730,9 +991,15 @@ export function entityTableCountText(page: number, shown: number, total: number)
 }
 
 export function entityTxnTable(txns: TxnRow[], opts: EntityTableOpts): string {
-  const merged = mergeFeed(txns, []);
-  const pageRows = pageSlice(merged, opts.page).filter((i): i is TxnRow => i.kind === "txn");
-  const pages = pageCountFor(merged);
+  const member = opts.kind === "member";
+  const side: MemberSide = member ? (opts.side ?? "all") : "all";
+  /* R25: the member table pages 25 rows of the side the filter selected; the
+     ticker table keeps the feed's 50. */
+  const rows = member ? memberSideRows(txns, side) : txns;
+  const pageSize = member ? MEMBER_PAGE_SIZE : undefined;
+  const merged = mergeFeed(rows, []);
+  const pageRows = pageSlice(merged, opts.page, pageSize).filter((i): i is TxnRow => i.kind === "txn");
+  const pages = pageCountFor(merged, pageSize);
   /* Universal-flag hoisting runs over EVERY row the table can page through, not this page —
      the client re-renders rows on paging, and a per-page set would let page 2
      contradict the note page 1 left above it. The set travels to the client in
@@ -743,29 +1010,26 @@ export function entityTxnTable(txns: TxnRow[], opts: EntityTableOpts): string {
      right-aligned header by construction. */
   /* R12: the member table's columns come from its full collection and ride to
      the client pager in `data-columns`; the ticker table's are all fixed. */
-  const cols = opts.kind === "member" ? memberTxnColumns(txns) : null;
+  const cols = member ? memberTxnColumns(txns) : null;
   const heads: readonly (readonly [string, string, string])[] =
-    opts.kind === "member"
+    member
       ? MEMBER_TXN_COLUMNS.filter(([key]) => cols!.columns.includes(key)).map(([key, label, cls]) => [label, cls, key] as const)
       : [["Filed", "c-num", ""], ["Member", "c-member c-flex", ""], ["Side · Owner", "c-kind", ""], ["Traded · Lag", "c-num", ""],
          ["Amount", "c-num", ""], ["Range · Flags", "c-bar", ""], ["Src", "c-src", ""]];
-  /* Only `Side · Owner` carries a note, and only when a scope is
-     passed. Deliberately not every column: this run moves the strings that WERE
-     on the page, and inventing an explanation for six columns that never had
-     one would be new copy, not a relocation. The header's own label is the
-     note's trigger. */
+  /* Only the owner-bearing header carries a note, and only when a scope is
+     passed. On the member table that is "Asset · owner": the asset rule and
+     the owner codes are stated once, on the column that prints both. */
   const headNote = (label: string): string | null =>
     !opts.notes
       ? null
-      : label === "Side · Owner" || label === "Owner"
+      : label === "Side · Owner"
         ? OWNER_CODE_NOTE
-        : /* CD3-4 (b)/(c), M3 review: the asset rule is stated once, here —
-             a row whose name differs from the filing only by its mechanical
-             parts carries no per-row note */
-          label === "Asset"
-          ? esc(assetColumnNote())
+        : label === "Asset · owner"
+          ? `${esc(assetColumnNote())} ${OWNER_CODE_NOTE}`
           : null;
-  const count = entityTableCountText(opts.page, pageRows.length, txns.length);
+  const count = member
+    ? memberTradesCountText(opts.page, pageRows.length, rows.length, side)
+    : entityTableCountText(opts.page, pageRows.length, txns.length);
   return (
     universalFlagNote(stated) +
     `<div class="table-scroll"><table class="etable" data-entity-table data-kind="${opts.kind}"` +
@@ -773,20 +1037,26 @@ export function entityTxnTable(txns: TxnRow[], opts: EntityTableOpts): string {
        whole-distribution hoisting gate, and only these two renderers page. A visible page of a
        paged table can be uniform while its full collection is not, which is the
        one case the gate cannot judge from HTML. */
-    `${pages > 1 ? ' data-paged="1"' : ""} data-stated-flags="${esc(stated.join(","))}"${cols ? dataColumnsAttr(cols) : ""}>` +
+    `${pages > 1 ? ' data-paged="1"' : ""} data-stated-flags="${esc(stated.join(","))}"${cols ? dataColumnsAttr(cols) : ""}` +
+    /* R40 (M1 contract): the member table carries explicit table roles and
+       its card layout key, so a phone card keeps table semantics in WebKit */
+    `${member ? ' role="table" data-card="member-trades"' : ""}>` +
     `<caption class="visually-hidden">${esc(opts.caption)}</caption>` +
-    `<thead><tr>${heads
+    `<thead${member ? ' role="rowgroup"' : ""}><tr${member ? ' role="row"' : ""}>${heads
       .map(([h, cls, key]) =>
         // The ticker table's fixed newest-filed-first order is stated by the
         // header's aria-sort and caret, never a "▾" typed into the label.
-        thHtml({ label: h, mark: null, cls, noteHtml: headNote(h), notes: opts.notes, noteKey: h === "Asset" ? "asset" : "side-owner", order: opts.kind === "member" || h !== "Filed" ? undefined : "descending", ...(key ? { col: key } : {}) }),
+        thHtml({ label: h, mark: null, cls, noteHtml: headNote(h), notes: opts.notes, noteKey: h === "Asset · owner" ? "asset" : "side-owner", order: member || h !== "Filed" ? undefined : "descending", ...(key ? { col: key } : {}) }),
       )
       .join("")}</tr></thead>` +
-    `<tbody data-entity-rows>${entityTxnRowsHtml(pageRows, opts.kind, opts.ctx, stated, cols ? cols.columns : null)}</tbody>` +
+    `<tbody data-entity-rows${member ? ' role="rowgroup"' : ""}>${entityTxnRowsHtml(pageRows, opts.kind, opts.ctx, stated, cols ? cols.columns : null)}</tbody>` +
     `</table></div>` +
     (cols ? tableFootReasonHtml(cols) : "") +
     `<div class="table-foot">` +
-    `<div class="view-note">${opts.notes ? note("Each row is the latest version of its filing: an amendment replaces the original it supersedes, and the original stays in the published record.", opts.notes, "amended", { trigger: "label", textHtml: "Amended filings show the latest version" }) : "Amended filings show the latest version"} · <a href="/methodology/#defaults">what's excluded ↗</a></div>` +
+    (member
+      ? /* member-13: the same fact in half the words; the note keeps the supersede rule */
+        `<div class="view-note">${opts.notes ? note("Each row is the latest version of its filing: an amendment replaces the original it supersedes, and the original stays in the published record.", opts.notes, "amended", { trigger: "label", textHtml: "Amended filings: latest version shown" }) : "Amended filings: latest version shown"} <a href="/methodology/#defaults" aria-label="what is excluded">↗</a></div>`
+      : `<div class="view-note">${opts.notes ? note("Each row is the latest version of its filing: an amendment replaces the original it supersedes, and the original stays in the published record.", opts.notes, "amended", { trigger: "label", textHtml: "Amended filings show the latest version" }) : "Amended filings show the latest version"} · <a href="/methodology/#defaults">what's excluded ↗</a></div>`) +
     `<div class="pager">` +
     `<span class="pager-range" data-entity-count tabindex="-1">${esc(count)}</span>` +
     `<button class="pager-btn is-unavailable" data-entity-newer aria-disabled="true">← newer</button>` +
@@ -840,36 +1110,169 @@ export function memberStatTiles(m: MemberEntity, stamps: BuildStamps): StatTile[
   ];
 }
 
-/** S5: the member's needs-OCR paper filings — retained and counted, stated. */
+/** S5 + member-17: the member's needs-OCR paper filings — counted in totals,
+    not machine-read until OCR, each linked to the original. */
 export function memberPaperBlock(m: MemberEntity): string {
   if (m.paper.length === 0) return "";
   const rows = m.paper
     .map(
       (p) =>
-        `<tr><td class="c-filed c-num has-marks">${esc(p.filed)}</td>` +
-        `<td class="c-secondary c-flex"><span class="chip-ocr">paper filing — needs OCR</span> <span class="paper-note">retained and counted; zero machine-readable rows</span></td>` +
-        `<td class="c-src">${srcLink(p.doc)}</td></tr>`,
+        `<tr role="row"><td class="c-filed c-num has-marks" role="cell">${esc(p.filed)}</td>` +
+        `<td class="c-secondary c-flex" role="cell"><span class="chip-ocr">needs OCR</span></td>` +
+        `<td class="c-src" role="cell">${srcLink(p.doc)}</td></tr>`,
     )
     .join("\n");
   return (
     `<section class="paper-block" aria-labelledby="paper-h">` +
     `<h2 id="paper-h" class="section-h">Paper filings — not machine-readable</h2>` +
-    `<p class="section-note">These filings were submitted on paper. They are <strong>retained and counted</strong> — they appear in filing totals with zero transaction rows — but their contents are not yet machine-readable, and Public Filings does not hand-transcribe. The archived document is already the record.</p>` +
-    `<div class="table-scroll"><table class="etable"><caption class="visually-hidden">Paper filings needing OCR for this member</caption>` +
-    `<thead><tr>${thHtml({ label: "Filed", cls: "c-num", order: "descending" })}<th scope="col" class="c-secondary c-flex">Status</th><th scope="col" class="c-src">Src</th></tr></thead>` +
-    `<tbody>${rows}</tbody></table></div></section>`
+    `<p class="section-note">Counted in totals, but not machine-readable until OCR. Each links to the original.</p>` +
+    `<div class="table-scroll"><table class="etable" role="table" data-card="generic"><caption class="visually-hidden">Paper filings needing OCR for this member</caption>` +
+    `<thead role="rowgroup"><tr role="row">${thHtml({ label: "Filed", cls: "c-num", order: "descending" })}<th scope="col" class="c-secondary c-flex" role="columnheader">Status</th><th scope="col" class="c-src" role="columnheader">Src</th></tr></thead>` +
+    `<tbody role="rowgroup">${rows}</tbody></table></div></section>`
   );
 }
 
-/* The single clause `#member-footnotes` published. It is referenced from
-   TWO places on the member page — the Flow range column and the quarterly-flow
-   panel's "derived ·§" marker — so it is declared once and both notes read it,
-   which is what stops the two channels drifting apart. */
-const MEMBER_FLOW_NOTE =
-  `flow range = sum of statutory bucket bounds — an interval, not an estimate of value; ` +
-  `derived by Public Filings from the disclosed ranges`;
+/** LD24 (R23): the layout thresholds — active at four or more trades,
+    compact at three or fewer (a member with no transactions and only paper
+    filings included); the profile at ten or more; sectors at two or more;
+    the filing history at two or more filings. */
+export const MEMBER_ACTIVE_MIN_TRADES = 4;
+export const MEMBER_PROFILE_MIN_TRADES = 10;
+export const MEMBER_SECTORS_MIN = 2;
+export const MEMBER_HISTORY_MIN_FILINGS = 2;
 
-export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx, page = 0, deps: MemberV2Deps = { resolveSector: null, sectorMeta: null, committees: null }, signalsHtml = ""): string {
+/** A committee role that is the chair — never a vice chair or ranking member. */
+export function isChairRole(role: string | null): boolean {
+  return role !== null && /^chair(man|woman|person)?$/i.test(role.trim());
+}
+
+/** The member's active signals, as the page computed them from the build's
+    signal artifact (kinds s1–s6), for the compact layout's Signals fact. */
+export interface MemberSignalsSummary {
+  retentionDays: number;
+  active: readonly { kind: string; label: string; ticker: string | null }[];
+  /** launch review H4: this member's signals carried forward unevaluated
+      (their rule was withheld this build) */
+  unevaluated?: number;
+  /** launch review H4: the rules withheld this build (labels), which no
+      member was checked against */
+  withheld?: readonly string[];
+}
+
+/** One distinct filing behind the member's transactions. */
+function memberFilings(m: MemberEntity): MemberHistoryRowIn[] {
+  return Array.from(
+    m.txns
+      .reduce((map, row) => {
+        const old = map.get(row.doc);
+        map.set(row.doc, { filed: row.filed, doc: row.doc, count: (old?.count ?? 0) + 1 });
+        return map;
+      }, new Map<string, MemberHistoryRowIn>())
+      .values(),
+  ).sort((a, b) => b.filed.localeCompare(a.filed));
+}
+
+/** The owner as words on a compact card: a missing owner reads "owner not
+    stated", never "self" (R2); a partial sale says so. */
+function ownerWords(r: Pick<TxnRow, "owner" | "side">): string {
+  const who =
+    r.owner === "self" ? "self" :
+    r.owner === "spouse" ? "spouse (SP)" :
+    r.owner === "child" ? "dependent child (DC)" :
+    r.owner === "joint" ? "joint (JT)" : "owner not stated";
+  return r.side === "sale_partial" ? `${who} · partial sale` : who;
+}
+
+/** The ledger (R23): Trades (filings and paper) · Last filed · Net flow · 12m
+    · Late ("N of M" over the rows with a late status). */
+export function memberLedgerHtml(m: MemberEntity, stamps: BuildStamps): string {
+  const rows12 = excludeDateAnomalies(m.txns).rows.filter(
+    (t) => windowMembership(t, legacyTrailingMonthsBounds(stamps.generatedAtDate, 12), "traded_or_filed") === "in",
+  );
+  // net = purchases − sales through the ONE net arithmetic (`netFlow`)
+  const net12 = netFlow(
+    sumRanges(rows12.filter((t) => t.side === "purchase")),
+    sumRanges(rows12.filter((t) => t.side === "sale" || t.side === "sale_partial")),
+  );
+  const late = lateCount(m.txns);
+  const withStatus = m.txns.filter((t) => t.late != null).length;
+  const lastFiled = [...m.txns.map((t) => t.filed), ...m.paper.map((p) => p.filed)].filter(Boolean).sort().at(-1) ?? null;
+  return disclosureLedger([
+    {
+      label: "Trades",
+      value: fmtInt(m.txns.length),
+      // member-02: "1 filing", and paper only when there is any
+      detail: `${countOf(m.filingCount, "filing", "filings")}${m.paper.length > 0 ? ` · ${fmtInt(m.paper.length)} paper` : ""}`,
+      subKind: "count",
+    },
+    { label: "Last filed", value: lastFiled ?? "—", detail: lastFiled ? "newest filing" : "", subKind: "date", tone: "blue" },
+    {
+      label: "Net flow · 12m",
+      value: rows12.length === 0 ? "—" : net12.kind === "unbounded" ? "unbounded" : netIntervalText(net12),
+      detail: rows12.length > 0 && net12.kind === "unbounded" ? "open on both sides · an interval" : "purchases − sales",
+      subKind: "qualifier",
+      noteHtml: esc("Purchases minus sales over the trailing 12 months, summed from the statutory ranges on each filing — an interval, not an estimate of value."),
+    },
+    {
+      label: "Late",
+      value: withStatus === 0 ? "—" : `${fmtInt(late)} of ${fmtInt(withStatus)}`,
+      detail: "filed after 45 days",
+      tone: late > 0 ? "gold" : "ink",
+      noteHtml: esc(`Rows filed past the STOCK Act's 45-day window, out of the ${fmtInt(withStatus)} ${withStatus === 1 ? "row" : "rows"} whose dates allow a late status.`),
+    },
+  ], { scope: "member-ledger" });
+}
+
+export function memberBody(
+  m: MemberEntity,
+  stamps: BuildStamps,
+  ctx: RenderCtx,
+  page = 0,
+  deps: MemberV2Deps = { resolveSector: null, sectorMeta: null, committees: null },
+  signalsHtml = "",
+  side: MemberSide = "all",
+): string {
+  const active = m.txns.length >= MEMBER_ACTIVE_MIN_TRADES;
+  // Committees the member currently sits on, when the build carries the roster.
+  const committeesNow = deps.committees
+    ? (membershipAsOf({ memberships: deps.committees.memberships, windowFrom: deps.committees.windowFrom, windowTo: deps.committees.windowTo }, deps.committees.snapshotDate) ?? [])
+    : null;
+  const chamberWord = m.chamber === "senate" ? "U.S. Senate" : "U.S. House";
+  /* member-01 (adapted): the party code once, "since", and each committee
+     with its Chair mark; the member ID lives in the breadcrumb. */
+  const subline =
+    `<span class="aff ${partyClass(m.party)}">${esc(affTextOf(m))}</span>` +
+    ` · ${esc(chamberWord)}` +
+    (m.servingSince ? ` · since ${esc(m.servingSince)}` : "") +
+    (committeesNow ?? [])
+      .map((c) => ` · <span class="member-cmte">${esc(c.name)}${isChairRole(c.role) ? ` <span class="chair-badge">Chair</span>` : ""}</span>`)
+      .join("");
+  const head =
+    breadcrumb([
+      { text: "/congress", href: "/congress/" },
+      { text: "members" },
+      { text: m.bioguide },
+    ]) +
+    `<header class="entity-head member-head">` +
+    `<div class="entity-head-copy">` +
+    `<h1 class="entity-title">${esc(m.name)}</h1>` +
+    `<div class="entity-subline">${subline}</div>` +
+    `</div>` +
+    memberLedgerHtml(m, stamps) +
+    `</header>` +
+    /* member-03: the sources, the ranges claim (its note keeps the full
+       sentence and the methodology anchor) and the as-of date, once. */
+    `<div class="design-provenance">House Clerk + Senate eFD · amounts are ` +
+    noteFromHtml(
+      `Amounts are statutory ranges; totals on this page are therefore ranges too. ` +
+        `<a href="/methodology/#amount-ranges">Amount ranges ↗</a>`,
+      { scope: "member-stamp" },
+      "statutory-ranges",
+      { trigger: "label", textHtml: "statutory ranges" },
+    ) +
+    ` · as of ${esc(stamps.generatedAtDate)}</div>`;
+  if (!active) return head + memberCompactHtml(m, ctx, deps) + memberPaperBlock(m);
+
   const flow = quarterlyFlow(m.txns, stamps.generatedAtDate, 8);
   // R13: the member's latest disclosed trade date, over rows whose dates are
   // not anomalous (an impossible date is never the "latest trade").
@@ -878,159 +1281,55 @@ export function memberBody(m: MemberEntity, stamps: BuildStamps, ctx: RenderCtx,
     null,
   );
   const v2 = memberV2Parts(m, stamps, ctx, deps);
-  const top = topTickers(m.txns, stamps.generatedAtDate, 24, 6);
-  // R16 stats: net flow = purchases minus sales over the trailing 12 months,
-  // through the ONE net arithmetic (`netFlow`, net = [pL−sU, pU−sL]) the
-  // net-by-ticker table uses — never a gross sum of both sides.
-  const rows12 = excludeDateAnomalies(m.txns).rows.filter(
-    (t) => windowMembership(t, legacyTrailingMonthsBounds(stamps.generatedAtDate, 12), "traded_or_filed") === "in",
-  );
-  const net12 = netFlow(
-    sumRanges(rows12.filter((t) => t.side === "purchase")),
-    sumRanges(rows12.filter((t) => t.side === "sale" || t.side === "sale_partial")),
-  );
-  const distinctTickers = new Set(m.txns.map((t) => t.ticker).filter((t): t is string => t != null)).size;
-  const lateTotal = lateCount(m.txns);
-  // Committees the member currently sits on, when the build carries the roster.
-  const committeesNow = deps.committees
-    ? (membershipAsOf({ memberships: deps.committees.memberships, windowFrom: deps.committees.windowFrom, windowTo: deps.committees.windowTo }, deps.committees.snapshotDate) ?? [])
-    : null;
-  const aff = affTextOf(m);
-  const partyWord = partyLabel(m.party);
-  const chamberWord = m.chamber === "senate" ? "U.S. Senate" : "U.S. House";
-  const topRows = top
-    .map(
-      (t) =>
-        `<tr><td class="c-ticker c-flex"><a href="${tickerHrefFor(t.ticker, ctx)}">${esc(t.ticker)}</a></td>` +
-        `<td class="c-num">${fmtInt(t.n)}</td>` +
-        `<td class="c-num has-marks">${flowCellHtml(t.flow)}${hangMark("§")}</td>` +
-        `<td class="c-num c-muted">${esc(t.last)}</td></tr>`,
-    )
-    .join("\n");
-  const topTable =
-    top.length === 0
-      ? `<p class="section-note">No tickers disclosed in the trailing 24 months.</p>`
-      : `<div class="table-scroll"><table class="etable etable-compact"><caption class="visually-hidden">Most-disclosed tickers, trailing 24 months</caption>` +
-        /* `member-footnotes` had ONE mark, §, and it qualifies this
-           column. The descriptor rule applies — this `<thead>` is a literal
-           with no sort key, so the plan supplies the column key rather than the
-           renderer inventing one. */
-        `<thead><tr>${thHtml({ label: "Ticker", cls: "c-ticker c-flex" })}${thHtml({ label: "Trades", cls: "c-num" })}` +
-        thHtml({ label: "Flow range ·§", cls: "c-num", noteHtml: MEMBER_FLOW_NOTE, notes: { scope: "member-top" }, noteKey: "flow-range" }) +
-        `${thHtml({ label: "Last", cls: "c-num" })}</tr></thead>` +
-        `<tbody>${topRows}</tbody></table></div>`;
-
-  return (
-    breadcrumb([
-      { text: "/congress", href: "/congress/" },
-      { text: "members" },
-      { text: m.bioguide },
-    ]) +
-    `<header class="entity-head">` +
-    `<div class="entity-head-copy">` +
-    `<h1 class="entity-title">${esc(m.name)}</h1>` +
-    `<div class="entity-subline"><span class="aff ${partyClass(m.party)}">${esc(
-      partyWord ? `${partyWord} — ${aff}` : aff,
-    )}</span> · ${esc(chamberWord)}${
-      m.servingSince ? ` · serving since ${esc(m.servingSince)}` : ""
-    }${committeesNow && committeesNow.length > 0 ? ` · ${committeesNow.map((c) => esc(c.name)).join(", ")}` : ""} · <span class="mono-id">member ID ${esc(m.bioguide)}</span>` +
-    /* The identity `.entity-lede` paragraph is gone from the page
-       surface and its two claims are notes on the things they are about.
-
-       The RANGES claim is a property of every total on this page; its trigger
-       is the words "statutory ranges" in the provenance strip just below the
-       identity (DESIGN-POLISH M1: a label trigger, no glyph). The OWNER-CODE
-       claim is a property of one column, so it anchors on that column's header
-       (see `entityTxnTable`).
-
-       Neither is softened and neither is lost: both open declaratively with no
-       JavaScript, both print, and the owner-code text additionally has its own
-       methodology anchor, which T1 populated by moving it off this page. */
-    `</div>` +
-    `</div>` +
-    /* R16: four stats — disclosures · net flow range (12m) · distinct tickers ·
-       late filings. The `—` tiles for the annual-holdings and 13F joins are
-       gone with the empty panels they fed; the joins are named ONCE in the
-       planned line below. */
-    disclosureLedger([
-      { label: "Disclosures", value: fmtInt(m.txns.length), detail: `${countOf(m.filingCount, "filing", "filings")} · ${fmtInt(m.paper.length)} paper · retained`, subKind: "count" },
-      /* A range value ("−$250K to −$75.0K") is WIDE (`data-wide`): the figure
-         takes its width, never cutting it. The unbounded interval's wording is
-         not a value: the value says "unbounded" and its sub says why (R15;
-         review C2-2) — the 37-character phrase wrote over the next figure. */
-      {
-        label: "Net flow · 12m",
-        value: rows12.length === 0 ? "—" : net12.kind === "unbounded" ? "unbounded" : netIntervalText(net12),
-        detail: rows12.length > 0 && net12.kind === "unbounded" ? "open on both sides · an interval" : "purchases − sales · an interval",
-        subKind: "qualifier",
-        noteHtml: esc("Purchases minus sales over the trailing 12 months, summed from the statutory ranges on each filing — an interval, not an estimate of value."),
-      },
-      { label: "Distinct tickers", value: fmtInt(distinctTickers), detail: "across every disclosed row" },
-      { label: "Late filings", value: fmtInt(lateTotal), detail: "filed past the 45-day window", tone: "gold" },
-    ], { scope: "member-ledger" }) +
-    `</header>` +
-    `<div class="design-provenance">Flows from periodic transaction reports · House Clerk + Senate eFD · ` +
-    noteFromHtml(
-      `Amounts are statutory ranges; totals on this page are therefore ranges too. ` +
-        `<a href="/methodology/#amount-ranges">Amount ranges ↗</a>`,
-      { scope: "member-stamp" },
-      "statutory-ranges",
-      { trigger: "label", textHtml: "statutory ranges" },
-    ) +
-    ` · every row retains its receipt</div>` +
-    /* R16: the quarterly buy/sell chart leads, as on the ticker page; an
-       empty window is ONE data-derived line (R13). */
+  const buys = memberSideRows(m.txns, "buy").length;
+  const sells = memberSideRows(m.txns, "sell").length;
+  const sideBtn = (key: MemberSide, label: string, n: number | null): string =>
+    `<button type="button" data-side="${key}" aria-pressed="${key === side}">${label}${n === null ? "" : ` <span class="n">${fmtInt(n)}</span>`}</button>`;
+  const main =
+    /* R24: the quarterly chart leads — both sides on one labelled axis */
     `<section class="panel panel-wide design-member-chart" aria-labelledby="flow-h">` +
-    `<div class="panel-head"><h2 id="flow-h" class="section-h">Disclosed flow by quarter</h2>` +
-    `<span class="panel-note">bar = [min, max] of bucket sums · <span class="src-derived">` +
-    noteFromHtml(MEMBER_FLOW_NOTE, { scope: "member-flow" }, "derived", { trigger: "label", textHtml: "derived&nbsp;·§", name: "derived" }) +
-    `</span></span></div>` +
+    `<div class="panel-head"><h2 id="flow-h" class="section-h">Quarterly flow</h2>` +
+    `<span class="panel-note">8 quarters · by trade date</span></div>` +
     flowRibbon(flow, {
-      twoSided: false,
+      twoSided: true,
       sourceLine: "source: House Clerk + Senate eFD",
       notes: { scope: "member-chart" },
       emptyWindow: { latestTraded, asOf: stamps.generatedAtDate },
     }) +
     `</section>` +
-    /* Band M1: Net flow by ticker (1.7fr) │ Trading profile + Sector mix (1fr). */
-    v2.band +
-    `<section class="panel panel-wide" aria-labelledby="txns-h">` +
-    `<div class="panel-head"><h2 id="txns-h" class="section-h">All disclosed transactions</h2>` +
-    `<span class="panel-note">${countOf(m.txns.length, "row", "rows")} · filed date desc · ${asOfNote(stamps)}</span></div>` +
+    `<section class="panel panel-wide member-trades" aria-labelledby="txns-h">` +
+    `<div class="panel-head"><h2 id="txns-h" class="section-h">Trades</h2>` +
+    // member-12: the plural fixed; the as-of time lives on the provenance line
+    `<span class="panel-note">${countOf(m.txns.length, "trade", "trades")} · newest filed first</span>` +
+    /* R25: the side filter runs over the member JSON the pager already
+       fetches; it needs a script, so it is revealed by one */
+    `<div class="seg member-side-filter" role="group" aria-label="Side" data-side-filter hidden>` +
+    sideBtn("all", "All", null) + sideBtn("buy", "Buys", buys) + sideBtn("sell", "Sells", sells) +
+    `</div></div>` +
     entityTxnTable(m.txns, {
       kind: "member",
-      caption: `All disclosed transactions for ${m.name}`,
+      caption: `Trades for ${m.name}, newest filed first`,
       page,
       ctx,
-      // The owner-code half of the deleted `.entity-lede`, on the
-      // column it is about. The two `/tickers/*` callers pass nothing.
       notes: { scope: "member-txns" },
+      side,
     }) +
-    `</section>` +
-    /* Band M2: Filing history (1fr, compact 12) │ Signals on this member (1fr)
-       — a two-column pair, because the overlap cell has no data. A Signals cell
-       that holds only its empty-state line collapses the pair to one column
-       with that line under the history, and the band says so (R10, D-8). */
-    memberHistoryBandHtml(m, signalsHtml) +
-    memberPaperBlock(m) +
-    /* R14: the ONE Planned line, at the page foot and outside every band; the
-       13F column of the net-flow table is removed and named here. Then the
-       collapsed context disclosures, which hold the cards. */
-    plannedLine(["annual holdings", "13F overlap"]) +
-    v2.context +
-    `<details class="design-supplement"><summary>Additional disclosure analysis</summary>` +
-    `<div class="entity-grid">` +
-    `<section class="panel" aria-labelledby="top-h">` +
-    `<div class="panel-head"><h2 id="top-h" class="section-h">Most-disclosed tickers</h2><span class="panel-note">trailing 24m</span></div>` +
-    topTable +
-    `</section>` +
-    briefingCards([
-      { tag: "Disclosed transactions", title: countOf(m.txns.length, "reported transaction", "reported transactions"), body: "Amounts are the ranges in the filing. Purchases and sales are disclosures, not a statement of current holdings.", tone: "gold" },
-      { tag: "Reporting window", title: filedWindow(m), body: "Trade date and filing date are retained separately. Late and unparseable records stay identified in the data.", tone: "gold" },
-      { tag: "Holdings coverage", title: "Annual holdings are not in this view", body: "Periodic transaction reports do not establish a portfolio. Annual holdings and reconciliation require annual financial-disclosure records.", tone: "green" },
-    ]) +
+    `</section>`;
+  const signals = signalsHtml || MEMBER_SIGNALS_UNJOINED;
+  return (
+    head +
+    `<div class="member-grid" data-member-layout="active">` +
+    `<div class="member-main">${main}</div>` +
+    `<aside class="member-side" aria-label="Member summary">` +
+    v2.top +
+    (m.txns.length >= MEMBER_PROFILE_MIN_TRADES ? tradingProfileHtml(m, stamps, deps.chamber ?? null) : "") +
+    v2.sectors +
+    signals +
+    `</aside>` +
     `</div>` +
-    `</details>`
+    memberHistoryHtml(m) +
+    memberPaperBlock(m) +
+    v2.context
   );
 }
 
@@ -1051,55 +1350,144 @@ function filedWindow(m: { txns: readonly { filed: string }[]; paper: readonly { 
 /** The Signals cell the /e/ route renders when the server join is not
     available: a stated empty state, like the page's own no-signals line. */
 const MEMBER_SIGNALS_UNJOINED =
-  `<section class="panel" aria-label="Signals" data-empty-state><div class="panel-head"><h2 class="section-h">Signals</h2></div>` +
+  `<section class="panel member-side-sec" aria-label="Signals" data-empty-state><div class="panel-head"><h2 class="section-h">Signals</h2></div>` +
   `<p class="section-note">Signals are joined on the server; this view carries none. <a href="/signals/">Every rule, with its definition →</a></p></section>`;
 
-/** Band M2 (DESIGN-POLISH M2, F): the member's Filing history, compact 12
-    through the named binder, beside its Signals cell in a `.design-pair`.
-    A Signals cell that is only its empty-state line (`data-empty-state`)
-    collapses the pair: one column, the line under the history, and
-    `data-collapsed="empty-state"` so the balance check knows the pair was
-    collapsed on purpose, never lost (R10, T-4). */
-function memberHistoryBandHtml(m: MemberEntity, signalsHtml: string): string {
-  const filings = Array.from(
-    m.txns
-      .reduce((map, row) => {
-        const old = map.get(row.doc);
-        map.set(row.doc, { filed: row.filed, doc: row.doc, count: (old?.count ?? 0) + 1 });
-        return map;
-      }, new Map<string, { filed: string; doc: string; count: number }>())
-      .values(),
-  ).sort((a, b) => b.filed.localeCompare(a.filed));
-  const signals = signalsHtml || MEMBER_SIGNALS_UNJOINED;
-  /* The history is the PRIMARY cell and shows its fixed default of 12 in
-     every state (coordinator decision CD-1): a default view is never tuned to
-     one data build, and a primary is never cut to balance its side cell. */
+/** R23 / LD24: the compact layout for a member with three or fewer trades —
+    one card per trade (none for a paper-only member, whose paper filings are
+    counted and linked below), then three COMPUTED facts: committees with
+    Chair, committee overlap as of each trade date, and signals in the window.
+    No fact is hard-coded: "None" is printed only where it was computed. */
+export function memberCompactHtml(m: MemberEntity, ctx: RenderCtx, deps: MemberV2Deps): string {
+  const n = m.txns.length;
+  const title = n === 0 ? "No trades on record" : n === 1 ? "The one trade on record" : `The ${fmtInt(n)} trades on record`;
+  const cards = m.txns
+    .map((r) => {
+      const sd = sideLabel(r.side, r.flags);
+      const edge = txnEdge(r);
+      return (
+        `<li class="one-r"${edge ? ` data-edge="${edge}"` : ""}>` +
+        `<span class="one-side c-kind ${sd.cls}">${esc(sd.text)}</span>` +
+        `<div class="one-what">` +
+        `<div class="one-l1"><span class="one-tk">${r.ticker ? `<a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>` : "—"}</span>` +
+        `<span class="one-iss">${assetLineHtml(r, { notes: { scope: "member-asset" } })} <span class="asset-sep">·</span> <span class="owner-note">${esc(ownerWords(r))}</span></span></div>` +
+        `<div class="one-l2"><span class="one-amt c-num">${esc(amountText(r))}</span>${flagTags(r.flags, r)}<span class="one-dates">${dualDate(r, true)}</span></div>` +
+        `</div>` +
+        `<span class="one-src c-src">${srcLink(r.doc)}</span>` +
+        `</li>`
+      );
+    })
+    .join("");
+  const body =
+    n === 0
+      ? `<p class="section-note member-paper-only">No machine-readable trade on record: ${countOf(m.paper.length, "paper filing is", "paper filings are")} counted below, not machine-read until OCR.</p>`
+      : `<ol class="one-trades">${cards}</ol>`;
+  return (
+    `<section class="panel panel-wide member-compact" aria-labelledby="compact-h" data-member-layout="compact">` +
+    `<div class="panel-head"><h2 id="compact-h" class="section-h">${esc(title)}</h2><span class="panel-note">${esc(filedWindow(m))}</span></div>` +
+    body +
+    `<dl class="member-facts">` +
+    `<div><dt>Committees</dt><dd>${compactCommitteesFact(deps)}</dd></div>` +
+    `<div><dt>Committee overlap</dt><dd>${compactOverlapFact(m, deps)}</dd></div>` +
+    `<div><dt>Signals</dt><dd>${compactSignalsFact(deps.signals ?? null)}</dd></div>` +
+    `</dl>` +
+    `</section>`
+  );
+}
+
+function compactCommitteesFact(deps: MemberV2Deps): string {
+  if (deps.committees === null) return "Committee data is not in this build.";
+  const now = membershipAsOf(
+    { memberships: deps.committees.memberships, windowFrom: deps.committees.windowFrom, windowTo: deps.committees.windowTo },
+    deps.committees.snapshotDate,
+  );
+  if (now === null) return "Not known for the snapshot date.";
+  if (now.length === 0) return `None on record <span class="fact-dim">(snapshot ${esc(deps.committees.snapshotDate)})</span>`;
+  return now.map((c) => `${esc(c.name)}${isChairRole(c.role) ? " (Chair)" : ""}`).join(" · ");
+}
+
+/** "Committee overlap" as of each trade date (LD24): "None" only when every
+    trade could be checked — dated inside the snapshot, a ticker with a
+    sector — and every committee is mapped; an unmapped committee reads "not
+    checked"; each hit is context, never an allegation. */
+function compactOverlapFact(m: MemberEntity, deps: MemberV2Deps): string {
+  if (deps.committees === null) return "Not checked: committee data is not in this build.";
+  if (deps.resolveSector === null) return "Not checked: sector data is not in this build.";
+  if (m.txns.length === 0) return "No trades to check.";
+  const resolve = deps.resolveSector;
+  const snapshot: MembershipSnapshot = { memberships: deps.committees.memberships, windowFrom: deps.committees.windowFrom, windowTo: deps.committees.windowTo };
+  const overlap = jurisdictionOverlap(m.txns, snapshot, deps.committees.jurisdictionByCommittee, resolve);
+  const dated = excludeDateAnomalies(m.txns).rows;
+  const anomalies = m.txns.length - dated.length;
+  const noSector = dated.filter((t) => !t.ticker || resolve(t.ticker).state !== "sector").length;
+  const unchecked: string[] = [];
+  if (overlap.coverageUnknown > 0)
+    unchecked.push(`${countOf(overlap.coverageUnknown, "trade", "trades")} on unmapped committees (${overlap.unmappedCommittees.map(esc).join(", ")}): not checked`);
+  if (overlap.undatable > 0) unchecked.push(`${countOf(overlap.undatable, "trade predates", "trades predate")} the membership snapshot: not checked`);
+  if (noSector > 0) unchecked.push(`${countOf(noSector, "trade has", "trades have")} no issuer sector: not checked`);
+  if (anomalies > 0) unchecked.push(`${countOf(anomalies, "trade has", "trades have")} an impossible date: not checked`);
+  const hits = overlap.rows.map(
+    (r) =>
+      `${r.txn.ticker ? esc(r.txn.ticker) : "—"} (${esc(sectorLabel(r.sector))}) · ${r.committees.map((c) => esc(c.name)).join(", ")}, as of ${esc(r.txn.traded ?? "—")} <span class="fact-dim">— context, not an allegation</span>`,
+  );
+  if (hits.length > 0) return hits.join("<br>") + (unchecked.length ? `<br><span class="fact-dim">${unchecked.join(" · ")}.</span>` : "");
+  if (unchecked.length > 0) return `Not checked for every trade. <span class="fact-dim">${unchecked.join(" · ")}.</span>`;
+  return `None. <span class="fact-dim">No trade falls inside a committee they sat on as of its trade date.</span>`;
+}
+
+/** "Signals" (LD24): the member's ACTIVE signals of any kind, s1–s6; "None
+    in the last N days" only when that was computed. */
+function compactSignalsFact(sig: MemberSignalsSummary | null): string {
+  if (sig === null) return "Signals are joined on the server; this view carries none.";
+  /* H4: "None" is the computed answer only for the rules evaluated; the
+     withheld rules and this member's unevaluated carry-forwards are stated */
+  const unevaluated = sig.unevaluated ?? 0;
+  const withheld = sig.withheld ?? [];
+  const caveats = [
+    unevaluated > 0 ? `${fmtInt(unevaluated)} carried forward unevaluated because ${unevaluated === 1 ? "its rule was" : "their rules were"} withheld this build` : "",
+    withheld.length > 0 ? `not checked this build (rule withheld): ${withheld.map(esc).join(", ")}` : "",
+  ].filter(Boolean);
+  if (sig.active.length === 0) return `None <span class="fact-dim">in the last ${fmtInt(sig.retentionDays)} days${caveats.length ? ` · ${caveats.join(" · ")}` : ""}.</span>`;
+  return (
+    sig.active.map((s) => `${esc(s.label)}${s.ticker ? ` · <span class="mono-ticker">${esc(s.ticker)}</span>` : ""}`).join("<br>") +
+    (caveats.length ? `<br><span class="fact-dim">${caveats.join(" · ")}.</span>` : "") +
+    ` <a href="/signals/">All signals →</a>`
+  );
+}
+
+/** The member's Filing history (R26): only with two or more filings; the
+    first 12 in the DOM, the rest held in the island (rule 8). */
+function memberHistoryHtml(m: MemberEntity): string {
+  const filings = memberFilings(m);
+  if (filings.length < MEMBER_HISTORY_MIN_FILINGS) return "";
   const historyN = MEMBER_HISTORY_COMPACT_ROWS;
   const shown = Math.min(historyN, filings.length);
   const collapsed = filings.length > historyN;
-  const rows = filings
-    .map(
-      (row, i) =>
-        `<tr${i >= historyN ? " data-compact-extra" : ""}><td class="c-flex">${esc(row.filed)}</td>` +
-        `<td class="c-num">${fmtInt(row.count)}</td><td class="c-src">${srcLink(row.doc)}</td></tr>`,
-    )
-    .join("");
-  /* The filing history has no text column: its identity date (first column)
-     takes the slack and stays left-aligned; Rows is a number, Receipt a
-     receipt (R1, round 3 NEW-E). */
-  const history =
-    `<section class="panel design-member-history" aria-label="Filing history"><div class="panel-head"><h2 class="section-h">Filing history</h2><span class="panel-note">SOURCE REPORTS · FILED ↓</span></div>` +
-    (filings.length === 0
-      ? `<p class="section-note">No machine-readable filing on record for this member.</p>`
-      : `<div class="table-scroll"><table class="etable"><caption class="visually-hidden">Filing history</caption>` +
-        `<thead><tr><th scope="col" class="c-flex">Filed</th><th scope="col" class="c-num">Rows</th><th scope="col" class="c-src">Receipt</th></tr></thead>` +
-        `<tbody id="member-history-tbody"${collapsed ? ' data-collapsed="true"' : ""}>${rows}</tbody></table></div>` +
-        compactDisclosure({ rootId: "member-history-tbody", total: filings.length, shown, noun: "filings", domBacked: true })) +
-    `</section>`;
-  /* The history is the primary cell; an empty-state Signals cell collapses
-     the pair (derived from its `data-empty-state`), and the lone
-     three-column history is then capped at the half-band width (CD-2). */
-  return pairBandHtml("design-pair design-member-history-band", history, signals, { primary: "left" });
+  const parts = heldTableParts<MemberHistoryRowIn, null>({
+    rootId: "member-history-tbody",
+    render: MEMBER_HISTORY_ROWS,
+    rowFn: memberHistoryRowHtml,
+    rows: filings,
+    shown,
+    shared: null,
+  });
+  /* member-14: the meta line is cut; the identity date takes the slack */
+  return (
+    `<section class="panel design-member-history" aria-label="Filing history"><div class="panel-head"><h2 class="section-h">Filing history</h2></div>` +
+    `<div class="table-scroll"><table class="etable" role="table" data-card="generic"><caption class="visually-hidden">Filing history</caption>` +
+    /* the heads through thHtml (launch final pass): each states its
+       data-label, which withTableRoles / rolesFor copy onto the Rows cell, so
+       a phone card labels its number instead of printing it bare */
+    `<thead role="rowgroup"><tr role="row">` +
+    thHtml({ label: "Filed", cls: "c-flex", attrs: ' role="columnheader"' }) +
+    thHtml({ label: "Rows", cls: "c-num", attrs: ' role="columnheader"' }) +
+    thHtml({ label: "Receipt", cls: "c-src", attrs: ' role="columnheader"' }) +
+    `</tr></thead>` +
+    `<tbody id="member-history-tbody" role="rowgroup"${collapsed ? ' data-collapsed="true" data-held="json"' : ""}>${parts.bodyRows}</tbody></table></div>` +
+    parts.island +
+    compactDisclosure({ rootId: "member-history-tbody", total: filings.length, shown, noun: "filings", domBacked: true }) +
+    `</section>`
+  );
 }
 
 /* ---------- deep congressional ticker body ---------- */
@@ -1140,7 +1528,7 @@ export function congressTickerBody(t: TickerEntity, stamps: BuildStamps, ctx: Re
       (m) =>
         `<tr><td class="c-member c-flex">${
           m.bioguide
-            ? `<a href="${memberHrefFor(m.bioguide, ctx)}">${esc(m.name)}</a>`
+            ? `<a data-row-link href="${memberHrefFor(m.bioguide, ctx)}">${esc(m.name)}</a>`
             : esc(m.name)
         } <span class="aff ${partyClass(m.party)}">${esc(affTextOf(m))}</span></td>` +
         `<td class="c-num c-buy">${fmtInt(m.buys)}</td>` +
@@ -1174,7 +1562,7 @@ export function congressTickerBody(t: TickerEntity, stamps: BuildStamps, ctx: Re
     `<section class="panel" aria-labelledby="flow2-h">` +
     `<div class="panel-head"><h2 id="flow2-h" class="section-h">Disclosed flow by quarter, both sides</h2>` +
     `<span class="panel-note">bar = [min, max] bucket sums · purchases above axis, sales below</span></div>` +
-    flowRibbon(flow, { twoSided: true, sourceLine: "source: House Clerk + Senate eFD" }) +
+    flowRibbon(flow, { twoSided: true, sourceLine: "source: House Clerk + Senate eFD", asOf: stamps.generatedAtDate }) +
     `</section>` +
     `<section class="panel" aria-labelledby="md-h">` +
     `<div class="panel-head"><h2 id="md-h" class="section-h">Members disclosing ${esc(t.ticker)}</h2><span class="panel-note">trailing 12m</span></div>` +
@@ -1183,7 +1571,7 @@ export function congressTickerBody(t: TickerEntity, stamps: BuildStamps, ctx: Re
       : `<div class="table-scroll"><table class="etable etable-compact"><caption class="visually-hidden">Members disclosing ${esc(
           t.ticker,
         )}, trailing 12 months</caption>` +
-        `<thead><tr><th scope="col" class="c-member c-flex">Member</th><th scope="col" class="c-num">Buys</th><th scope="col" class="c-num">Sales</th><th scope="col" class="c-num">Flow range</th></tr></thead>` +
+        `<thead><tr><th scope="col" class="c-member c-flex" data-label="Member">Member</th><th scope="col" class="c-num" data-label="Buys">Buys</th><th scope="col" class="c-num" data-label="Sales">Sales</th><th scope="col" class="c-num" data-label="Flow range">Flow range</th></tr></thead>` +
         `<tbody>${memberRows}</tbody></table></div>`) +
     cardFoot({ short: "Counts of filed transactions", full: "Counts are filed transactions, not net positions; disclosed ranges cannot be netted into a position.", scope: "ticker-members-foot", key: "counts" }) +
     `</section>` +
@@ -1226,6 +1614,9 @@ export interface MemberV2Deps {
   /** the chamber's per-member medians the trading profile is compared against;
       null → "no median benchmark" (the generic /e/ route, older callers) */
   chamber?: ChamberBenchmark | null;
+  /** the member's active signals (kinds s1–s6) for the compact layout's
+      Signals fact; null/absent → stated as not joined in this view */
+  signals?: MemberSignalsSummary | null;
 }
 
 /** The S-5 caveat. NON-REMOVABLE: rendered beside every overlap row set, and
@@ -1250,13 +1641,15 @@ function memberFlowNoteHtml(): string | null {
   return RANKING_FOOTNOTES_LIST.find((f) => f.mark === "§")?.html ?? null;
 }
 
-/* ---------- the trading profile (Congress Member.dc.html, right of flows) ---------- */
+/* ---------- the trading profile (side column, ten or more trades) ---------- */
 
 /** Five per-member statistics on a 0–100 track with the chamber's per-member
-    MEDIAN as a gold tick — "vs House median" in the reference. Every number is
-    computed from this member's rows; the median is over the chamber's members
-    (one observation each), supplied by the page or null for callers without
-    the corpus, in which case the panel says "no median benchmark". */
+    MEDIAN as a tick. Every number is computed from this member's rows; the
+    median is over the chamber's members (one observation each), supplied by
+    the page or null for callers without the corpus. member-07/08/09: the caps
+    meta and the medians paragraph become one header tip, the labels shorten
+    (each keeps its definition note), and the summary line keeps only the
+    figure the ledger and bars do not already state. */
 function tradingProfileHtml(m: MemberEntityT, stamps: BuildStamps, bench: ChamberBenchmark | null): string {
   const st = memberProfileStats(m.txns);
   const chamberWord = m.chamber === "senate" ? "Senate" : "House";
@@ -1264,7 +1657,7 @@ function tradingProfileHtml(m: MemberEntityT, stamps: BuildStamps, bench: Chambe
   const pct = (v: number | null): string => (v == null ? "—" : `${Math.round(v * 100)}%`);
   const metrics: Metric[] = [
     {
-      label: "Filing lag (median)", value: st.medianLag, text: st.medianLag == null ? "—" : `+${fmtInt(st.medianLag)}d`, scale: 112,
+      label: "Median lag", value: st.medianLag, text: st.medianLag == null ? "—" : `+${fmtInt(st.medianLag)}d`, scale: 112,
       median: bench?.medianLag ?? null, medText: (v) => `median +${fmtInt(v)}d`,
       compare: (v, med) => (v < med ? "faster than chamber" : v > med ? "slower than chamber" : "at chamber median"),
       title: "median days between trade date and filing date, over rows that disclose both",
@@ -1276,22 +1669,25 @@ function tradingProfileHtml(m: MemberEntityT, stamps: BuildStamps, bench: Chambe
       title: "machine-readable transaction rows per distinct source filing",
     },
     {
-      label: "Share ≤ $15K bracket", value: st.shareSmallBracket == null ? null : st.shareSmallBracket * 100, text: pct(st.shareSmallBracket), scale: 100,
+      label: "≤$15K share", value: st.shareSmallBracket == null ? null : st.shareSmallBracket * 100, text: pct(st.shareSmallBracket), scale: 100,
       median: bench?.shareSmallBracket == null ? null : bench.shareSmallBracket * 100, medText: (v) => `median ${Math.round(v)}%`,
       compare: (v, med) => (v > med ? "small-lot profile" : v < med ? "larger lots" : "at median"),
       title: "rows whose disclosed bracket tops out at $15,000",
     },
     {
-      label: "Buy share of rows", value: st.buyShare == null ? null : st.buyShare * 100, text: pct(st.buyShare), scale: 100,
+      label: "Buy share", value: st.buyShare == null ? null : st.buyShare * 100, text: pct(st.buyShare), scale: 100,
       median: bench?.buyShare == null ? null : bench.buyShare * 100, medText: (v) => `median ${Math.round(v)}%`,
       compare: (v, med) => (Math.abs(v - med) < 5 ? "≈ chamber" : v > med ? "above median" : "below median"),
       title: "purchases as a share of all disclosed rows — a count of disclosures, not of dollars",
     },
     {
-      label: "Self-owned share", value: st.selfOwnedShare == null ? null : st.selfOwnedShare * 100, text: pct(st.selfOwnedShare), scale: 100,
+      /* launch review H9: the share counts a row with NO owner stated as well
+         as "self", so it is labelled by what it measures — rows without an
+         SP/DC/JT code — never "self-owned" */
+      label: "No SP/DC/JT code", value: st.selfOwnedShare == null ? null : st.selfOwnedShare * 100, text: pct(st.selfOwnedShare), scale: 100,
       median: bench?.selfOwnedShare == null ? null : bench.selfOwnedShare * 100, medText: (v) => `median ${Math.round(v)}%`,
-      compare: (v, med) => (v < med ? "family accounts" : v > med ? "mostly self-owned" : "at median"),
-      title: "rows with no spouse (SP), dependent-child (DC) or joint (JT) owner code",
+      compare: (v, med) => (v < med ? "more SP/DC/JT rows" : v > med ? "fewer SP/DC/JT rows" : "at median"),
+      title: "rows with no spouse (SP), dependent-child (DC) or joint (JT) owner code — a row whose owner is not stated counts here too, so this is not a share of self-owned holdings",
     },
   ];
   const row = (x: Metric): string => {
@@ -1303,29 +1699,105 @@ function tradingProfileHtml(m: MemberEntityT, stamps: BuildStamps, bench: Chambe
       `<span class="book-track" aria-hidden="true">${tick == null ? "" : `<i class="book-median" style="left:${tick.toFixed(1)}%"></i>`}${w == null ? "" : `<span style="width:${w.toFixed(1)}%"></span>`}</span>` +
       `<span>${esc(x.text)}</span><span class="book-compare${cls}">${esc(cmp)}${x.median != null && cmp !== x.medText(x.median) ? `<span class="visually-hidden"> — ${esc(x.medText(x.median))}</span>` : ""}</span></dd></div>`;
   };
-  const tiles = memberStatTiles(m, stamps);
+  /* member-09: the one figure no other part of the page states */
+  const gross = memberStatTiles(m, stamps).find((t) => t.label === "disclosed flow · trailing 12m")!;
+  const head = bench
+    ? note(
+        `Tick = median of the ${fmtInt(bench.members)} ${chamberWord} members with disclosed rows in this build, one value per member, so a high-volume filer does not become the chamber. Describes the filing record, not intent.`,
+        { scope: "member-profile" },
+        "medians",
+        { trigger: "label", textHtml: `vs ${chamberWord} median`, name: `vs ${chamberWord} median` },
+      )
+    : "no median benchmark";
   return (
-    `<section class="panel design-trading-profile" aria-label="Trading profile">` +
-    `<div class="panel-head"><h2 class="section-h">Trading profile</h2>` +
-    `<span class="panel-note">${bench ? `VS ${chamberWord.toUpperCase()} MEDIAN · TICK = MEDIAN · ${fmtInt(bench.members)} MEMBERS` : "DISCLOSED RECORD · NO MEDIAN BENCHMARK"}</span></div>` +
+    `<section class="panel member-side-sec design-trading-profile" aria-label="Profile">` +
+    `<div class="panel-head"><h2 class="section-h">Profile</h2>` +
+    `<span class="panel-note">${head}</span></div>` +
     `<dl>${metrics.map(row).join("")}</dl>` +
-    `<p class="section-note book-source">${tiles.map((t) => `${t.title ? note(t.title, { scope: "member-tiles" }, t.label, { trigger: "label", textHtml: esc(t.label) }) : esc(t.label)}: ${esc(t.value)}`).join(" · ")}</p>` +
-    (bench
-      ? `<p class="section-note">Medians are per member across the ${fmtInt(bench.members)} ${chamberWord} members with disclosed rows in this build — one observation each, so a high-volume filer does not become the chamber. Statistics describe the filing record, never intent.</p>`
-      : "") +
+    `<p class="section-note book-source">${note(gross.title!, { scope: "member-tiles" }, gross.label, { trigger: "label", textHtml: "Gross flow · 12m" })}: ${esc(gross.value)}</p>` +
     `</section>`
   );
 }
 
-/** Rows the member's "Net disclosed flow by ticker" shows before its Show-all
-    — the FIXED default of the approved preview (E: compact 20; coordinator
-    decision CD-1: a default view is never tuned to one data build, and the
-    primary cell of band M1 is never cut to balance its side cell). The rest
-    ride in the DOM behind the named binder (`initDomDisclosures`), so no row
-    is unreachable. */
-export const MEMBER_FLOW_COMPACT_ROWS = 20;
+/** Rows each Top tickers window shows before its "Show all N tickers"
+    (R26: 8 per window); the rest are held in the island (rule 8), so no row
+    is unreachable (DV19). */
+export const MEMBER_FLOW_COMPACT_ROWS = 8;
 /** Filings the member's Filing history shows before its Show-all (E: 12, fixed). */
 export const MEMBER_HISTORY_COMPACT_ROWS = 12;
+
+/* ---------- held-row functions (pagination-and-counts.md rule 8, LD26) ----------
+
+   Each is the ONE row function of its table: the server renders the first N
+   rows through it and the client binder (`registerHeldRows` +
+   `initDomDisclosures`) renders the held rows through it from the island. It
+   reads nothing but its arguments — no closure over the build, no ctx — so
+   the island can carry every input and the two sides are byte-identical. */
+
+/** The registered name of the member net-by-ticker row function. */
+export const MEMBER_NET_ROWS = "member-net";
+/** The registered name of the member filing-history row function. */
+export const MEMBER_HISTORY_ROWS = "member-history";
+
+/** One net-by-ticker row as the island carries it: every input the row
+    function reads, the neighbour-derived `overlapsPrev` and the build-derived
+    `cut` (a budget-cut ticker links to `/e/`, `format.ts` `tickerHrefFor`)
+    included. `sep` marks the separator row that introduces the
+    wholly-undisclosed bucket (its value is the bucket's ticker count). */
+export interface MemberNetRowIn {
+  sep?: number;
+  ticker: string;
+  cut: boolean;
+  purchases: SumRanges;
+  sales: SumRanges;
+  buys: number;
+  sells: number;
+  net: NetInterval;
+  overlapsPrev: boolean;
+}
+/** The net-by-ticker table's table-wide inputs: the diverging bar's scale
+    (the largest provable minimum on either side over EVERY row of the
+    window) and the column count the separator row spans. */
+export interface MemberNetShared {
+  scale: number;
+  cols: number;
+}
+
+const lowerOf = (sum: SumRanges): number => (sum.kind === "closed" || sum.kind === "open" ? sum.low : 0);
+
+/** A Top tickers row (R26): Ticker · Buy ◂ ▸ sell bar · buys·sells · Net —
+    net flows, not holdings, in the live interval grammar (≥ only when
+    one-signed, ≈ when it overlaps the row above). */
+export function memberNetRowHtml(r: MemberNetRowIn, _index: number, s: MemberNetShared): string {
+  if (r.sep !== undefined) {
+    return `<tr class="unranked-sep" role="row"><td colspan="${s.cols}" role="cell">${fmtInt(r.sep)} tickers carry a wholly-undisclosed side — no endpoints, listed last, never zero</td></tr>`;
+  }
+  const nk = netKindWord(r.net);
+  /* The row's kind edge follows its net direction; a bounded range that
+     spans zero (FLAT) and a range with no statable direction ("—") take the
+     neutral flat edge. */
+  const edge = nk.word === "NET BUY" ? "netbuy" : nk.word === "NET SELL" ? "netsell" : "flat";
+  const href = tickerHrefFor(r.ticker, r.cut ? { cutTickers: new Set([r.ticker]) } : {});
+  return `<tr class="design-net-row" data-edge="${edge}" role="row">` +
+    `<td class="c-ticker c-flex" role="cell"><a data-row-link href="${href}">${esc(r.ticker)}</a><span class="visually-hidden"> ${esc(nk.word)}${nk.why ? ` ${esc(nk.why)}` : ""}</span></td>` +
+    `<td class="c-bar" role="cell"><span class="design-diverging" aria-hidden="true"><span style="right:50%;width:${(lowerOf(r.purchases) / s.scale * 50).toFixed(1)}%"></span><span class="sale" style="left:50%;width:${(lowerOf(r.sales) / s.scale * 50).toFixed(1)}%"></span></span><span class="visually-hidden">Purchases ${flowCellHtml(r.purchases)}; sales ${flowCellHtml(r.sales)}</span></td>` +
+    `<td class="c-num c-bs" role="cell"><span class="c-buy">${fmtInt(r.buys)}</span>·<span class="c-sell">${fmtInt(r.sells)}</span></td>` +
+    `<td class="c-num c-net has-marks ${nk.word === "NET BUY" ? "c-buy" : nk.word === "NET SELL" ? "c-sell" : "c-muted"}" role="cell">${netCellHtml(r.net, r.overlapsPrev)}</td></tr>`;
+}
+
+/** One filing-history row as the island carries it. */
+export interface MemberHistoryRowIn {
+  filed: string;
+  doc: string;
+  count: number;
+}
+
+export function memberHistoryRowHtml(row: MemberHistoryRowIn, _index = 0, _shared: unknown = null): string {
+  return (
+    `<tr role="row"><td class="c-flex" role="cell">${esc(row.filed)}</td>` +
+    `<td class="c-num" role="cell">${fmtInt(row.count)}</td><td class="c-src" role="cell">${srcLink(row.doc)}</td></tr>`
+  );
+}
 
 export function memberV2Sections(
   m: MemberEntityT,
@@ -1334,194 +1806,165 @@ export function memberV2Sections(
   deps: MemberV2Deps,
 ): string {
   const parts = memberV2Parts(m, stamps, ctx, deps);
-  return parts.band + parts.context;
+  return parts.top + parts.sectors + parts.context;
 }
 
-/** The member-v2 pieces, placed apart by `memberBody` (DESIGN-POLISH M2, F):
-    band M1 (net flow │ trading profile + sector mix) after the chart, and the
-    collapsed context disclosure at the page foot, after the Planned line.
-    `memberV2Sections` keeps returning both, in that order, for its callers. */
+/** One Top tickers window: the member's net flow per ticker over `rows`,
+    ranked (undisclosed bucket last, with its separator), the first 8 in the
+    DOM and the rest in the island. */
+function topTickersTable(rows: readonly TxnRow[], ctx: RenderCtx, rootId: string, label: string, emptyLine: string): string {
+  const { rows: netRows } = memberNetByTicker(rows);
+  if (netRows.length === 0) return `<p class="section-note">${esc(emptyLine)}</p>`;
+  const { ranked, undisclosedBucket } = rankNetRows(netRows, (r) => r.net, (r) => r.ticker);
+  const scale = Math.max(1, ...netRows.flatMap((row) => [lowerOf(row.purchases), lowerOf(row.sales)]));
+  const cutOf = (ticker: string): boolean => ctx.cutTickers?.has(ticker) === true;
+  /* LD26 / rule 8: every input the row function reads, per row — the
+     overlaps-the-row-above flag and the budget-cut flag are decided HERE, on
+     the server, and travel with the row, so held rows render byte-identically. */
+  const input = (r: (typeof netRows)[number], overlapsPrev: boolean): MemberNetRowIn => ({
+    ticker: r.ticker, cut: cutOf(r.ticker), purchases: r.purchases, sales: r.sales,
+    buys: r.buys, sells: r.sells, net: r.net, overlapsPrev,
+  });
+  const heads = [
+    thHtml({ label: "Ticker", cls: "c-ticker c-flex" }),
+    thHtml({ label: "Buy ◂ ▸ sell", cls: "c-bar", noteHtml: memberFlowNoteHtml(), notes: { scope: `${rootId}-h` }, noteKey: "gross" }),
+    thHtml({ label: "B·S", cls: "c-num" }),
+    thHtml({ label: "Net", mark: "·§", cls: "c-num", noteHtml: memberFlowNoteHtml(), notes: { scope: `${rootId}-h` }, noteKey: "net" }),
+  ];
+  const all: MemberNetRowIn[] = [
+    ...ranked.map((r, i) => input(r, i > 0 ? netOverlaps(r.net, ranked[i - 1]!.net) === true : false)),
+    ...(undisclosedBucket.length > 0
+      ? [{ ...input(undisclosedBucket[0]!, false), sep: undisclosedBucket.length }, ...undisclosedBucket.map((r) => input(r, false))]
+      : []),
+  ];
+  const tickers = ranked.length + undisclosedBucket.length;
+  const n = MEMBER_FLOW_COMPACT_ROWS;
+  const shownTickers = Math.min(n, tickers);
+  /* the separator sits in the row list but is not a ticker: the DOM slice is
+     the first `shownTickers` tickers plus the separator when it falls inside */
+  const domRows = shownTickers + (undisclosedBucket.length > 0 && ranked.length < shownTickers ? 1 : 0);
+  const parts = heldTableParts<MemberNetRowIn, MemberNetShared>({
+    rootId, render: MEMBER_NET_ROWS, rowFn: memberNetRowHtml, rows: all, shown: domRows, shared: { scale, cols: heads.length },
+  });
+  const collapsed = tickers > n;
+  /* The undisclosed bucket's statement is TRUE in both states, so when its
+     separator sits past the compact slice the disclosure states it. */
+  const bucketBeyond = undisclosedBucket.length > 0 && ranked.length >= n
+    ? `${fmtInt(undisclosedBucket.length)} tickers carry a wholly-undisclosed side and are listed last, never as zero.`
+    : undefined;
+  return (
+    `<div class="table-scroll"><table class="etable etable-compact member-top" role="table" data-card="generic">` +
+    `<caption class="visually-hidden">${esc(label)}</caption>` +
+    `<thead role="rowgroup"><tr role="row">${heads.join("")}</tr></thead>` +
+    `<tbody id="${rootId}" role="rowgroup"${collapsed ? ' data-collapsed="true" data-held="json"' : ""}>${parts.bodyRows}</tbody></table></div>` +
+    parts.island +
+    compactDisclosure({ rootId, total: tickers, shown: shownTickers, noun: "tickers", domBacked: true, ...(bucketBeyond ? { bound: esc(bucketBeyond) } : {}) })
+  );
+}
+
+/** The member's side-column and context pieces, placed by `memberBody`:
+    Top tickers (two windows), Sectors, and the collapsed committee context
+    at the page foot. `memberV2Sections` returns all three, in order. */
 function memberV2Parts(
   m: MemberEntityT,
   stamps: BuildStamps,
   ctx: RenderCtx,
   deps: MemberV2Deps,
-): { band: string; context: string } {
-  /* --- net disclosed flow by ticker (F-10: flows, never holdings) --- */
-  const { rows: netRows, noTickerRows } = memberNetByTicker(m.txns);
-  const { ranked, undisclosedBucket } = rankNetRows(netRows, (r) => r.net, (r) => r.ticker);
-  const lower = (sum: SumRanges): number => sum.kind === "closed" || sum.kind === "open" ? sum.low : 0;
-  const scale = Math.max(1, ...netRows.flatMap(row => [lower(row.purchases), lower(row.sales)]));
-  /* the newest row per ticker supplies the Issuer cell: its asset as filed
-     and its type, so the cell can show the default asset text (R17) */
-  const identities = new Map<string, { row: TxnRow; last: string }>();
-  for (const row of m.txns) if (row.ticker) {
-    const previous = identities.get(row.ticker);
-    const date = row.traded ?? "";
-    if (!previous || date > previous.last) identities.set(row.ticker, { row, last: date });
-  }
-  const netRowHtml = (r: (typeof netRows)[number], overlapsPrev: boolean): string => {
-    const nk = netKindWord(r.net);
-    /* The row's kind edge follows its net direction; a bounded range that
-       spans zero (FLAT) and a range with no statable direction ("—") take the
-       neutral flat edge beside their word. */
-    const edge = nk.word === "NET BUY" ? "netbuy" : nk.word === "NET SELL" ? "netsell" : "flat";
-    return `<tr class="design-net-row" data-edge="${edge}"><td class="c-kind ${nk.word === "NET BUY" ? "c-buy" : nk.word === "NET SELL" ? "c-sell" : "c-muted"}">${esc(nk.word)}${nk.why ? `<span class="visually-hidden"> ${esc(nk.why)}</span>` : ""}</td>` +
-      `<td class="c-ticker"><a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a></td>` +
-      /* R17 (M3, T3.3): the default asset text — "[ST]", the row's own
-         "(TICKER)" and a "Common Stock" suffix drop; the as-filed string is
-         the label trigger's note and prints. W-9 (M3 review): the NAME only —
-         the row nets every trade in the ticker, so the newest trade's type
-         words ("· Options") would misdescribe it; the note keeps the code.
-         CD3-4 (a): the note is keyed on the ticker (`n-mf-<ticker>`), unique
-         in this table, not on a 75-character txn id; (c): a name that differs
-         from the filing only mechanically carries no note (the Issuer
-         header states the rule). */
-      `<td class="design-issuer c-secondary c-flex">${(() => { const id = identities.get(r.ticker)?.row; return id && id.asset ? assetLineHtml(id, { notes: { scope: "mf" }, noteKey: tickerNoteKey(r.ticker), nameOnly: true }) : "—"; })()}</td>` +
-      `<td class="c-bar"><span class="design-diverging" aria-hidden="true"><span style="right:50%;width:${lower(r.purchases) / scale * 50}%"></span><span class="sale" style="left:50%;width:${lower(r.sales) / scale * 50}%"></span></span><span class="visually-hidden">Purchases ${flowCellHtml(r.purchases)}; sales ${flowCellHtml(r.sales)}</span></td>` +
-      `<td class="c-num c-buy">${fmtInt(r.buys)}</td><td class="c-num c-sell">${fmtInt(r.sells)}</td>` +
-      `<td class="c-num c-net has-marks">${netCellHtml(r.net, overlapsPrev)}</td>` +
-      `<td class="c-filed c-num">${esc(identities.get(r.ticker)?.last || "—")}</td></tr>`;
-  };
-  /* The 13F column is REMOVED (DESIGN-POLISH M2, R12): it was empty by
-     construction — the institutional join is not in this build — and a
-     derived column that is empty over the whole collection is not rendered;
-     the page's Planned line names "13F overlap". */
-  const netHeads = [
-    thHtml({ label: "Net", cls: "c-kind" }),
-    thHtml({ label: "Ticker", cls: "c-ticker" }),
-    thHtml({ label: "Issuer", cls: "c-secondary c-flex", noteHtml: esc(assetColumnNote({ nameOnly: true })), notes: { scope: "member-netflow" }, noteKey: "issuer" }),
-    thHtml({ label: "Buy ◂ ▸ Sell", cls: "c-bar", noteHtml: memberFlowNoteHtml(), notes: { scope: "member-netflow" }, noteKey: "gross-purchases" }),
-    thHtml({ label: "Buys", cls: "c-num" }),
-    thHtml({ label: "Sells", cls: "c-num" }),
-    thHtml({ label: "Net range", mark: "·§", cls: "c-num", noteHtml: memberFlowNoteHtml(), notes: { scope: "member-netflow" }, noteKey: "net" }),
-    thHtml({ label: "Last traded", cls: "c-num" }),
-  ];
-  /* Compaction counts TICKERS: the first MEMBER_FLOW_COMPACT_ROWS tickers show
-     and every later ticker row is held back in the DOM (`data-compact-extra`).
-     The undisclosed bucket's separator row travels with the first ticker it
-     introduces, so the count "1–20 of 608 tickers" is exact in every state. */
-  const netTickers = ranked.length + undisclosedBucket.length;
-  /* The fixed default (CD-1): band M1's primary cell shows its 20 whatever
-     its side cell holds; a side cell may end earlier (G9). */
-  const flowsN = MEMBER_FLOW_COMPACT_ROWS;
-  const shownTickers = Math.min(flowsN, netTickers);
-  const held = (tickerIndex: number, html: string): string =>
-    tickerIndex >= flowsN ? html.replace(/^<tr\b/, "<tr data-compact-extra") : html;
-  const netRowList = [
-    ...ranked.map((r, i) => held(i, netRowHtml(r, i > 0 ? netOverlaps(r.net, ranked[i - 1]!.net) === true : false))),
-    ...(undisclosedBucket.length > 0
-      ? [
-          held(
-            ranked.length,
-            `<tr class="unranked-sep"><td colspan="${netHeads.length}">${fmtInt(undisclosedBucket.length)} tickers carry a wholly-undisclosed side — no endpoints, listed last, never zero</td></tr>`,
-          ),
-          ...undisclosedBucket.map((r, j) => held(ranked.length + j, netRowHtml(r, false))),
-        ]
-      : []),
-  ];
-  const netCollapsed = netTickers > flowsN;
-  /* The undisclosed bucket's statement is TRUE in both states, so when its
-     separator row sits past the compact slice the disclosure states it beside
-     the count — the bucket is never held back without being named. */
-  const bucketBeyond =
-    undisclosedBucket.length > 0 && ranked.length >= flowsN
-      ? `${fmtInt(undisclosedBucket.length)} tickers carry a wholly-undisclosed side and are listed last, never as zero.`
-      : undefined;
-  const netTable =
-    netRows.length === 0
-      ? `<p class="section-note">No ticker-keyed disclosures on record.</p>`
-      : `<div class="table-scroll"><table class="etable etable-compact">` +
-        `<caption class="visually-hidden">Net disclosed flow by ticker for ${esc(m.name)}</caption>` +
-        /* One trigger per header: the Buy ◂ ▸ Sell bar carried the same §
-           clause twice (gross purchases, gross sales); it is stated once, from
-           the header's own label. */
-        `<thead><tr>${netHeads.join("")}</tr></thead>` +
-        `<tbody id="member-flows-tbody"${netCollapsed ? ' data-collapsed="true"' : ""}>${netRowList.join("\n")}</tbody></table></div>` +
-        compactDisclosure({
-          rootId: "member-flows-tbody",
-          total: netTickers,
-          shown: shownTickers,
-          noun: "tickers",
-          domBacked: true,
-          ...(bucketBeyond ? { bound: esc(bucketBeyond) } : {}),
-        });
-  /* The net-flow card's `.card-foot` is a DEFINITION of what the table
-     is and is not, so it becomes a note. It is composed here rather than inside
-     the branch above because the panel head that anchors it is assembled below,
-     and the string must be identical on both sides — one composition, one
-     text, no chance of the anchor and the table disagreeing.
-
-     The row-exclusion clause travels WITH it: `noTickerRows` is a count of what
-     the reader cannot see in this table, and separating it from the sentence
-     that explains the table's scope is how a count loses its meaning. */
+): { top: string; sectors: string; context: string } {
+  /* --- Top tickers: net disclosed flow by ticker (F-10: flows, never holdings) --- */
+  const { noTickerRows } = memberNetByTicker(m.txns);
+  const rows24 = excludeDateAnomalies(m.txns).rows.filter(
+    (t) => windowMembership(t, legacyTrailingMonthsBounds(stamps.generatedAtDate, 24), "traded_or_filed") === "in",
+  );
+  /* member-05: "flows, not holdings" stays visible once; what the table is
+     not, and the rows outside it, go in its note */
   const netFootNote =
-    `PTRs are flows, not holdings — this table nets disclosed flow intervals; it is NOT a portfolio ` +
+    `PTRs are flows, not holdings — this table nets disclosed flow intervals per ticker; it is NOT a portfolio ` +
     `and cannot become one without the member's annual FD report` +
-    (noTickerRows > 0
-      ? ` · ${fmtInt(noTickerRows)} rows disclose no ticker and are outside this table`
-      : "");
+    (noTickerRows > 0 ? ` · ${fmtInt(noTickerRows)} rows disclose no ticker and are outside this table` : "");
+  const top =
+    `<section class="panel member-side-sec member-top-tickers" aria-label="Top tickers">` +
+    `<div class="panel-head"><h2 class="section-h">Top tickers</h2>` +
+    `<span class="panel-note"><span class="src-derived">` +
+    note(netFootNote, { scope: "member-netflow" }, "scope", { trigger: "label", textHtml: "flows, not holdings&nbsp;·§", name: "flows, not holdings" }) +
+    `</span></span>` +
+    `<div class="seg member-top-window" role="group" aria-label="Window" data-top-window hidden>` +
+    `<button type="button" data-window="24m" aria-pressed="true">24 months</button><button type="button" data-window="all" aria-pressed="false">All</button>` +
+    `</div></div>` +
+    `<div data-top-variant="24m">${topTickersTable(rows24, ctx, "member-top-24m-tbody", `Net disclosed flow by ticker for ${m.name}, last 24 months`, "No ticker-keyed trades in the last 24 months.")}</div>` +
+    `<div data-top-variant="all" hidden>${topTickersTable(m.txns, ctx, "member-top-all-tbody", `Net disclosed flow by ticker for ${m.name}, all history`, "No ticker-keyed disclosures on record.")}</div>` +
+    `</section>`;
 
-  /* --- largest recent disclosures (F-12: rank by lower bound) --- */
+  /* --- sectors (B-5): only with two or more sectors; absence of the dataset is stated --- */
+  let sectors = "";
+  if (deps.resolveSector === null || deps.sectorMeta === null) {
+    sectors = unavailableDesignPanel("Sector rotation", "NET DISCLOSED FLOW", ["Sector", "Flow range", "Rows"], "Sector data is not in this build. The issuer-SIC join is required to calculate these rows.");
+  } else {
+    const mix = sectorMix(m.txns, deps.resolveSector);
+    const real = mix.filter((r) => !r.bucket);
+    if (real.length >= MEMBER_SECTORS_MIN) {
+      const max = Math.max(1, ...real.map((r) => r.txns));
+      const noTicker = mix.find((r) => r.bucket && r.key === "no ticker disclosed")?.txns ?? 0;
+      const unmatched = mix.filter((r) => r.bucket && r.key !== "no ticker disclosed").reduce((a, r) => a + r.txns, 0);
+      const gap = noTicker + unmatched;
+      sectors =
+        `<section class="panel member-side-sec member-sectors" aria-label="Sectors">` +
+        `<div class="panel-head"><h2 class="section-h">Sectors</h2>` +
+        `<span class="panel-note">` +
+        note(
+          `Sector from SEC SIC codes (as of ${deps.sectorMeta.asOf}) via the site's taxonomy v${deps.sectorMeta.taxonomyVersion}. Rows without a sector are shown as coverage, never folded in.`,
+          { scope: "member-sectors" },
+          "sector",
+          { trigger: "label", textHtml: "trades by issuer sector", name: "trades by issuer sector" },
+        ) +
+        `</span></div>` +
+        `<div class="table-scroll"><table class="etable etable-compact" role="table" data-card="generic"><caption class="visually-hidden">Trades by issuer sector</caption>` +
+        `<thead role="rowgroup"><tr role="row">${thHtml({ label: "Sector", cls: "c-flex" })}<th scope="col" class="c-bar" role="columnheader"><span class="visually-hidden">Share</span></th>${thHtml({ label: "Trades", cls: "c-num" })}</tr></thead>` +
+        `<tbody role="rowgroup">${real
+          .map(
+            (r) =>
+              `<tr role="row"><td class="c-flex" role="cell">${esc(sectorLabel(r.key))}</td>` +
+              `<td class="c-bar" role="cell"><span class="sx-bar" aria-hidden="true"><i style="width:${((r.txns / max) * 100).toFixed(1)}%"></i></span></td>` +
+              `<td class="c-num" role="cell">${fmtInt(r.txns)}</td></tr>`,
+          )
+          .join("\n")}</tbody></table></div>` +
+        (gap > 0
+          ? /* launch gate (SC5): the gap stays in view; its two causes open as a tip */
+            `<p class="section-note sx-gap">` +
+            note(
+              `${fmtInt(noTicker)} ${noTicker === 1 ? "row has" : "rows have"} no ticker; ${fmtInt(unmatched)} ${unmatched === 1 ? "ticker is" : "tickers are"} not matched to an SEC SIC code. Neither is folded into a sector.`,
+              { scope: "member-sectors" },
+              "sector-gap",
+              { trigger: "label", textHtml: `${fmtInt(gap)} more without a sector`, name: `${fmtInt(gap)} more without a sector` },
+            ) +
+            `</p>`
+          : "") +
+        `</section>`;
+    }
+  }
+
+  /* --- largest recent disclosures (F-12: rank by lower bound), member-19 --- */
   const recent = notableRecent(m.txns, stamps.generatedAtDate, 90, 5);
   const recentRows = recent.rows
     .map(
       (r) =>
-        `<tr${txnEdge(r) ? ` data-edge="${txnEdge(r)}"` : ""}><td class="c-filed c-num has-marks">${esc(r.filed)}</td>` +
-        /* K-3 (M3 review): a no-ticker row's asset is a label trigger whose
-           note gives the text as filed — reachable by sight, not only by a
-           screen reader */
-        `<td class="c-ticker c-flex">${r.ticker ? `<a href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>` : assetNameCell(r, { scope: "member-recent-asset" })}</td>` +
-        `<td class="c-side c-kind ${sideLabel(r.side, r.flags).cls}">${esc(sideLabel(r.side, r.flags).text)}</td>` +
-        `<td class="c-num">${esc(amountText(r))}</td>` +
-        `<td class="c-src">${srcLink(r.doc)}</td></tr>`,
+        `<tr${txnEdge(r) ? ` data-edge="${txnEdge(r)}"` : ""} role="row"><td class="c-filed c-num has-marks" role="cell">${esc(r.filed)}</td>` +
+        `<td class="c-ticker c-flex" role="cell">${r.ticker ? `<a data-row-link href="${tickerHrefFor(r.ticker, ctx)}">${esc(r.ticker)}</a>` : assetNameCell(r, { scope: "member-recent-asset" })}</td>` +
+        `<td class="c-side c-kind ${sideLabel(r.side, r.flags).cls}" role="cell">${esc(sideLabel(r.side, r.flags).text)}</td>` +
+        `<td class="c-num" role="cell">${esc(amountText(r))}</td>` +
+        `<td class="c-src" role="cell">${srcLink(r.doc)}</td></tr>`,
     )
     .join("\n");
   const recentPanel =
     recent.rows.length === 0
-      ? `<p class="section-note">No rankable disclosures in the trailing 90 days${
-          recent.unrankable > 0 ? ` (${fmtInt(recent.unrankable)} rows disclose no lower bound)` : ""
-        }.</p>`
-      : `<div class="table-scroll"><table class="etable etable-compact">` +
+      ? `<p class="section-note">None in the last 90 days${recent.unrankable > 0 ? ` (${fmtInt(recent.unrankable)} rows disclose no lower bound)` : ""}.</p>`
+      : `<div class="table-scroll"><table class="etable etable-compact" role="table" data-card="generic">` +
         `<caption class="visually-hidden">Largest recent disclosures for ${esc(m.name)}</caption>` +
-        `<thead><tr>${thHtml({ label: "Filed", cls: "c-num", order: "descending" })}<th scope="col" class="c-ticker c-flex">Asset</th><th scope="col" class="c-kind">Side</th><th scope="col" class="c-num">Amount</th><th scope="col" class="c-src">Src</th></tr></thead>` +
-        `<tbody>${recentRows}</tbody></table></div>` +
-        cardFoot({
-          short: "Ranked by disclosed lower bound, last 90 days",
-          full: `Ranked by the disclosed lower bound, over the trailing 90 days by filed date${
-            recent.unrankable > 0 ? `; ${fmtInt(recent.unrankable)} rows with no lower bound cannot rank` : ""
-          }.`,
-          scope: "member-recent-foot",
-          key: "rank",
-        });
+        `<thead role="rowgroup"><tr role="row">${thHtml({ label: "Filed", cls: "c-num", order: "descending" })}<th scope="col" class="c-ticker c-flex" role="columnheader" data-label="Asset">Asset</th><th scope="col" class="c-kind" role="columnheader" data-label="Side">Side</th><th scope="col" class="c-num" role="columnheader" data-label="Amount">Amount</th><th scope="col" class="c-src" role="columnheader" data-label="Src">Src</th></tr></thead>` +
+        `<tbody role="rowgroup">${recentRows}</tbody></table></div>` +
+        (recent.unrankable > 0 ? `<p class="section-note">${fmtInt(recent.unrankable)} rows with no lower bound cannot rank.</p>` : "");
 
-  /* --- sector mix (B-5) --- */
-  let sectorPanel: string;
-  if (deps.resolveSector === null || deps.sectorMeta === null) {
-    sectorPanel = unavailableDesignPanel("Sector rotation", "NET DISCLOSED FLOW", ["Sector", "Flow range", "Rows"], "Sector data is not in this build. The issuer-SIC join is required to calculate these rows.");
-  } else {
-    const mix = sectorMix(m.txns, deps.resolveSector);
-    const mixRows = mix
-      .map(
-        (r) =>
-          `<tr class="${r.bucket ? "mix-bucket" : ""}"><td class="c-flex">${esc(r.bucket ? r.key : sectorLabel(r.key))}${r.bucket ? ` <span class="mono-note">coverage</span>` : ""}</td>` +
-          `<td class="c-num">${fmtInt(r.txns)}</td>` +
-          `<td class="c-num">${flowCellHtml(r.flow)}</td></tr>`,
-      )
-      .join("\n");
-    sectorPanel =
-      `<section class="panel" aria-label="Sector mix">` +
-      `<div class="panel-head"><h2 class="section-h">Sector mix</h2>` +
-      `<span class="panel-note">taxonomy v${esc(deps.sectorMeta.taxonomyVersion)} · SIC as of ${esc(deps.sectorMeta.asOf)}</span></div>` +
-      `<div class="table-scroll"><table class="etable etable-compact">` +
-      `<caption class="visually-hidden">Disclosed transactions by issuer sector</caption>` +
-      `<thead><tr>${thHtml({ label: "Sector", cls: "c-flex" })}${thHtml({ label: "Trades", cls: "c-num" })}${thHtml({ label: "Flow range", cls: "c-num" })}</tr></thead>` +
-      `<tbody>${mixRows}</tbody></table></div>` +
-      cardFoot({ short: "Sector from SEC SIC codes", full: "Sector comes from SEC EDGAR SIC codes through the site's own taxonomy; rows without a sector are listed as coverage, never folded into a sector.", scope: "member-sector-foot", key: "sector" }) +
-      `</section>`;
-  }
-
-  /* --- committee jurisdiction overlap (B-6 / S-5) --- */
+  /* --- committee jurisdiction overlap (B-6 / S-5), member-19/20 --- */
   let committeePanel: string;
   if (deps.committees === null) {
     committeePanel = absentPanel(
@@ -1529,57 +1972,45 @@ function memberV2Parts(
       "Committee membership data is not in this build. It lands with the first build after the cc0-legislators committee ingest (B-6) — absence is stated, never guessed from current rosters.",
     );
   } else {
-    const { memberships, windowFrom, windowTo, jurisdictionByCommittee, mappingVersion, snapshotDate } =
-      deps.committees;
+    const { memberships, windowFrom, windowTo, jurisdictionByCommittee, mappingVersion, snapshotDate } = deps.committees;
     const snapshot: MembershipSnapshot = { memberships, windowFrom, windowTo };
     const current = membershipAsOf(snapshot, snapshotDate) ?? [];
     const overlap =
       deps.resolveSector === null
         ? null // overlap needs BOTH datasets; with sectors absent the join is unanswerable
         : jurisdictionOverlap(m.txns, snapshot, jurisdictionByCommittee, deps.resolveSector);
-    // An unmapped committee makes "no overlap" unanswerable — the
-    // definitive-absence copy is only usable when mapping coverage is complete
-    // for everything this member sat on.
+    /* An unmapped committee makes "no overlap" unanswerable: "not checked",
+       never cleared (member-20, adapted) */
     const coverageNote =
       overlap !== null && overlap.unmappedCommittees.length > 0
-        ? ` · ${fmtInt(overlap.coverageUnknown)} trades touch committees outside the jurisdiction mapping (${overlap.unmappedCommittees
-            .map((c) => esc(c))
-            .join(", ")}) — unanswerable there, not cleared`
+        ? `${countOf(overlap.coverageUnknown, "trade", "trades")} on unmapped committees (${overlap.unmappedCommittees.map((c) => esc(c)).join(", ")}): not checked`
+        : "";
+    const undatableNote =
+      overlap !== null && overlap.undatable > 0
+        ? `${countOf(overlap.undatable, "trade predates", "trades predate")} the membership snapshot's validity window: unanswerable, not cleared`
         : "";
     const overlapHtml =
       overlap === null
         ? `<p class="section-note">Jurisdiction overlap needs the sector join too — sector data is not in this build, so the question is stated as unanswerable rather than answered from half the inputs.</p>`
         : overlap.rows.length === 0
           ? `<p class="section-note">${
-              overlap.unmappedCommittees.length > 0
-                ? `No overlaps found within the MAPPED committee jurisdictions`
-                : `No disclosed trades fall inside this member's committee jurisdictions as of their trade dates`
-            }${
-              overlap.undatable > 0
-                ? ` · ${fmtInt(overlap.undatable)} trades predate the membership snapshot's validity window and are unanswerable, not cleared`
-                : ""
-            }${coverageNote}.</p>`
-          : `<div class="table-scroll"><table class="etable etable-compact">` +
+              overlap.unmappedCommittees.length > 0 ? `No overlaps within the mapped committee jurisdictions` : `No trades in this member's committee jurisdictions`
+            }${[undatableNote, coverageNote].filter(Boolean).map((t) => ` · ${t}`).join("")}.</p>`
+          : `<div class="table-scroll"><table class="etable etable-compact" role="table" data-card="generic">` +
             `<caption class="visually-hidden">Trades within committee jurisdiction as of the trade date</caption>` +
-            `<thead><tr><th scope="col">Traded</th><th scope="col" class="c-ticker">Ticker</th><th scope="col" class="c-secondary c-flex">Sector</th><th scope="col" class="c-secondary">Committee</th><th scope="col" class="c-src">Src</th></tr></thead>` +
-            `<tbody>${overlap.rows
+            `<thead role="rowgroup"><tr role="row"><th scope="col" class="c-filed" role="columnheader">Traded</th><th scope="col" class="c-ticker" role="columnheader">Ticker</th><th scope="col" class="c-secondary c-flex" role="columnheader">Sector</th><th scope="col" class="c-secondary" role="columnheader">Committee</th><th scope="col" class="c-src" role="columnheader">Src</th></tr></thead>` +
+            `<tbody role="rowgroup">${overlap.rows
               .slice(0, 12)
               .map(
                 (r) =>
-                  `<tr><td class="c-filed">${esc(r.txn.traded ?? "—")}</td>` +
-                  `<td class="c-ticker">${esc(r.txn.ticker ?? "—")}</td>` +
-                  `<td class="c-secondary c-flex">${esc(sectorLabel(r.sector))}</td>` +
-                  `<td class="c-secondary">${r.committees.map((c) => esc(c.name)).join(", ")}</td>` +
-                  `<td class="c-src">${srcLink(r.txn.doc)}</td></tr>`,
+                  `<tr role="row"><td class="c-filed" role="cell">${esc(r.txn.traded ?? "—")}</td>` +
+                  `<td class="c-ticker" role="cell">${esc(r.txn.ticker ?? "—")}</td>` +
+                  `<td class="c-secondary c-flex" role="cell">${esc(sectorLabel(r.sector))}</td>` +
+                  `<td class="c-secondary" role="cell">${r.committees.map((c) => esc(c.name)).join(", ")}</td>` +
+                  `<td class="c-src" role="cell">${srcLink(r.txn.doc)}</td></tr>`,
               )
               .join("\n")}</tbody></table></div>` +
-            (overlap.undatable > 0 || overlap.unmappedCommittees.length > 0
-              ? `<div class="caveat-line">${
-                  overlap.undatable > 0
-                    ? `${fmtInt(overlap.undatable)} trades predate the membership snapshot's validity window — unanswerable, not cleared`
-                    : ""
-                }${overlap.undatable > 0 && coverageNote ? " · " : ""}${coverageNote.replace(/^ · /, "")}</div>`
-              : "");
+            (undatableNote || coverageNote ? `<div class="caveat-line">${[undatableNote, coverageNote].filter(Boolean).join(" · ")}</div>` : "");
     committeePanel =
       `<section class="panel" aria-label="Committees and jurisdiction overlap">` +
       `<div class="panel-head"><h2 class="section-h">Committees · jurisdiction overlap</h2>` +
@@ -1591,24 +2022,8 @@ function memberV2Parts(
       `<div class="caveat-line non-allegation">${esc(NON_ALLEGATION_CAVEAT)}</div>` +
       `</section>`;
   }
-
-  /* Band M1: Net flow by ticker (1.7fr, the PRIMARY cell) │ trading profile
-     plus sector mix (1fr). */
-  const band = pairBandHtml(
-    "design-member-band design-flow-band",
-    `<section class="panel" aria-label="Net disclosed flow by ticker">` +
-    `<div class="panel-head"><h2 class="section-h">Net disclosed flow by ticker</h2>` +
-    // The card-foot's text, anchored on the panel it qualifies.
-    `<span class="panel-note"><span class="src-derived">` +
-    note(netFootNote, { scope: "member-netflow" }, "scope", { trigger: "label", textHtml: "flows, not holdings&nbsp;·§", name: "flows, not holdings" }) +
-    `</span></span>` +
-    `<span class="panel-note">ALL DISCLOSED HISTORY · net range</span></div>` +
-    netTable +
-    `</section>`,
-    `<div>` + tradingProfileHtml(m, stamps, deps.chamber ?? null) + sectorPanel + `</div>`,
-    { primary: "left" },
-  );
   const context =
-    `<details class="design-supplement"><summary>Recent disclosures and committee context</summary><div class="entity-grid"><section class="panel" aria-label="Largest recent disclosures"><div class="panel-head"><h2 class="section-h">Largest recent disclosures</h2><span class="panel-note">trailing 90d · lower bound</span></div>` + recentPanel + `</section>` + committeePanel + `</div></details>`;
-  return { band, context };
+    `<details class="design-supplement"><summary>Recent disclosures and committee context</summary><div class="entity-grid"><section class="panel" aria-label="Largest recent disclosures"><div class="panel-head"><h2 class="section-h">Largest recent disclosures</h2><span class="panel-note">last 90 days · by lower bound</span></div>` +
+    recentPanel + `</section>` + committeePanel + `</div></details>`;
+  return { top, sectors, context };
 }

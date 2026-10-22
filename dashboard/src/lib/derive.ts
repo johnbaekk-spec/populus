@@ -511,6 +511,9 @@ export interface QuarterFlow {
   quarterEnd: string; // YYYY-MM-DD
   buy: SumRanges;
   sell: SumRanges;
+  /** launch review H2: exchange/unparsed-side rows traded in the quarter —
+      not drawn, and said so in the quarter's readout */
+  other?: number;
 }
 
 export interface QuarterlyFlowResult {
@@ -555,8 +558,8 @@ export function quarterlyFlow(
     ends.unshift(cursor);
     cursor = prevQuarterEnd(cursor);
   }
-  const byEnd = new Map<string, { buys: TxnRow[]; sells: TxnRow[] }>();
-  for (const end of ends) byEnd.set(end, { buys: [], sells: [] });
+  const byEnd = new Map<string, { buys: TxnRow[]; sells: TxnRow[]; other: number }>();
+  for (const end of ends) byEnd.set(end, { buys: [], sells: [], other: 0 });
   let undated = 0;
   let excludedSides = 0;
   for (const t of txns) {
@@ -569,7 +572,10 @@ export function quarterlyFlow(
     if (!bucket) continue; // outside the window — not an exclusion to disclose
     if (t.side === "purchase") bucket.buys.push(t);
     else if (t.side === "sale" || t.side === "sale_partial") bucket.sells.push(t);
-    else excludedSides++;
+    else {
+      excludedSides++;
+      bucket.other++;
+    }
   }
   return {
     quarters: ends.map((end) => ({
@@ -577,6 +583,7 @@ export function quarterlyFlow(
       quarterEnd: end,
       buy: sumRanges(byEnd.get(end)!.buys),
       sell: sumRanges(byEnd.get(end)!.sells),
+      other: byEnd.get(end)!.other,
     })),
     undated,
     excludedSides,
@@ -618,6 +625,9 @@ export interface MonthlyFlowResult {
   /** the part of `notListed` that is untyped: the filing states no asset type */
   untyped: number;
   listedStockOnly: boolean;
+  /** launch review H3: distinct drawn filers no member record joins — each
+      counted in the breadth by the name as filed, which the caption states */
+  unjoined: number;
 }
 
 function monthKeyOf(date: string): string {
@@ -709,6 +719,7 @@ export function monthlyFlow(
     notListed,
     untyped,
     listedStockOnly,
+    unjoined: new Set([...byMonth.values()].flatMap((b) => [...b.buyers, ...b.sellers]).filter((k) => k.startsWith("raw:"))).size,
   };
 }
 
@@ -1781,6 +1792,20 @@ export function searchQuery(index: SearchIndex, q: string, limit = 8): SearchHit
   return hits;
 }
 
+/** The most active tickers and members of the index, by its own row counts
+    (ties keep the index's order). ONE ranking, two callers: the search
+    panel's pre-query starters and the home's "Try" chips (launch M2, LD17),
+    so the chips are never literals and never a second ranking. */
+export function searchStarters(
+  index: SearchIndex,
+  n = 2,
+): { tickers: SearchIndex["tickers"]; members: SearchIndex["members"] } {
+  return {
+    tickers: [...index.tickers].sort((a, b) => b[2] - a[2]).slice(0, n),
+    members: [...index.members].sort((a, b) => b[3] - a[3]).slice(0, n),
+  };
+}
+
 /* ---------- budget walk (ARCHITECTURE §9.10/§12.1) ---------- */
 
 /** Headroom under the §9.10 ≤8,500 module-1 page cap (owner decision
@@ -1848,13 +1873,6 @@ export function affTextOf(m: Pick<MemberEntity, "party" | "state" | "district" |
     if (d !== null) return `${p}–${m.state}-${d}`;
   }
   return `${p}–${m.state}`;
-}
-
-/** "D–CA-11" long form: "Democrat — California 11th" is not derivable from
-    the members table codes without a state-name table; the compact affiliation
-    is the honest, source-backed form used everywhere. */
-export function partyLabel(party: string): string {
-  return party === "D" ? "Democrat" : party === "R" ? "Republican" : party === "I" ? "Independent" : "";
 }
 
 export function escAttr(s: string): string {

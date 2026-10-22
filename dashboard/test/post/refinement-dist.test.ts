@@ -33,7 +33,7 @@ function walk(dir: string, out: string[] = []): string[] {
 
 function cells(html: string, cls: string): string[] {
   const out: string[] = [];
-  const re = new RegExp(`<td class="${cls}[^"]*">([\\s\\S]*?)</td>`, "g");
+  const re = new RegExp(`<td class="${cls}[^"]*"[^>]*>([\\s\\S]*?)</td>`, "g") /* launch M1a (R40): built cells carry roles after the class */;
   let m: RegExpExecArray | null;
   while ((m = re.exec(html)) !== null) out.push(m[1]!);
   return out;
@@ -258,6 +258,8 @@ test("POST-BUILD R9: no numeric or CUSIP-shaped issuer label on the institutiona
 /* ---------- Milestone 2 ---------- */
 
 import { SHARD_RESPONSE_CEILING_BYTES } from "../../src/lib/shards.ts";
+import { classifyTickerOffsets, type FeedPartsIndex } from "../../src/lib/feed-parts.ts";
+import { DESIGN_FEED_PAGE_SIZE } from "../../src/lib/format.ts";
 
 function walkAll(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -286,9 +288,17 @@ test("POST-BUILD R12/LD7: every feed part is ≤ the 1 MiB ceiling and the index
   // the landing carries the index inline, so paging never fetches it
   const landing = readFileSync(path.join(DIST, "congress", "index.html"), "utf-8");
   assert.match(landing, /id="feed-parts-index"/);
+  /* Launch M3a (LD20, rule 2b): page 1 is the "With ticker" view at 20 rows,
+     and its offsets island rides beside the index, belonging to it part for
+     part; the published index itself keeps page_size 50 (asserted above). */
+  const offsetsRaw = /<script[^>]*\bid="feed-ticker-offsets"[^>]*>([\s\S]*?)<\/script>/.exec(landing)?.[1];
+  assert.ok(offsetsRaw, "the ticker offsets island is inline");
+  const offsets = classifyTickerOffsets(JSON.parse(offsetsRaw!), index as unknown as FeedPartsIndex);
+  assert.ok(offsets, "the offsets island belongs to the published index");
   const txnRowsOnPage1 = (landing.match(/class="feed-row feed-grid-cols reference-row/g) ?? []).length;
-  const txnTotal = (index as unknown as { txn_total: number }).txn_total;
-  assert.ok(txnRowsOnPage1 >= Math.min(50, txnTotal), `page 1 renders ${txnRowsOnPage1} rows; expected at least ${Math.min(50, txnTotal)}`);
+  const expected = Math.min(DESIGN_FEED_PAGE_SIZE, offsets!.ticker_total);
+  assert.equal(txnRowsOnPage1, expected, `page 1 renders ${txnRowsOnPage1} rows; expected ${expected}`);
+  assert.doesNotMatch(landing.slice(landing.indexOf('id="feed-tbody"'), landing.indexOf("</tbody>", landing.indexOf('id="feed-tbody"'))), /reference-paper/, "no paper filing on the With ticker page");
 });
 
 test("POST-BUILD R13: no 'render bound' copy anywhere in dist", () => {
@@ -310,7 +320,8 @@ test("POST-BUILD R14 → signals-v4 R17: every notable-moves shard is ≤ 1 MiB;
   }
   const pointer = landing.indexOf('<p class="inst-moved">');
   assert.ok(pointer > 0, "the one-line pointer");
-  assert.match(landing.slice(pointer, pointer + 400), /<a href="\/signals\/#institutional">Open →<\/a>/);
+  // launch M7b (copy item inst-02): "Moves and Consensus are on Signals →"
+  assert.match(landing.slice(pointer, pointer + 400), /<a href="\/signals\/#institutional">Signals →<\/a>/);
   const signals = readFileSync(path.join(DIST, "signals", "index.html"), "utf-8");
   for (const id of ["named-moves", "consensus", "new-position-leaders"]) assert.match(signals, new RegExp(`id="${id}"`), `/signals/ renders #${id}`);
   if (!existsSync(dir)) {
@@ -332,11 +343,26 @@ test("POST-BUILD R14 → signals-v4 R17: every notable-moves shard is ≤ 1 MiB;
   assert.match(landing, /data-mgr-type="hedge_fund" aria-pressed="true"/, "Hedge funds selected by default");
 });
 
+/** A holders row: a `tr` whose first cell carries the rank class, whatever
+    attributes come first (launch M1a's roles put `role="cell"` before
+    `class`, and the rank cell is `c-rank c-num`). Launch review weight item 7:
+    the M1a amendment `<td class="c-rank"` matched zero rows. */
+export const HOLDER_ROW = /<tr\b[^>]*><td\b[^>]*class="c-rank\b/g;
+
+test("POST-BUILD R20 controls (weight item 7): the holders-row pattern counts role-bearing rank rows and nothing else", () => {
+  const rows = (html: string): number => (html.match(HOLDER_ROW) ?? []).length;
+  assert.equal(rows(`<tr role="row" data-edge="add"><td role="cell" class="c-rank c-num">1</td></tr><tr role="row"><td role="cell" class="c-rank c-num">2</td></tr>`), 2);
+  assert.equal(rows(`<tr><td class="c-rank">1</td></tr>`), 1, "the pre-roles shape still counts");
+  assert.equal(rows(`<tr role="row"><td role="cell" class="c-num">1</td><td class="c-rank">x</td></tr><tr><td class="c-ranked">y</td></tr>`), 0, "a rank class off the first cell, or a longer class name, does not");
+  // re-planted control: the amended pattern the review found matches none of the real rows
+  assert.equal((`<tr role="row"><td role="cell" class="c-rank c-num">1</td></tr>`.match(/<tr\b[^>]*><td class="c-rank"[^>]*>/g) ?? []).length, 0);
+});
+
 test("POST-BUILD R20: /institutional/tickers/NVDA/holders/ exists with ≥10 holders naming BlackRock, Vanguard and State Street; ≥80% of the top-50 Congress tickers have a holders page", () => {
   const nvda = path.join(DIST, "institutional", "tickers", "NVDA", "holders", "index.html");
   assert.ok(existsSync(nvda), "NVDA holders page built");
   const html = readFileSync(nvda, "utf-8");
-  const holders = (html.match(/<tr><td class="c-rank">/g) ?? []).length;
+  const holders = (html.match(HOLDER_ROW) /* launch M1a (R40): rows and cells carry roles; launch review item 7 */ ?? []).length;
   assert.ok(holders >= 10, `${holders} holders listed`);
   for (const name of ["BLACKROCK", "VANGUARD", "STATE STREET"]) assert.ok(html.toUpperCase().includes(name), `${name} is a holder`);
   assert.match(html, /id="overlap"/, "the overlap band renders on the holders page");
@@ -396,7 +422,7 @@ test("POST-BUILD R20: /institutional/tickers/NVDA/holders/ exists with ≥10 hol
   }
 });
 
-test("POST-BUILD R15/R16/R18: filer 1067983 leads with identity → stats → changes; a member page carries one Planned line; the home has the claim and three tiles", () => {
+test("POST-BUILD R15/R16/R18: filer 1067983 leads with identity → stats → changes; a member page carries no Planned line; the home has the claim and three tiles", () => {
   const filer = path.join(DIST, "institutional", "filers", "1067983", "index.html");
   if (existsSync(filer)) {
     const html = readFileSync(filer, "utf-8");
@@ -405,20 +431,27 @@ test("POST-BUILD R15/R16/R18: filer 1067983 leads with identity → stats → ch
     const holdings = html.indexOf('data-holdings-surface="filer"');
     assert.ok(stats > 0 && changes > stats, "stats precede the changes");
     assert.ok(holdings > 0, "the holdings surface renders");
-    assert.equal((html.match(/class="planned-line"/g) ?? []).length, 1);
+    // launch copy audit filer-06: the filer page's roadmap line is gone
+    assert.equal((html.match(/class="planned-line"/g) ?? []).length, 0);
     assert.doesNotMatch(html, /aria-label="Congress overlap"|aria-label="Signals for this filer"/);
   }
   const members = path.join(DIST, "congress", "members");
   const first = readdirSync(members).find((d) => existsSync(path.join(members, d, "index.html")));
   assert.ok(first, "a member page exists");
   const member = readFileSync(path.join(members, first!, "index.html"), "utf-8");
-  assert.equal((member.match(/class="planned-line"/g) ?? []).length, 1);
+  // launch M4b member-18: the member page's PLANNED strip is gone (and with
+  // filer-06, plannedLine() itself: css-fold RETIRED_CLASSES)
+  assert.equal((member.match(/class="planned-line"/g) ?? []).length, 0);
   assert.doesNotMatch(member, /Holdings from annual disclosure<\/h2>|Institutional overlap<\/h2>/);
   const home = readFileSync(path.join(DIST, "index.html"), "utf-8");
   assert.match(home, /id="home-claim"/);
-  for (const id of ["home-congress", "home-moves", "home-signals"]) assert.match(home, new RegExp(`id="${id}"`));
-  // signals-v4 R17: the moves tile's "all moves" link follows the moves to /signals/#institutional
-  assert.match(home, /<a class="section-link" href="\/signals\/#institutional">all moves ↗<\/a>/);
+  /* launch M2 (Home A, D1): the Signals tile became the triage's lead cards
+     (#home-lead) and the trust strip joined (#home-trust); the two tables keep
+     their ids. */
+  for (const id of ["home-lead", "home-congress", "home-moves", "home-trust"]) assert.match(home, new RegExp(`id="${id}"`));
+  assert.doesNotMatch(home, /id="home-signals"/);
+  // signals-v4 R17: the moves table's link follows the moves to /signals/#institutional
+  assert.match(home, /<a class="section-link" href="\/signals\/#institutional">All moves →<\/a>/);
   assert.doesNotMatch(home, /returned to the people/);
   const methodology = readFileSync(path.join(DIST, "methodology", "index.html"), "utf-8");
   for (const anchor of ["principles", "published-dataset", "ranges", "13f-method", "position-grain", "ticker-mapping", "site-weight", "coverage"]) {

@@ -299,6 +299,16 @@ export async function renderParitySurfaces(): Promise<Record<string, string>> {
   out["flowCellHtml.undisclosed"] = ui.flowCellHtml({ kind: "undisclosed" });
 
   out["memberBody"] = ui.memberBody(MEMBER, STAMPS, CTX, 0);
+  /* launch M4b (R23): the fixture member has three trades and reads the
+     compact layout, so the active layout (four trades, two filings) and a
+     paper-only member (zero transactions) are surfaces of their own */
+  out["memberBody.active"] = ui.memberBody(
+    { ...MEMBER, txns: [...MEMBER.txns, { ...MEMBER.txns[0]!, txnId: "t-active-4", ticker: "XOM", filed: "2026-05-02", doc: "https://efdsearch.senate.gov/x/active-4" }] },
+    STAMPS,
+    CTX,
+    0,
+  );
+  out["memberBody.paper-only"] = ui.memberBody({ ...MEMBER, txns: [], filingCount: MEMBER.paper.length }, STAMPS, CTX, 0);
   out["memberPaperBlock"] = ui.memberPaperBlock(MEMBER);
   out["memberV2Sections.absent-deps"] = ui.memberV2Sections(MEMBER, STAMPS, CTX, {
     resolveSector: null,
@@ -371,10 +381,8 @@ export async function renderParitySurfaces(): Promise<Record<string, string>> {
 
   const spec = ui.pickSpecimen(TXNS);
   out["specimenCard"] = spec ? ui.specimenCard(spec, CTX) : "<none>";
-  out["moduleCard"] = ui.moduleCard("Congress", "/congress/", "PTR disclosures.", {
-    live: true,
-    statLines: ["3 filings", "3 rows"],
-  });
+  /* launch M2: `moduleCard` left with the Modules grid; the home's surfaces
+     are captured below, beside the triage they read. */
 
   // rankings — rollup derived by the same functions /congress uses
   const { leadersRollup, congressTickersRollup } = await import("../../src/lib/derive.ts");
@@ -471,6 +479,34 @@ export async function renderParitySurfaces(): Promise<Record<string, string>> {
   out["signalsCongressColumnHtml"] = ui.signalsCongressColumnHtml();
   out["memberSignalsPanel"] = ui.memberSignalsPanel(SIGNAL_ARTIFACT, "T000001", CTX);
   out["memberSignalsPanel.empty"] = ui.memberSignalsPanel(SIGNAL_ARTIFACT, "Z999999", CTX);
+
+  /* launch M2 (Home A, D1): the hero's copy and chips, the four-figure
+     ledger, and the body under the hero — the triage's lead cards (the
+     triage above), Latest from Congress, the notable managers' new stakes and
+     the trust strip — over the same fixtures. */
+  const index = { v: 1, tickers: [["WMB", "Williams Cos Inc", 2], ["NVDA", "", 1]], members: [["T000001", "Fixture Member", "R–OK", 4]], filers: [] };
+  out["homeHeroCopyHtml"] = ui.homeHeroCopyHtml(ui.homeTryChips(index, { name: "Fixture Advisors LLC", href: "/institutional/filers/0000102909/" }, CTX));
+  out["homeLedgerHtml"] = ui.homeLedgerHtml(
+    ui.homeFigures({
+      txns: TXNS,
+      paper: MEMBER.paper,
+      members: [MEMBER],
+      filedFrom: "2026",
+      stats: { freshness: { house_db_max_filed_date: "2026-07-20", senate_db_max_filed_date: "2026-07-21" } },
+      coverage: { housePct: "93.9", senatePct: "100", needsOcr: 1 },
+      inst: { present: true, filers: 2, closedQuarter: "2026-03-31", filingsThrough: "2026-05-15" },
+      signals: { active: 1, retentionDays: 90, coverageFrom: "2026-04-25", coverageTo: "2026-07-24" },
+      triage: { stands: triage.counts.stands, ranked: triage.rows.length },
+      generatedAtDate: STAMPS.generatedAtDate,
+    }),
+  );
+  out["homeSectionsHtml"] = ui.homeSectionsHtml({
+    lead: ui.homeLeadHtml(triage, CTX, 90),
+    congress: ui.congressTileHtml(TXNS, CTX),
+    moves: ui.movesTileHtml(fixtureMoves(12), "2026-03-31", (cik: string) => `/institutional/filers/${cik}/`, { filingsThrough: "2026-05-15" }),
+    trust: ui.homeTrustHtml({ default: { source_mix: { kadoa_count: 2 } } }),
+  });
+  out["homeLeadHtml.empty"] = ui.homeLeadHtml(null, CTX, 90);
 
   return out;
 }

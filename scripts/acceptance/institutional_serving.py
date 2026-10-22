@@ -99,6 +99,7 @@ def main() -> int:  # noqa: PLR0912, PLR0915 - a linear acceptance script, delib
         FILER_TAIL_SHARDS_RESERVED,
         FILER_V1_TRANSITION_FILES,
         GLOBAL_FILE_CAP,
+        INST_DIRECTORY_SHARDS_MAX,
         M1_MEASURED_PAGES,
         M2_FILER_PAGES,
         M3_RESERVED,
@@ -640,6 +641,9 @@ def main() -> int:  # noqa: PLR0912, PLR0915 - a linear acceptance script, delib
         + FILER_TAIL_SHARDS_RESERVED
         + FILER_ROUTING_INDEX_FILES
         + FILER_V1_TRANSITION_FILES
+        # Launch redesign M7b (LD29): the /institutional/ directory shard
+        # family — the twin holdings_substrate.py sum carries it too.
+        + INST_DIRECTORY_SHARDS_MAX
     )
     check(
         projected == expected,
@@ -649,6 +653,7 @@ def main() -> int:  # noqa: PLR0912, PLR0915 - a linear acceptance script, delib
         " the C5/N1 defect class inst_budget documents",
     )
     print(f"filer_v1_transition_files={FILER_V1_TRANSITION_FILES}")
+    print(f"inst_directory_shards={INST_DIRECTORY_SHARDS_MAX}")
     check(
         FILER_SHARD_BYTE_CEILING == 1024 * 1024 < MAX_SHARD_BYTES,
         f"the LD-10 client-response ceiling is {FILER_SHARD_BYTE_CEILING:,} B,"

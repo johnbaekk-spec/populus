@@ -15,6 +15,8 @@
 
    No dependencies, no framework — the dashboard ships zero framework code. */
 
+import { rolesFor } from "./table-roles.ts";
+
 export interface SortState {
   key: string;
   dir: "asc" | "desc";
@@ -79,7 +81,8 @@ export function initSortableTable(options: SortableTableOptions): () => void {
   }
 
   function paint(): void {
-    root.innerHTML = render(state);
+    // launch M1a (R40): a sorted body keeps its rows' explicit roles
+    root.innerHTML = rolesFor(root, render(state));
     syncHeaders();
     if (statusEl && announce) statusEl.textContent = announce(state);
   }

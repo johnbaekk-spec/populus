@@ -30,6 +30,19 @@ export {
   congressTickerBody,
   NON_ALLEGATION_CAVEAT,
   memberV2Sections,
+  // launch M4a (LD26, rule 8): the member page's held-row functions and the
+  // names the client binder registers them under
+  memberNetRowHtml,
+  memberHistoryRowHtml,
+  MEMBER_NET_ROWS,
+  MEMBER_HISTORY_ROWS,
+  // launch M4b (R25): the member trades page size, side filter and count,
+  // shared by the server table, the pager and the /e/ driver
+  type MemberSide,
+  type MemberSignalsSummary,
+  MEMBER_PAGE_SIZE,
+  memberSideRows,
+  memberTradesCountText,
 } from "./congress.ts";
 export {
   type RankingSectionOpts,
@@ -124,7 +137,26 @@ export {
   // signals-v4 M2 (LD18): the banner's sentence, for /institutional/'s provenance tip
   s7CopyHtml,
 } from "./states.ts";
-export { pickSpecimen, specimenCard, type ModuleCardStats, moduleCard, congressTileHtml, movesTileHtml, signalsTileHtml, HOME_CLAIM, HOME_TILE_ROWS } from "./home.ts";
+/* launch M2 (Home A, D1): the Modules grid's `moduleCard` (and its
+   `ModuleCardStats`) and the Signals tile left with the grid; the hero, the
+   ledger, the lead cards, the trust strip and the body's order came in. */
+export {
+  pickSpecimen,
+  specimenCard,
+  congressTileHtml,
+  movesTileHtml,
+  HOME_CLAIM,
+  HOME_KICKER,
+  HOME_TILE_ROWS,
+  homeTryChips,
+  largestNotableFiler,
+  homeHeroCopyHtml,
+  homeFigures,
+  homeLedgerHtml,
+  homeLeadHtml,
+  homeTrustHtml,
+  homeSectionsHtml,
+} from "./home.ts";
 
 /* `RANKING_FOOTNOTES` moved to `congress-columns.ts`, which is where
    the columns that now carry its text are declared, and is re-exported here so

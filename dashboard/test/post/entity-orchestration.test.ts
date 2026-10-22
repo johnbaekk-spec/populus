@@ -25,6 +25,7 @@ import {
   type DriverHandle,
 } from "../../src/scripts/entity-client.ts";
 import { tickerDataKey } from "../../src/lib/derive.ts";
+import { MEMBER_ACTIVE_MIN_TRADES } from "../../src/lib/ui/congress.ts";
 import { CUT_BUILD_TIMEOUT_MS, cutBuildFailure, type CutBuildError } from "../lib/cut-build.ts";
 import {
   FILER_INDEX_PATH,
@@ -648,18 +649,42 @@ test("member happy path over real dist-cut bytes (cut member)", async () => {
   const { readdirSync } = await import("node:fs");
   const endpoints = readdirSync(path.join(DIST_CUT, "congress", "data", "members"));
   const pages = new Set(readdirSync(path.join(DIST_CUT, "congress", "members")));
-  const cut = endpoints.map((f) => f.replace(".v1.json", "")).find((b) => !pages.has(b));
-  assert.ok(cut, "a cut member exists under the forced budget");
-  const body = JSON.parse(
-    readFileSync(path.join(DIST_CUT, "congress", "data", "members", `${cut}.v1.json`), "utf-8"),
-  );
-  const h = harness(`?k=m:${cut}`, okFetch(body));
-  const handle = runEntityDriver(h.deps);
-  await handle.done;
-  assert.equal(handle.state(), "body");
-  const html = h.renders.at(-1)!;
-  assert.ok(html.includes("member ID"), "member body renders");
-  assert.ok(html.includes("<caption"), "same real-table renderer as SSR");
+  const cuts = endpoints.map((f) => f.replace(".v1.json", "")).filter((b) => !pages.has(b));
+  assert.ok(cuts.length > 0, "a cut member exists under the forced budget");
+  const bodyOf = (b: string): { t?: unknown[] } =>
+    JSON.parse(readFileSync(path.join(DIST_CUT, "congress", "data", "members", `${b}.v1.json`), "utf-8"));
+  const render = async (b: string): Promise<string> => {
+    const h = harness(`?k=m:${b}`, okFetch(bodyOf(b)));
+    const handle = runEntityDriver(h.deps);
+    await handle.done;
+    assert.equal(handle.state(), "body", b);
+    return h.renders.at(-1)!;
+  };
+  /* launch M4b (R23–R26): memberBody has two layouts — under
+     MEMBER_ACTIVE_MIN_TRADES trades the compact one lists them in
+     `ol.one-trades` (no table, so no caption); at or above it the active one
+     keeps the real trades table. The client draws a cut member through the
+     SAME renderer as SSR, so each layout is checked on a cut member that
+     selects it, rather than on whichever cut member sorts first. */
+  const first = cuts[0]!;
+  const html = await render(first);
+  /* launch copy ledger member-01 (adapted, M4b): the member ID left the
+     subline for the breadcrumb's last crumb, so "the member body rendered for
+     THIS member" is read there (pages-render.test.ts pins the same on both
+     layouts), plus the entity title the body opens with. */
+  assert.ok(html.includes(`<span>${first}</span></nav>`), "member body renders, its breadcrumb naming the cut member's ID");
+  assert.ok(html.includes('<h1 class="entity-title">'), "member body renders its title");
+  const active = cuts.find((b) => (bodyOf(b).t?.length ?? 0) >= MEMBER_ACTIVE_MIN_TRADES);
+  const compact = cuts.find((b) => (bodyOf(b).t?.length ?? 0) > 0 && (bodyOf(b).t?.length ?? 0) < MEMBER_ACTIVE_MIN_TRADES);
+  assert.ok(active, "an active cut member exists under the forced budget");
+  const activeHtml = await render(active);
+  assert.ok(activeHtml.includes(`<span>${active}</span></nav>`), "active layout: member body renders");
+  assert.ok(activeHtml.includes("<caption"), "active layout: same real-table renderer as SSR");
+  if (compact) {
+    const compactHtml = await render(compact);
+    assert.ok(compactHtml.includes(`<span>${compact}</span></nav>`), "compact layout: member body renders");
+    assert.ok(compactHtml.includes('class="one-trades"'), "compact layout: the same compact trade list as SSR");
+  }
   assert.equal(pages.size, 10, "exactly the budgeted member pages were emitted");
 });
 

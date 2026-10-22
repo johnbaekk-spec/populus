@@ -148,13 +148,19 @@ const ONE_TRADE = {
   filingCount: 1, txns: [txn()], paper: [],
 } as unknown as Parameters<typeof memberBody>[0];
 
-test("4: a one-trade member reads 1 filing, 1 row, 1 reported transaction", () => {
+/* launch M4b (member-02, member-12, member-21): the one-trade member reads
+   the compact layout — "1 filing" in the ledger, "The one trade on record" —
+   and the "reported transactions" briefing card left with member-21. The
+   property — a count of one never carries a plural noun — is unchanged. */
+test("4: a one-trade member reads 1 filing and one trade; no singular count carries a plural noun", () => {
   const text = visibleText(domOf(memberBody(ONE_TRADE, STAMPS, CTX, 0)));
-  for (const ok of ["1 filing ·", "1 row ·", "1 reported transaction"]) assert.ok(text.includes(ok), `"${ok}" is on the page`);
-  assert.doesNotMatch(text, /\b1 (?:filings|rows|reported transactions)\b/, "no singular count carries a plural noun");
-  // control: a three-trade member keeps the plural
+  for (const ok of ["1 filing", "The one trade on record"]) assert.ok(text.includes(ok), `"${ok}" is on the page`);
+  assert.doesNotMatch(text, /\b1 (?:filings|rows|trades|reported transactions)\b/, "no singular count carries a plural noun");
+  // control: a three-trade member keeps the plural; a four-trade member's active page too
   const three = { ...ONE_TRADE, filingCount: 3, txns: [txn(), txn({ txnId: "t-2" }), txn({ txnId: "t-3" })] } as typeof ONE_TRADE;
-  assert.match(visibleText(domOf(memberBody(three, STAMPS, CTX, 0))), /3 filings · .*3 rows · /s);
+  assert.match(visibleText(domOf(memberBody(three, STAMPS, CTX, 0))), /3 filings.*The 3 trades on record/s);
+  const four = { ...three, txns: [...three.txns, txn({ txnId: "t-4" })] } as typeof ONE_TRADE;
+  assert.match(visibleText(domOf(memberBody(four, STAMPS, CTX, 0))), /4 trades · newest filed first/);
 });
 
 test("4: a ticker with one disclosure reads 1 row", () => {
@@ -165,12 +171,14 @@ test("4: a ticker with one disclosure reads 1 row", () => {
 });
 
 test("6: the member's reporting window is its own filing span, never the site's publish date", () => {
+  /* launch M4b: the briefing card left (member-21); the compact layout's
+     head states the member's own window */
   const one = memberBody(ONE_TRADE, STAMPS, CTX, 0);
-  assert.match(one, /Reporting window<\/div>\s*<h2>Filed 2026-07-21<\/h2>/, "one filing: its date");
+  assert.match(one, /<span class="panel-note">Filed 2026-07-21<\/span>/, "one filing: its date");
   assert.ok(!one.includes(`Published ${STAMPS.generatedAtDate}`), "control: the publish date no longer poses as the window");
   const paper = { kind: "paper", filed: "2025-11-03", name: "Fixture Member", bioguide: "F000001", party: "R", state: "OH", district: "4", chamber: "house", doc: "d" };
   const span = memberBody({ ...ONE_TRADE, filingCount: 2, paper: [paper] } as typeof ONE_TRADE, STAMPS, CTX, 0);
-  assert.match(span, /<h2>Filed 2025-11-03 → 2026-07-21<\/h2>/, "a paper filing counts toward the span");
+  assert.match(span, /<span class="panel-note">Filed 2025-11-03 → 2026-07-21<\/span>/, "a paper filing counts toward the span");
 });
 
 test("6: the ticker ledger's 13F holders figure is the full count, with the listed slice as its sub", () => {

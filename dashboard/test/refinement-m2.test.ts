@@ -10,9 +10,11 @@ import {
   COMPACT_ROWS,
   COMPACT_STEP,
   DESIGN_FEED_PAGE_SIZE,
+  PAGE_SIZE,
   compactBoundCount,
   compactExpandLabel,
   mergeFeed,
+  pageCountFor,
   pageSlice,
   type TxnRow,
   type PaperRow,
@@ -22,6 +24,7 @@ import {
   decodeFeedItem,
   decodeFeedPart,
   encodeFeedItem,
+  feedPageCount,
   pageSliceFrom,
   partsForPage,
   planFeedParts,
@@ -104,21 +107,28 @@ function paper(over: Partial<PaperRow> = {}): PaperRow {
    on this data" line directly after the provenance strip instead of below the
    feed. Read from the parsed template (the page's own element order), not
    from string offsets. */
+/* REVERSED IN PART by launch M3b (R19, R21, R22; the approved Congress board).
+   The property kept: the landing leads with its data — the Members and Tickers
+   boards paired in ONE band, Members first — before the feed. What changed:
+   the "Notes on this data" drawer and its briefing cards are retired (their
+   facts live in the ledger, the feed and the provenance line), so the band
+   sits directly after the provenance strip; and Monthly flow closes the page,
+   after the feed. */
 function congressCompositionProblems(main: MiniElement): string[] {
   const out: string[] = [];
-  const kids = main.children;
+  const kids = main.children.filter((c) => c.tagName !== "script");
   const at = (pred: (c: MiniElement) => boolean): number => kids.findIndex(pred);
   const head = at((c) => c.classList.contains("page-head"));
   const prov = at((c) => c.classList.contains("design-provenance"));
-  const notes = at((c) => c.id === "congress-notes");
   const band = at((c) => c.id === "congress-leaders-band");
   const feed = at((c) => c.id === "feed-section");
-  if ([head, prov, notes, band, feed].some((i) => i < 0)) return ["a landing part is missing"];
+  const flow = at((c) => c.tagName === "fragment" && c.getAttribute("set:html") === "{monthlyFlowHtml}");
+  if ([head, prov, band, feed, flow].some((i) => i < 0)) return ["a landing part is missing"];
   if (!(head < prov)) out.push("the provenance strip follows the head");
-  if (notes !== prov + 1) out.push("the notes line sits directly after the provenance strip");
-  if (!(band > notes && feed > band)) out.push("the rankings band precedes the feed");
-  const n = kids[notes]!;
-  if (n.tagName !== "details" || n.hasAttribute("open")) out.push("the notes are one closed <details>");
+  if (band !== prov + 1) out.push("the boards band sits directly after the provenance strip");
+  if (!(feed > band)) out.push("the rankings band precedes the feed");
+  if (flow !== kids.length - 1 || !(flow > feed)) out.push("Monthly flow closes the page, after the feed");
+  if (at((c) => c.id === "congress-notes") >= 0) out.push("the retired notes drawer is gone");
   const cells = kids[band]!.children;
   if (!kids[band]!.classList.contains("design-rankings")) out.push("the rankings are one .design-rankings band");
   /* DESIGN-POLISH M2 (CD-1): the Leaders cell is marked the band's primary
@@ -136,14 +146,14 @@ function congressMain(page: string): MiniElement {
   return domOf(text).querySelector("main")!;
 }
 
-test("R11 → D1/D2 (L10): the Congress landing pairs Leaders │ Tickers in ONE band, Leaders first; the notes line follows the provenance strip; the feed comes after", () => {
+test("R11 → D1/D2 (L10) → launch M3b: the Congress landing pairs Members │ Tickers in ONE band, Members first, right after the provenance strip; the feed follows; Monthly flow closes the page", () => {
   const page = readFileSync(path.join(SRC, "pages", "congress", "index.astro"), "utf-8");
   assert.deepEqual(congressCompositionProblems(congressMain(page)), []);
   // the two fragments are the Leaders and Tickers sections, by kind
   assert.match(page, /const membersHtml = congressRankingSection\(\s*"leaders",/);
   assert.match(page, /const momentumHtml = congressRankingSection\(\s*"tickers",/);
-  // the notes line carries the three context cards (folded, not deleted)
-  assert.match(page, /<details class="design-supplement" id="congress-notes"><summary>Notes on this data<\/summary>\s*<Fragment set:html=\{briefingHtml\} \/>/);
+  // launch M3b (R22): the briefing cards and their notes drawer are retired
+  assert.doesNotMatch(page, /briefingCards|briefingHtml|id="congress-notes"/);
   // the four-figure ledger replaced the one-line strip, in the page head
   assert.ok(congressMain(page).querySelector(".page-head")!.querySelectorAll("fragment").some((f) => f.getAttribute("set:html") === "{ledgerHtml}"));
   assert.doesNotMatch(page, /coverage-strip|design-rankings-single/, "no strip, no single-cell rankings band");
@@ -160,13 +170,18 @@ test("R11 → D1/D2 (L10): the Congress landing pairs Leaders │ Tickers in ONE
   );
   assert.notEqual(stacked, page, "control fixture applies");
   assert.ok(congressCompositionProblems(congressMain(stacked)).length > 0, "control: stacked (unpaired) rankings fail");
-  const notesLast = page
-    .replace(/<details class="design-supplement" id="congress-notes">[\s\S]*?<\/details>/, "")
-    .replace("</main>", '<details class="design-supplement" id="congress-notes"><summary>Notes on this data</summary></details></main>');
-  assert.ok(congressCompositionProblems(congressMain(notesLast)).some((p) => /directly after the provenance/.test(p)), "control: notes below the feed fail");
+  const flowFirst = page
+    .replace("<Fragment set:html={monthlyFlowHtml} />", "")
+    .replace('<div class="design-rankings" id="congress-leaders-band">', '<Fragment set:html={monthlyFlowHtml} /><div class="design-rankings" id="congress-leaders-band">');
+  assert.notEqual(flowFirst, page, "control fixture applies");
+  assert.ok(congressCompositionProblems(congressMain(flowFirst)).some((p) => /closes the page|directly after the provenance/.test(p)), "control: Monthly flow before the boards fails");
 });
 
-test("R11/R13: a ranking section shows 10 rows and ships the next 50 hidden for a download-free 'Show 50 more'", () => {
+/* launch F2 (R35, LD26/LD31): the property is unchanged — the next fifty
+   ride in the page for a download-free "Show 50 more" — and the mechanism
+   moved: they are island data (rule 8), drawn by the board's pager through
+   the binder, not hidden rows in the DOM. */
+test("R11/R13: a ranking section shows 10 rows and ships the next 50 in the page for a download-free 'Show 50 more'", () => {
   const rows = Array.from({ length: 80 }, (_, i) =>
     txn({ txnId: `t-${i}`, bioguide: `M${String(i).padStart(6, "0")}`, name: `Member ${i}`, low: 1000 * (i + 1), high: 2000 * (i + 1) }),
   );
@@ -178,11 +193,13 @@ test("R11/R13: a ranking section shows 10 rows and ships the next 50 hidden for 
     ctx,
     { rootId: CONGRESS_ROOTS.membersRanked, undisclosedRootId: CONGRESS_ROOTS.membersUndisclosed, heading: "Leaders", sectionId: "members-section", compact: COMPACT_ROWS },
   );
-  const tbody = html.slice(html.indexOf(`<tbody id="${CONGRESS_ROOTS.membersRanked}">`), html.indexOf("</tbody>"));
+  const tbody = html.slice(html.indexOf(`<tbody id="${CONGRESS_ROOTS.membersRanked}" role="rowgroup">`), html.indexOf("</tbody>"));
   const visible = (tbody.match(/<tr(?! hidden)\b/g) ?? []).length;
-  const hidden = (tbody.match(/<tr hidden data-compact-hidden/g) ?? []).length;
+  const hidden = (tbody.match(/<tr hidden/g) ?? []).length;
+  const island = /<script type="application\/json" data-held-for="members-ranked-tbody" data-held-render="congress-ranking">([\s\S]*?)<\/script>/.exec(html);
   assert.equal(visible, COMPACT_ROWS, "ten rows visible");
-  assert.equal(hidden, COMPACT_STEP, "fifty more ride hidden in the server bytes");
+  assert.equal(hidden, 0, "no held row is in the DOM");
+  assert.equal((JSON.parse(island![1]!) as { offset: number; rows: unknown[] }).rows.length, COMPACT_STEP, "fifty more ride in the server bytes, as island data");
   assert.match(html, /data-compact-shown="10"/);
   // DESIGN-POLISH M1 (R8): the range grammar, still plain words.
   assert.match(html, /<span class="compact-bound-count">1–10 of 80 ranked members<\/span>/, "the count is plain words");
@@ -196,8 +213,11 @@ test("R11/R13: a ranking section shows 10 rows and ships the next 50 hidden for 
 
 /* ---------- R12: feed page size + LD7 parts ---------- */
 
-test("R12: the feed pages 50 rows", () => {
-  assert.equal(DESIGN_FEED_PAGE_SIZE, 50);
+// REVERSED by launch M3a (LD20, pagination-and-counts.md rule 1a): the feed
+// pages 20 rows; the published part index keeps page_size 50 byte-for-byte.
+test("R12 / launch M3a: the feed pages 20 rows; the published index keeps 50", () => {
+  assert.equal(DESIGN_FEED_PAGE_SIZE, 20);
+  assert.equal(PAGE_SIZE, 50, "the transport page size the published index carries");
 });
 
 function corpus(): { merged: ReturnType<typeof mergeFeed>; txns: TxnRow[]; papers: PaperRow[] } {
@@ -267,7 +287,11 @@ test("LD7: every page — including one that crosses a part boundary — equals 
   const plan = planFeedParts(merged, { build_id: "b", generated_at: null }, { ceilingBytes: 8_000 });
   const bodies = new Map([...plan.bodies].map(([k, v]) => [k, decodeFeedPart(JSON.parse(v))!.items]));
   let crossed = 0;
-  for (let page = 0; page < plan.index.page_count; page++) {
+  // Launch M3a (rule 2a): the 20-row page count comes from part metadata, not
+  // the index's 50-row page_count — every 20-row page is swept.
+  const pages = feedPageCount(plan.index, DESIGN_FEED_PAGE_SIZE);
+  assert.equal(pages, pageCountFor(merged, DESIGN_FEED_PAGE_SIZE), "the position-derived count equals the walk");
+  for (let page = 0; page < pages; page++) {
     const parts = partsForPage(plan.index, page, DESIGN_FEED_PAGE_SIZE);
     assert.ok(parts.length >= 1, `page ${page} maps to at least one part`);
     if (parts.length > 1) crossed++;
@@ -322,7 +346,9 @@ test("R12/R19: a FILTER loads the WHOLE corpus — every part, once — never a 
       !dom.fetchCalls.some((u) => u.includes("feed.v1.json")),
       "the retired single-asset feed must never be fetched",
     );
-    assert.match(dom.elements.get("pager-range")!.textContent, /^1–50 of 60 transactions/, "60 late rows over the full corpus");
+    // Launch M3a: 20 rows a page, in the default "With ticker" view (every
+    // fixture row carries a ticker, so nothing is hidden and nothing is stated).
+    assert.match(dom.elements.get("pager-range")!.textContent, /^1–20 of 60 transactions with a ticker$/, "60 late rows over the full corpus");
   } finally {
     restore();
   }
@@ -483,7 +509,9 @@ test("R14 → signals-v4 LD11: the Named moves show 15 rows with the kind and ty
     filerHref: (cik) => `/institutional/filers/${Number(cik)}/`, filerTier: () => "top",
   });
   const html = signalsInstitutionalHtml(model, {});
-  assert.equal((html.match(/<article class="mv-item"/g) ?? []).length, 30, "the DOM set: the slice's first 30 (LD11)");
+  /* launch M7a (D5): the DOM set is still the slice's first 30 — 15 in the page, the rest in the island */
+  const island = JSON.parse(/<script type="application\/json" data-held-for="mv-list" data-held-render="named-moves">([\s\S]*?)<\/script>/.exec(html)![1]!) as { rows: unknown[] };
+  assert.equal((html.match(/<article class="mv-item"/g) ?? []).length + island.rows.length, 30, "the DOM set: the slice's first 30 (LD11)");
   assert.equal((html.match(/<article class="mv-item"(?![^>]*\shidden)[^>]*>/g) ?? []).length, NAMED_MOVES_MIN, "15 show");
   assert.doesNotMatch(html, /data-moves-period=/, "no quarter selector on Signals (plan non-goal)");
   for (const k of ["new", "exit", "add", "trim"]) assert.match(html, new RegExp(`data-mv-kind="${k}"`));
@@ -577,7 +605,13 @@ function filerReadingOrder(html: string): string[] {
   return root.children.map(mark).filter((m): m is string => m !== null);
 }
 
-test("R15 (M2): the filer page reads head + ledger → changes → band F1 [holdings │ book shape + history] → one Planned line → EDGAR/notes → §5 note, in DOM order", () => {
+/* Launch copy audit filer-01 / filer-06 / filer-11 (reversal record,
+   docs/frontend/launch-redesign.md): the Planned line (a roadmap) and the
+   "Notes on this data" cards (generic restatements of caveats the provenance
+   line and the §5 box carry) left the foot, and the reported value left the
+   subline for the ledger. The reading order is otherwise unchanged and still
+   held by DOM order. */
+test("R15 (M2): the filer page reads head + ledger → changes → band F1 [holdings │ book shape + history] → EDGAR → §5 note, in DOM order", () => {
   const holdingsHtml = '<section class="panel panel-wide" aria-label="Reported holdings" data-holdings-surface="filer"><div data-holdings-body></div></section>';
   const html = filerBody(
     { cik: "0001067983", name: "BERKSHIRE HATHAWAY INC", latestPeriod: "2026-03-31" },
@@ -593,15 +627,16 @@ test("R15 (M2): the filer page reads head + ledger → changes → band F1 [hold
   const subline = html.slice(html.indexOf('class="entity-subline"'), html.indexOf("</div>", html.indexOf('class="entity-subline"')));
   assert.match(subline, /Warren Buffett/);
   assert.match(subline, /Asset managers/);
-  assert.match(subline, /\$2\.5B reported 13\(f\) long value/);
+  assert.doesNotMatch(subline, /reported 13\(f\) long value|latest quarter|notable/, "the value is the ledger's, the quarter the band head's (filer-01)");
+  assert.match(subline, /CIK 1067983/);
 
   // the reading order IS the DOM order
-  assert.deepEqual(filerReadingOrder(html), ["head", "changes", "band", "planned", "edgar", "notes", "data-note"]);
+  assert.deepEqual(filerReadingOrder(html), ["head", "changes", "band", "edgar", "data-note"]);
   // control: the pre-M2 order (the holdings band before the changes) is caught
   const bandAt = html.indexOf('<div class="design-band design-filer-band">');
   const changesAt = html.indexOf("<div data-filer-root>");
-  const planned = html.indexOf('<p class="planned-line">');
-  const swapped = html.slice(0, changesAt) + html.slice(bandAt, planned) + html.slice(changesAt, bandAt) + html.slice(planned);
+  const edgarAt = html.indexOf('<details class="edgar-block');
+  const swapped = html.slice(0, changesAt) + html.slice(bandAt, edgarAt) + html.slice(changesAt, bandAt) + html.slice(edgarAt);
   assert.notDeepEqual(filerReadingOrder(swapped), filerReadingOrder(html), "control: a band moved above the changes changes the order");
 
   // the four period figures, from the ledger inside the head's ledger root
@@ -628,9 +663,9 @@ test("R15 (M2): the filer page reads head + ledger → changes → band F1 [hold
   assert.equal(posRows.filter((tr) => tr.hasAttribute("data-compact-extra")).length, 15);
   assert.match(html, /data-compact-for="filer-changes-tbody" data-compact-total="35" data-compact-shown="20"/);
   assert.doesNotMatch(html, /aria-label="Congress overlap"|aria-label="Signals for this filer"|aria-label="Sector rotation"/, "empty frames are gone");
-  assert.equal((html.match(/class="planned-line"/g) ?? []).length, 1);
-  assert.match(html, /PLANNED<\/span> sector rotation · Congress overlap · signals for this filer/);
-  assert.match(html, /id="filer-notes"/, "the explainer cards are folded, not deleted");
+  assert.equal((html.match(/class="planned-line"/g) ?? []).length, 0, "no roadmap line (filer-06)");
+  assert.doesNotMatch(html, /PLANNED|sector rotation/);
+  assert.doesNotMatch(html, /id="filer-notes"|Notes on this data/, "the generic explainer cards are gone (filer-11)");
   assert.equal((html.match(/id="inst-data-note"/g) ?? []).length, 1, "the §5 note renders once, at the foot");
   assert.doesNotMatch(html, /producer-classified \(change_kind\)/);
 });
@@ -642,37 +677,43 @@ test("R15: changesTableHtml with fewer rows than the compact slice renders no di
 });
 
 /* ======================================================================
-   R18 — home
+   R18 — home (amended by launch M2, Home A, owner decision D1)
+
+   The property kept: one claim of twelve words or fewer, live tables whose
+   rows come from the build, the range caveat on the amount column, and the
+   philosophy relocated to /methodology/#principles, not cut. The mechanism
+   replaced (R14): the three tiles (5 / 5 / 3 rows, the Signals tile among
+   them) became "Latest from Congress" and "Notable managers" at six rows
+   each beside the triage's lead cards; the hero's claim and lede render
+   through `homeHeroCopyHtml`. test/launch-home.test.ts pins the new layout,
+   its figures and its copy; this test keeps R18's own properties.
    ====================================================================== */
 
-import { HOME_CLAIM, HOME_TILE_ROWS, congressTileHtml, movesTileHtml, signalsTileHtml } from "../src/lib/ui/home.ts";
-import type { Signal } from "../src/lib/signals.ts";
+import { HOME_CLAIM, HOME_TILE_ROWS, congressTileHtml, movesTileHtml, homeHeroCopyHtml } from "../src/lib/ui/home.ts";
 
-test("R18: the masthead claim is twelve words or fewer and the three tiles carry 5 / 5 / 3 rows", () => {
+test("R18 (launch M2): the claim is twelve words or fewer; Latest from Congress and Notable managers carry six rows each", () => {
   assert.ok(HOME_CLAIM.split(/\s+/).length <= 12, HOME_CLAIM);
+  assert.deepEqual(HOME_TILE_ROWS, { congress: 6, moves: 6 });
   const ctx: RenderCtx = {};
   const rows = Array.from({ length: 9 }, (_, i) => txn({ txnId: `t${i}`, name: `Member ${i}` }));
   const congress = congressTileHtml(rows, ctx);
   assert.equal(bodyRows(congress).length, HOME_TILE_ROWS.congress);
   assert.deepEqual(
     domOf(congress).querySelectorAll("thead th").map((th) => [visibleText(th).trim(), th.getAttribute("class")]),
-    [["Member", "c-member c-flex"], ["Ticker", "c-ticker"], ["Side", "c-kind"], ["Amount", "c-num"], ["Filed", "c-num"]],
+    [["Side", "c-kind"], ["Member", "c-member c-flex"], ["Ticker", "c-ticker"], ["Range", "c-num"], ["Filed", "c-filed c-num"]],
   );
-  // DESIGN-POLISH M1 (R6): the first amount is its own note's label trigger.
-  const firstAmount = bodyRows(congress)[0]!.children[3]!;
-  assert.ok(firstAmount.querySelector(".note-btn.note-label"), "the range caveat hangs off the first amount");
+  // DESIGN-POLISH M1 (R6) → copy item home-03: the range caveat is the Range header's own note
+  const rangeHead = domOf(congress).querySelectorAll("thead th")[3]!;
+  assert.ok(rangeHead.querySelector(".note-btn.note-label"), "the range caveat hangs off the Range header");
   const moves = Array.from({ length: 8 }, (_, i) => ({ cik: `${i}`, manager: `M${i}`, principal: null, type: "hedge_fund" as const, issuer: `I${i}`, ticker: null, ticker_verified: null, kind: "new" as const, delta_shares: 1, curr_value: 1, delta_value: 1, filed: "2026-05-15", doc: null, key: `k${i}`, ikey: null }));
   const movesHtml = movesTileHtml(moves, "2026-03-31", (cik) => `/f/${cik}`);
   assert.equal(bodyRows(movesHtml).length, HOME_TILE_ROWS.moves);
-  // SIGNALS-CLARITY M2 (R12): the tile shows listed stocks by default, so these hits are filed as stock
-  const sig = (i: number): Signal => ({ id: `s${i}`, kind: "s1-large", rule: "r", thresholdVersion: "1", entities: { bioguide: "A000001", memberName: "A", ticker: `T${i}` }, magnitude: { low: 1, high: 2 }, receipts: [], occurrence: { tradeDate: null, filedDate: "2026-08-01" }, sourceAvailableAt: "", computedAt: "", firstSeenBuild: "b", lastSeenBuild: "b", status: "active", cohort: "senate", asset: `Issuer ${i}`, assetType: "Stock", side: "purchase", owner: "self", listedStock: true });
-  const signals = signalsTileHtml([sig(1), sig(2), sig(3), sig(4)], ctx, () => "LARGE");
-  assert.equal(bodyRows(signals).length, HOME_TILE_ROWS.signals);
-  assert.ok(bodyRows(signals)[0]!.children[0]!.querySelector("a.mono-ticker"), "ticker first");
+  const hero = homeHeroCopyHtml([]);
+  assert.match(hero, new RegExp(`<h1 class="hero-title" id="home-claim">${HOME_CLAIM.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}</h1>`));
+  assert.match(hero, /\/methodology\/#principles/, "the philosophy is relocated, not cut");
   const page = readFileSync(path.join(SRC, "pages", "index.astro"), "utf-8");
-  assert.match(page, /\{HOME_CLAIM\}/);
-  assert.match(page, /\/methodology\/#principles/, "the philosophy is relocated, not cut");
-  assert.doesNotMatch(page, /returned to the people/, "…and its full text left the home page");
+  assert.match(page, /homeHeroCopyHtml\(/, "the page renders the claim through the hero renderer");
+  assert.doesNotMatch(page + hero, /returned to the people/, "…and its full text left the home page");
   const methodology = readFileSync(path.join(SRC, "pages", "methodology", "index.astro"), "utf-8");
   assert.match(methodology, /id="principles"/);
   assert.match(methodology, /returned to the people/);
@@ -776,7 +817,7 @@ test("R19/R20: the band renders on BOTH routes — the unified ticker page (via 
   assert.equal(overlapEl.closest('[role="tabpanel"]')?.getAttribute("id"), "institutional", "the overlap band sits in the Institutional panel");
   assert.ok(ticker.indexOf('id="congress"') < ticker.indexOf('id="institutional"'), "Congress, then Institutional");
   const instPanel = ticker.slice(ticker.indexOf('id="institutional"'));
-  assert.ok(instPanel.indexOf('id="ticker-holders"') < instPanel.indexOf('id="overlap"') && instPanel.indexOf('id="overlap"') < instPanel.indexOf("Do the two regimes agree?"), "holders, then the overlap band, then the agreement");
+  assert.ok(instPanel.indexOf('id="ticker-holders"') < instPanel.indexOf('id="overlap"') && instPanel.indexOf('id="overlap"') < instPanel.indexOf('class="panel design-agree"'), "holders, then the overlap band, then the agreement (launch ticker-13: its head reads 'Congress vs filers')");
   // control: the pre-M3 order (the band between the two sections, outside both) fails the panel reading
   assert.notEqual(domOf(`<section role="tabpanel" id="congress"></section>${overlapHtml}<section role="tabpanel" id="institutional"></section>`).querySelector("#overlap")!.closest('[role="tabpanel"]')?.getAttribute("id"), "institutional");
   const holders = tickerHoldersBody({

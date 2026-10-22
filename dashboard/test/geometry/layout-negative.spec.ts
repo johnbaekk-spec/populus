@@ -425,18 +425,21 @@ test.describe("ledger probe self-tests (synthetic fixtures)", () => {
     expect(has(await probe(page, "g4"), (f) => (f.el ?? "").includes("#tinyd"))).toBe(true);
   });
 
-  test("G5 fails when fewer than 14 --fs-* tokens resolve, and when a page renders more than 14 sizes", async ({ page }) => {
+  /* launch M1b (LD12): fifteen tokens, and at most fifteen rendered sizes —
+     the fixture's fifteen less one is fourteen, and sixteen tokened sizes
+     (two extra tokens) exceed the cap */
+  test("G5 fails when fewer than 15 --fs-* tokens resolve, and when a page renders more than 15 sizes", async ({ page }) => {
     await fixture(page, "<p>one line</p>", ":root{--fs-hero:initial}");
     const few = await probe(page, "g5");
-    expect(has(few, (f) => /only 13 --fs-\* tokens/.test(f.detail)), formatResult(few)).toBe(true);
-    const sizes = [9.5, 10, 10.5, 11, 11.5, 12, 12.5, 13, 13.5, 14, 15, 17, 20, 26, 40];
+    expect(has(few, (f) => /only 14 --fs-\* tokens/.test(f.detail)), formatResult(few)).toBe(true);
+    const sizes = [9.5, 10, 10.5, 11, 11.5, 12, 12.5, 13, 13.5, 14, 15, 17, 18, 20, 26, 40];
     await fixture(
       page,
       `<p>${sizes.map((s) => `<span style="font-size:${s}px">x</span>`).join(" ")}</p>`,
-      ":root{--fs-extra:17px}",
+      ":root{--fs-extra:17px;--fs-extra2:18px}",
     );
     const many = await probe(page, "g5");
-    expect(has(many, (f) => /15 distinct rendered sizes/.test(f.detail)), formatResult(many)).toBe(true);
+    expect(has(many, (f) => /16 distinct rendered sizes/.test(f.detail)), formatResult(many)).toBe(true);
     expect(has(many, (f) => /not a type token/.test(f.detail)), "every size there is a token").toBe(false);
   });
 
@@ -1122,10 +1125,18 @@ test.describe("route negative controls (clean target → injected defect → sam
     expect(fresh.some((f) => clean.some((t) => t.tableIndex === f.tableIndex && t.columnIndex === f.columnIndex))).toBe(true);
   });
 
+  /* launch M3a (LD20) and M4b (LD25): the feed pages 20 rows and the member's
+     trades 25, so no route's DEFAULT view holds 50 rows any more. The control
+     opens each route's "Show all" disclosures first (held rows drawn by the
+     binder), and the filer's reported positions — expanded, the longest table
+     a route serves — joins the routes it searches. */
   test("T1.3 G1 @1440: ONE misaligned cell in row 30 of a 50-row table is reported, and only that cell", async ({ page }) => {
     let found: { tableIndex: number; columnIndex: number } | null = null;
-    for (const route of ["/congress/", "/congress/members/M001193/", "/signals/"]) {
+    for (const route of ["/congress/", "/institutional/filers/1135730/", "/congress/members/M001193/", "/signals/"]) {
       await openRoute(page, route);
+      for (const btn of await page.locator(".compact-disclosure button.compact-toggle:visible").all()) {
+        if ((await btn.getAttribute("aria-expanded")) === "false") await btn.click();
+      }
       const before = await probe(page, "g1");
       if (before.failures.length !== before.failureCount) continue;
       const failing = new Set(before.failures.map(colKey));
@@ -1155,7 +1166,7 @@ test.describe("route negative controls (clean target → injected defect → sam
         return;
       }
     }
-    expect(found, "no 50-row table with a right-aligned column G1 passes on /congress/, the member or /signals/").not.toBeNull();
+    expect(found, "no 50-row table with a right-aligned column G1 passes on /congress/, the filer, the member or /signals/ (disclosures opened)").not.toBeNull();
   });
 
   test("T1.3 G1 @1440: a label trigger with visibility:hidden reads as UNMEASURED, not aligned", async ({ page }) => {
@@ -1204,10 +1215,26 @@ test.describe("route negative controls (clean target → injected defect → sam
 
   /* ----------------------------------------------------- T1.5/T1.6 G12 */
   const HIT_CONTROLS = ":is(.note-btn,.th-sort,.seg > button,.chips > button,.mgr-chips > button,.pager-btn,.compact-toggle)";
+  /* Gate 2 (67b9a8d on 20261019.2): at ≤720px every tip outside a table head
+     is now a 44px BOX of its own (late-additions.css, "launch gate — R7 at the
+     fold"), so no route's tips reach 44 through the ::before square any more
+     and neither control below found a target. Both controls therefore PLANT
+     the condition they test first: the tips back to their own small boxes,
+     whose 44px comes only from the ::before square and its midpoint clip — the
+     mechanism G12 guards wherever a trigger is not a box (a table head's
+     triggers, a header ledger's labels, any future small control). G12 itself
+     is unchanged. The page's script re-measures after the plant. */
+  async function plantSmallTips(page: Page): Promise<void> {
+    await page.addStyleTag({ content: "@media (max-width: 720px) { .note-btn { min-height: 0 !important; min-width: 0 !important; } }" });
+    await page.evaluate(() => window.dispatchEvent(new Event("resize")));
+    await page.waitForTimeout(300);
+    await installProbe(page);
+  }
 
   test("T1.5 G12 @390: removing the midpoint clip makes a neighbour's centre hit the trigger", async ({ page }) => {
     for (const route of ["/congress/", "/signals/", "/institutional/filers/1135730/", "/institutional/"]) {
       await openRoute(page, route, 390);
+      await plantSmallTips(page);
       const before = await probe(page, "g12");
       if (before.failures.length !== before.failureCount) continue;
       /* every control's square back to the centred, UNclipped max(box, hit-min) */
@@ -1227,6 +1254,7 @@ test.describe("route negative controls (clean target → injected defect → sam
 
   test("T1.6 G12 @390: removing the ::before hit square is DETECTED", async ({ page }) => {
     await openRoute(page, "/congress/", 390);
+    await plantSmallTips(page);
     const before = await probe(page, "g12");
     await page.addStyleTag({ content: `${HIT_CONTROLS}::before{display:none !important}` });
     const fresh = newFindings(before, await probe(page, "g12"), elKey);
@@ -1238,10 +1266,33 @@ test.describe("route negative controls (clean target → injected defect → sam
      cut each side on its own: the holders page's last-column square measured
      22.3px of 24). G12 asserts it after the table-side clamp and before the
      midpoint clip (which may rightly shorten a square between close
-     neighbours, H-16). At 390 the congress tables' last-column marks sit
-     within half a square of their table's right side, so their squares move. */
+     neighbours, H-16). At 390 the congress tables' last-column marks sat
+     within half a square of their table's right side, so their squares moved.
+     launch M1b (D4, LD5): at ≤720px no launch table scrolls — each folds into
+     row cards — and above the fold every launch route's tables fit, so no
+     route square reaches a scrolling table's side any more (measured at 768,
+     964 and 1080 under a coarse pointer: 0 shifted). The clamp still runs on
+     the page for any scroller, so the control PLANTS one on /congress/: a
+     scrolling table (no data-card, overflow-x auto) whose last header's
+     trigger sits flush with the table's right side. The page's own script
+     must shift its square inside (G12's corners pass), and the pre-fix
+     shrink re-planted in G12's mirror must be named. */
   test("M2 G12 @390: a square the table-side clamp moves keeps its full --hit-min; re-planting the shrink FAILS", async ({ page }) => {
     await openRoute(page, "/congress/", 390);
+    await page.evaluate(() => {
+      document.querySelector("main")!.insertAdjacentHTML(
+        "afterbegin",
+        '<section class="panel" id="clamp-plant"><div class="table-scroll" style="max-width:300px;overflow-x:auto">' +
+          '<table class="etable" style="min-width:640px"><thead><tr><th class="c-flex">Name</th><th class="c-num">Rows</th>' +
+          '<th class="c-num" style="padding-right:0"><span class="note"><button type="button" class="note-btn note-label" popovertarget="clamp-plant-pop">Net</button>' +
+          '<span class="note-pop" popover id="clamp-plant-pop" role="note">x</span></span></th></tr></thead>' +
+          '<tbody><tr><td class="c-flex">alpha</td><td class="c-num">1</td><td class="c-num">2</td></tr>' +
+          '<tr><td class="c-flex">beta</td><td class="c-num">3</td><td class="c-num">4</td></tr></tbody></table></div></section>',
+      );
+      window.dispatchEvent(new Event("resize"));
+    });
+    await page.waitForTimeout(300);
+    await installProbe(page);
     const ok = await probe(page, "g12");
     expect(ok.failureCount, formatResult(ok)).toBe(0);
     expect(ok.sub?.shifted ?? 0, `a mark at a scrolling table's side is shifted inside it\n${formatResult(ok)}`).toBeGreaterThan(0);
@@ -1475,10 +1526,14 @@ test.describe("route negative controls (clean target → injected defect → sam
     expect(listed.excluded.some((f) => colKey(f) === `${target!.tableIndex}|${target!.columnIndex}`)).toBe(true);
   });
 
+  /* launch M4b (R23, LD24): the member page's paired bands are retired, so
+     CD-1's primary/side rule is measured on the filer's band F1 — Reported
+     positions (its PRIMARY cell, data-pair-primary) │ Book shape + Filing
+     history — the pair that still carries a primary. */
   test("G9 @1440: 300px under a pair's SIDE cell is DETECTED; 300px under its PRIMARY is not (CD-1)", async ({ page }) => {
-    await openRoute(page, "/congress/members/M001193/");
+    await openRoute(page, "/institutional/filers/1135730/");
     const before = await probe(page, "g9", { expectedPairs: null });
-    expect(before.measured, "the member page has a two-cell band").toBeGreaterThan(0);
+    expect(before.measured, "the filer page has a two-cell band").toBeGreaterThan(0);
     expect(before.failureCount, formatResult(before)).toBe(0);
     const plant = (side: boolean) => page.evaluate((s) => {
       document.getElementById("ctl-g9")?.remove();
@@ -1524,24 +1579,25 @@ test.describe("route negative controls (clean target → injected defect → sam
   });
 
   /* V2 NEW-6 (T2.3): a pair lost for any reason but the empty-state rule
-     fails G9's count. Band M2 rendered without its `.design-pair` wrapper and
-     without `data-collapsed` — its two cells left loose in the page — is one
-     pair fewer than the member route declares, and nothing marks it
-     collapsed. */
-  test("T2.3 G9 @1440: member band M2 without its .design-pair wrapper and without data-collapsed FAILS the pair count", async ({ page }) => {
-    await openRoute(page, "/congress/members/M001193/");
-    const before = await probe(page, "g9", { expectedPairs: 2 });
-    expect(before.failureCount, `the member route's two pairs pass first\n${formatResult(before)}`).toBe(0);
+     fails G9's count. Launch M4b (R23, LD24) retired the member page's band
+     M2 (it declared two pairs; it declares none now), so the control unwraps
+     the pair the Congress route still declares — band C1, Members │ Tickers
+     (`#congress-leaders-band`): its two cells left loose in the page, and
+     nothing marking it collapsed, is one pair fewer than the route declares. */
+  test("T2.3 G9 @1440: a declared pair (Congress band C1) without its band wrapper and without data-collapsed FAILS the pair count", async ({ page }) => {
+    await openRoute(page, "/congress/");
+    const before = await probe(page, "g9", { expectedPairs: 1 });
+    expect(before.failureCount, `the Congress route's one pair passes first\n${formatResult(before)}`).toBe(0);
     const unwrapped = await page.evaluate(() => {
-      const band = document.querySelector(".design-pair.design-member-history-band");
+      const band = document.getElementById("congress-leaders-band");
       if (!band) return null;
       const was = band.getAttribute("data-collapsed");
-      band.replaceWith(...Array.from(band.childNodes)); // the wrapper, and its data-collapsed, gone
+      band.replaceWith(...Array.from(band.childNodes)); // the wrapper, and any data-collapsed, gone
       return was ?? "(not collapsed)";
     });
-    expect(unwrapped, "the member page renders band M2").not.toBeNull();
-    const after = await probe(page, "g9", { expectedPairs: 2 });
-    expect(has(after, (f) => /found \d+ pair\(s\), expected 2/.test(f.detail)), `control (band M2 was ${unwrapped})\n${formatResult(after)}`).toBe(true);
+    expect(unwrapped, "the Congress page renders band C1").not.toBeNull();
+    const after = await probe(page, "g9", { expectedPairs: 1 });
+    expect(has(after, (f) => /found \d+ pair\(s\), expected 1/.test(f.detail)), `control (band C1 was ${unwrapped})\n${formatResult(after)}`).toBe(true);
   });
 
   /* T2.5: G2 exempts nothing from M2 on. The filer's reported-positions box

@@ -40,7 +40,9 @@ import {
 import { COMPACT_ROWS, COMPACT_STEP, compactBoundCountFor, syncCompactDisclosure } from "../lib/format.ts";
 import { initSortableTable, type SortState } from "./table-sort.ts";
 import type { CongressSortKey } from "../lib/congress-columns.ts";
-import { congressRankingColumns } from "../lib/congress-columns.ts";
+import { RANKING_HELD_ROWS, rankingHeldRowHtml, visualColumns } from "../lib/ui/rankings.ts";
+import { MONTHLY_FLOW_HELD, monthlyDollarsViewHtml, monthlyVariantViewHtml } from "../lib/ui/congress.ts";
+import { drawHeldRun, heldRows, heldRowsHtml, registerHeldRows } from "./inst-index-client.ts";
 
 /** One sortable, expandable ranking root. */
 interface RootBinding {
@@ -85,28 +87,104 @@ export interface CongressSectionsOptions {
   requestRows?: () => void;
 }
 
-/** SIGNALS-CLARITY M3 (R18): the Monthly flow panel's two-state toggle.
-    Both variants are server-rendered; this only flips `hidden` and
-    `aria-pressed`. It reads no rows and fetches nothing (L4), so the panel is
-    complete before — and without — the dataset. Returns whether it bound. */
+/** SIGNALS-CLARITY M3 (R18), launch M3b (R21, LD23): the Monthly flow
+    panel's two toggles — Members or Dollars, Stocks or All assets. The
+    default view is server-rendered; launch F2 (R35, LD31): the three others
+    travel as island data and the first press that shows one draws it,
+    once, through the binder's one render path — the SAME row functions the
+    server uses — before this flips `hidden` and `aria-pressed`. It reads no
+    rows and fetches nothing (L4), so the panel is complete before — and
+    without — the dataset. Returns whether it bound. */
 export function initMonthlyFlowToggle(): boolean {
   const section = document.getElementById("monthly-flow-section");
   if (!section) return false;
   const buttons = [...section.querySelectorAll<HTMLElement>("[data-flow-toggle]")];
   const variants = [...section.querySelectorAll<HTMLElement>(".mf-variant")];
   if (!buttons.length || !variants.length) return false;
-  const show = (value: string): void => {
-    for (const v of variants) v.hidden = v.dataset.flowVariant !== value;
-    for (const b of buttons) b.setAttribute("aria-pressed", String(b.dataset.flowToggle === value));
+  registerHeldRows(MONTHLY_FLOW_HELD.dollars, monthlyDollarsViewHtml);
+  registerHeldRows(MONTHLY_FLOW_HELD.variant, monthlyVariantViewHtml);
+  const measureButtons = [...section.querySelectorAll<HTMLElement>("[data-flow-measure-toggle]")];
+  const pressed = (list: HTMLElement[], key: string, fallback: string): string =>
+    list.find((b) => b.getAttribute("aria-pressed") === "true")?.dataset[key] ?? fallback;
+  let variant = pressed(buttons, "flowToggle", "stocks");
+  let measure = pressed(measureButtons, "flowMeasureToggle", "members");
+  const paint = (): void => {
+    /* draw what the chosen view needs, each held view once (a drawn island
+       draws nothing again), then show exactly that view */
+    const v = variants.find((el) => el.dataset.flowVariant === variant);
+    if (v?.id) drawHeldRun(v.id, 1);
+    const m = v ? [...v.querySelectorAll<HTMLElement>(".mf-measure")].find((el) => el.dataset.flowMeasure === measure) : undefined;
+    if (m?.id) drawHeldRun(m.id, 1);
+    for (const el of variants) el.hidden = el.dataset.flowVariant !== variant;
+    for (const el of section.querySelectorAll<HTMLElement>(".mf-measure")) el.hidden = el.dataset.flowMeasure !== measure;
+    for (const b of buttons) b.setAttribute("aria-pressed", String(b.dataset.flowToggle === variant));
+    for (const b of measureButtons) b.setAttribute("aria-pressed", String(b.dataset.flowMeasureToggle === measure));
+    initMonthlyFlowReadouts(section);
   };
-  for (const b of buttons) b.addEventListener("click", () => show(b.dataset.flowToggle ?? ""));
+  for (const b of buttons) b.addEventListener("click", () => { variant = b.dataset.flowToggle ?? variant; paint(); });
+  for (const b of measureButtons) b.addEventListener("click", () => { measure = b.dataset.flowMeasureToggle ?? measure; paint(); });
+  initMonthlyFlowReadouts(section);
   return true;
+}
+
+/** Launch M3b (LD13): each plot is ONE control. Arrow keys (and Home/End) step
+    through the months; a pointer move or tap selects the nearest month. The
+    readout — a polite live region — takes the month's line from the
+    screen-reader table's row (`data-ro-members` / `data-ro-dollars`, written by
+    the server), so the readout repeats the table and nothing is hover-only.
+    Text only: nothing read from the DOM is written back as HTML. */
+const boundReadouts = new WeakSet<object>();
+export function initMonthlyFlowReadouts(section: HTMLElement): number {
+  let bound = 0;
+  for (const plot of section.querySelectorAll<HTMLElement>(".mf-hit")) {
+    /* once per plot: a view drawn later (launch F2) binds when it lands */
+    if (boundReadouts.has(plot)) continue;
+    const measure = plot.closest<HTMLElement>(".mf-measure");
+    const variant = plot.closest<HTMLElement>(".mf-variant");
+    const out = measure?.querySelector<HTMLElement>(".mf-readout");
+    const rows = variant ? [...variant.querySelectorAll<HTMLElement>(".mf-table tbody tr")] : [];
+    const key = measure?.dataset.flowMeasure === "dollars" ? "roDollars" : "roMembers";
+    if (!out || rows.length === 0) continue;
+    const cursor = plot.querySelector<HTMLElement>(".mf-cursor");
+    let at = rows.length - 1;
+    const select = (i: number): void => {
+      at = Math.max(0, Math.min(rows.length - 1, i));
+      out.textContent = rows[at]!.dataset[key] ?? "";
+      if (cursor) {
+        cursor.hidden = false;
+        // CSSOM, not a style attribute: allowed under any style-src policy.
+        if (cursor.style) cursor.style.left = `${(((at + 0.5) / rows.length) * 100).toFixed(2)}%`;
+      }
+    };
+    plot.addEventListener("keydown", (ev) => {
+      const e = ev as KeyboardEvent;
+      const next =
+        e.key === "ArrowLeft" ? at - 1 : e.key === "ArrowRight" ? at + 1 : e.key === "Home" ? 0 : e.key === "End" ? rows.length - 1 : null;
+      if (next === null) return;
+      e.preventDefault();
+      select(next);
+    });
+    const fromPointer = (ev: Event): void => {
+      const e = ev as PointerEvent;
+      const r = plot.getBoundingClientRect();
+      if (r.width <= 0) return;
+      select(Math.floor(((e.clientX - r.left) / r.width) * rows.length));
+    };
+    plot.addEventListener("pointermove", fromPointer);
+    plot.addEventListener("click", fromPointer);
+    boundReadouts.add(plot);
+    bound++;
+  }
+  return bound;
 }
 
 export function initCongressSections(options: CongressSectionsOptions = {}): CongressSections {
   const page = document.getElementById("congress-page");
   if (!page) return { receiveRows: () => {}, feedSettled: () => {} };
   initMonthlyFlowToggle();
+  /* launch F2 (rule 8): each board's next step rides in the one island; its
+     rows render through the same row function the server used */
+  registerHeldRows(RANKING_HELD_ROWS, rankingHeldRowHtml);
   const requestRows = (): void => {
     try {
       options.requestRows?.();
@@ -153,7 +231,9 @@ export function initCongressSections(options: CongressSectionsOptions = {}): Con
       state: { ...initial },
       repaint: () => {},
     };
-    const cols = congressRankingColumns(kind);
+    // The columns this table renders — on /congress/ the boards' set, so a
+    // sort is announced by the label the reader sees ("Buys", not "Purchases").
+    const cols = visualColumns(kind, ctx.referenceRankings);
     const repaint = initSortableTable({
       root: el,
       headers,
@@ -178,9 +258,11 @@ export function initCongressSections(options: CongressSectionsOptions = {}): Con
            deleted and their text moved onto the Net column's header note, so
            the marker no longer carries an href at all and the server and the
            client are identical again by having one fewer thing to agree on. */
+        /* With every row in hand nothing is prefetched: a press repaints from
+           the delivered rows (launch F2 — the server's next step is island
+           data, drawn only before delivery). */
         return rankingRootHtml(binding.rows, state.key as CongressSortKey, state.dir, kind, ctx, {
           compact: binding.expanded ? undefined : binding.limit,
-          prefetch: COMPACT_STEP,
         }).html;
       },
       announce: (state) => {
@@ -247,9 +329,10 @@ export function initCongressSections(options: CongressSectionsOptions = {}): Con
         binding.limit = compactLimit;
         setMorePending(binding, false);
       } else if (binding.rows.length === 0) {
-        /* R13, before the dataset arrives: the server-rendered rows past the
-           compact slice are already in the DOM, hidden, and revealing them is
-           the first "Show 50 more" — nothing is downloaded for it. Rows past
+        /* R13, before the dataset arrives: the server's next step past the
+           compact slice is already in the page (launch F2: as island data,
+           drawn through the binder on this press), and revealing it is the
+           first "Show 50 more" — nothing is downloaded for it. Rows past
            the prefetched ones need the dataset. A press that asks for them
            WAITS: the limit stays at the rows on screen, so the count never
            states rows that are not there ("1–110 of 833" over 60 rows), the
@@ -283,14 +366,24 @@ export function initCongressSections(options: CongressSectionsOptions = {}): Con
     syncDisclosure(binding);
   });
 
-  /** Rows the server rendered past the compact slice (hidden until pressed). */
+  /** Rows the server prefetched past the compact slice: the island's rows
+      (launch F2, rule 8) — 0 when the island or its renderer is missing, so
+      a press then waits for the dataset rather than claim rows it cannot show. */
   function prefetchedOf(b: RootBinding): number {
-    return b.el.querySelectorAll("tr[data-compact-hidden]").length;
+    return heldRows(b.el.id)?.length ?? 0;
   }
 
-  /** Before delivery: show exactly the prefetched rows the limit offers. */
+  /** Before delivery: show exactly the prefetched rows the limit offers. The
+      first time any is offered, the island's rows are drawn — once, through
+      the binder's one render path (the server's row function, then the
+      table's roles) — and marked as the rows a collapse hides again. */
   function revealPrefetched(b: RootBinding): void {
     const extra = b.limit - compactLimit;
+    if (extra > 0) {
+      const before = b.el.children.length;
+      drawHeldRun(b.el.id, prefetchedOf(b));
+      for (let i = before; i < b.el.children.length; i++) b.el.children[i]!.setAttribute("data-compact-hidden", "");
+    }
     b.el.querySelectorAll<HTMLElement>("tr[data-compact-hidden]").forEach((tr, i) => {
       tr.hidden = i >= extra;
     });
@@ -354,6 +447,45 @@ export function initCongressSections(options: CongressSectionsOptions = {}): Con
       shown: b.expanded ? compactLimit : limit,
     });
   }
+
+  /* ---------- deep links into a board's held rows (rule 8, launch F2) ----------
+
+     A link to an element only a board's held row carries (a member's Net
+     note) opens the step that holds it — the same reveal as the first "Show
+     50 more", through the same draw — and lands on its row. Before delivery
+     only: after it, the rows are the delivered set and every row a press can
+     show is painted from them. */
+  function revealHeldBoardTarget(targetId: string): Element | null {
+    if (!targetId || document.getElementById(targetId)) return null;
+    const needle = `id="${targetId.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")}"`;
+    for (const b of bindings.values()) {
+      const held = b.rows.length === 0 ? heldRows(b.el.id) : null;
+      const html = held ? heldRowsHtml(b.el.id, held.map((_, i) => i)) : null;
+      if (!html || !html.includes(needle)) continue;
+      b.limit = Math.min(totalOf(b), compactLimit + prefetchedOf(b));
+      b.expanded = b.limit >= totalOf(b);
+      revealPrefetched(b);
+      requestRows();
+      syncDisclosure(b);
+      return document.getElementById(targetId);
+    }
+    return null;
+  }
+  const landHeldBoardTarget = (hash: string): void => {
+    let id = hash.replace(/^#/, "");
+    try {
+      id = decodeURIComponent(id);
+    } catch {
+      /* a malformed escape names nothing */
+    }
+    const el = revealHeldBoardTarget(id) as (Element & { closest?: (s: string) => Element | null }) | null;
+    const row = (el?.closest?.("tr") ?? el) as (Element & { scrollIntoView?: (o?: ScrollIntoViewOptions) => void }) | null;
+    row?.scrollIntoView?.({ block: "center" });
+  };
+  if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+    window.addEventListener("hashchange", () => landHeldBoardTarget(location.hash));
+  }
+  if (typeof location !== "undefined" && location.hash) landHeldBoardTarget(location.hash);
 
   /* ---------- range and basis, and the pending-control honesty ---------- */
 
@@ -509,11 +641,13 @@ export function initCongressSections(options: CongressSectionsOptions = {}): Con
     }
 
     if (windowEl) {
+      // The board's short statement (launch M3b) — the SAME call the server made.
       windowEl.innerHTML = rankingWindowHtml(
         windowStatement(rollup.range, rollup.basis, congressRangeBounds(rollup.range, generatedAtDate)),
         rollup,
         kind,
         sectionId,
+        ctx.referenceRankings ? { range: rollup.range, basis: rollup.basis } : undefined,
       );
     }
   }

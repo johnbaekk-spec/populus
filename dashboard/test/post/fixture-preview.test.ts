@@ -74,7 +74,8 @@ test("filer happy path emitted: /institutional/filers/1067983/ renders the aggre
   assert.ok(html.includes("2025-12-31"));
   /* DESIGN-POLISH M3 (Architecture H, V1 NEW-1): the EDGAR block states the
      decision and its date in plain words */
-  assert.ok(html.includes("Public Filings decided on 2026-08-01 to serve this list"), "the EDGAR link-out block ships");
+  /* launch copy audit filer-11: the block names the filing as the record and keeps its receipt */
+  assert.ok(html.includes("The filing on EDGAR is the record, including any filed after this build."), "the EDGAR link-out block ships");
   assert.ok(html.includes("latest filing in build filed 2026-05-15"), "Locked #20 stamp");
   assert.ok(
     html.includes("not current holdings"),
@@ -106,12 +107,13 @@ test("holders pages exist ONLY for mapped, entity-keyed issuers", () => {
 test("the unified AAPL page's institutional section binds the same data", () => {
   const page = path.join(DIST_FIXTURE, "tickers", "AAPL", "index.html");
   const html = readFileSync(page, "utf-8");
-  assert.ok(html.includes("Institutional holders"));
+  // launch M7b (ticker-09): the tab's section head reads "13F holders", the link "All holders ↗"
+  assert.ok(html.includes("13F holders"));
   assert.ok(html.includes("BERKSHIRE HATHAWAY INC"));
-  assert.ok(html.includes("full holders view ↗"));
+  assert.ok(html.includes("All holders ↗"));
   // signals-v3 M3 (R21): the holders sit in the Institutional tab panel
   const panel = html.indexOf('role="tabpanel" id="institutional"');
-  assert.ok(panel >= 0 && panel < html.indexOf("BERKSHIRE HATHAWAY INC") && panel < html.indexOf("full holders view ↗"), "inside the Institutional tab");
+  assert.ok(panel >= 0 && panel < html.indexOf("BERKSHIRE HATHAWAY INC") && panel < html.indexOf("All holders ↗"), "inside the Institutional tab");
 });
 
 test("/institutional landing lists the fixture filers when the module is present", () => {
@@ -241,7 +243,7 @@ test("POST-BUILD: no §1.1 banned wording anywhere in the rendered institutional
 });
 
 test("POST-BUILD: no unqualified 'all' claim on the rendered holders surface (R12)", async () => {
-  const { unqualifiedAllClaims } = await import("../../src/lib/holdings.ts");
+  const { unqualifiedAllClaims } = await import("../lib/all-claims.ts");
   const html = readFileSync(
     path.join(DIST_FIXTURE, "institutional", "tickers", "AAPL", "holders", "index.html"),
     "utf-8",

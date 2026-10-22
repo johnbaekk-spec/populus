@@ -33,8 +33,10 @@ import { holdingsRangeText, HOLDINGS_PAGE_SIZE } from "../src/lib/holdings.ts";
 import { congressTickersRollup } from "../src/lib/derive.ts";
 import { initCongressSections } from "../src/scripts/congress-sections.ts";
 import { initAddsControls, initInstIndex, instIndexBodyHtml } from "../src/scripts/inst-index-client.ts";
-import { DESIGN_INST_INDEX_HEADS, type InstIndexRow } from "../src/lib/inst-index.ts";
+import { DESIGN_INST_INDEX_HEADS, planDirectoryShards, type InstIndexRow } from "../src/lib/inst-index.ts";
+import { fillShardsByBytes } from "../src/lib/shards.ts";
 import type { AddsPayload, AddsRow } from "../src/lib/inst-adds.ts";
+import { stripTableRoles } from "./lib/table-roles.ts";
 
 function parse(html: string): MiniElement {
   const root = new MiniElement("body");
@@ -127,31 +129,42 @@ function directoryPage(definite = false): string {
     compactDisclosure({
       rootId: "inst-managers-tbody", total: INDEX_ROWS.length, shown: COMPACT_ROWS, noun: "managers",
       ...(definite ? { boundNoun: "managers in this build's directory", definite: true } : {}),
-      bound: "Every filer in this build has its own page, linked from its row here.",
+      bound: "Every filer has its own page.",
     }) +
-    `<p id="inst-index-status"></p><script type="application/json" id="inst-index-data">${JSON.stringify(INDEX_ROWS)}</script></section>`
+    /* launch M7b (R32, LD28): the page inlines the shard LIST, never the rows */
+    `<p id="inst-index-status"></p><script type="application/json" id="inst-index-shards">${DIRECTORY_FAMILY.listJson}</script></section>`
   );
 }
+const DIRECTORY_FAMILY = planDirectoryShards(INDEX_ROWS, fillShardsByBytes);
 /** Mount the directory and make the island restate its count (a header
-    click re-renders and re-syncs the disclosure, as in the browser). */
-function directoryRestatement(html: string): [string, string] {
+    click fetches the shard family, re-renders and re-syncs the disclosure,
+    as in the browser). */
+async function directoryRestatement(html: string): Promise<[string, string]> {
   const server = countOf(parse(html), "inst-managers-tbody");
   const { doc, restore } = installDom(html);
+  const g = globalThis as unknown as Record<string, unknown>;
+  const priorFetch = g.fetch;
+  g.fetch = (href: string) => {
+    const shard = DIRECTORY_FAMILY.shards[Number(/\/(\d+)\.v1\.json$/.exec(href)?.[1] ?? -1)]!;
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(JSON.parse(shard.body)) });
+  };
   try {
     initInstIndex();
     plantSentinel(doc, "inst-managers-tbody");
     doc.querySelector('th[data-inst-sort="positions"]')!.click();
+    for (let i = 0; i < 12; i++) await Promise.resolve();
     return [server, countOf(doc, "inst-managers-tbody")];
   } finally {
+    g.fetch = priorFetch;
     restore();
   }
 }
 
-test("Q-4: the directory island restates the server's count word for word (plain and definite totals)", () => {
-  const [server, client] = directoryRestatement(directoryPage());
+test("Q-4: the directory island restates the server's count word for word (plain and definite totals)", async () => {
+  const [server, client] = await directoryRestatement(directoryPage());
   assert.equal(server, "1–10 of 23 managers");
   assert.equal(client, server);
-  const [s2, c2] = directoryRestatement(directoryPage(true));
+  const [s2, c2] = await directoryRestatement(directoryPage(true));
   assert.equal(s2, "1–10 of the 23 managers in this build's directory");
   assert.equal(c2, s2, "the island keeps the server's definite bound (it dropped it before the fix)");
   // control: the restatement the unfixed island produced differs
@@ -183,8 +196,22 @@ test("Q-4/R-4: the adds island restates the server's count, and moves the bound 
   const g = globalThis as unknown as Record<string, unknown>;
   const priorFetch = g.fetch;
   try {
+    /* launch M7b (R32, LD28): no rows travel in the page; the island's first
+       restatement follows its first fetch of THIS quarter's payload (on the
+       drawer's first open in the browser, or the first control that needs
+       rows — a header press here). */
+    const fetched: string[] = [];
+    g.fetch = (href: string) => {
+      fetched.push(href);
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(addsPayload(30, true)) });
+    };
     plantSentinel(doc, "inst-adds-tbody");
-    initAddsControls(); // restates at init, from the embedded rows
+    initAddsControls();
+    assert.deepEqual(fetched, [], "nothing is fetched at init");
+    assert.equal(countOf(doc, "inst-adds-tbody"), "SENTINEL", "and nothing is restated before the rows exist");
+    doc.querySelector('[data-adds-sort="managers"]')!.click();
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+    assert.deepEqual(fetched, ["/institutional/data/adds/2026-03-31.all.v1.json"], "the shown quarter's own published payload");
     assert.equal(countOf(doc, "inst-adds-tbody"), server, "the island's first restatement is the server's");
     // the next quarter's payload is complete: the island's words must be the
     // server's words for THAT payload
@@ -309,12 +336,25 @@ test("T2.7 / signals-v4 T1.6: the island's repaint equals the server body (40 he
   const active = sortHits((artifact as { signals: never[] }).signals);
   const view = hitsView(active, { family: "all", stocksOnly: true });
   assert.equal(SIGNAL_HITS_DOM_ROWS, 40);
-  assert.equal((serverBody.match(/<tr class="si-hit/g) ?? []).length, 40, "the server holds 40 lines");
-  assert.equal((serverBody.match(/ hidden>/g) ?? []).length, 30, "lines 11–40 carry hidden");
-  assert.equal(serverBody, hitsBodyHtml(view.lines.slice(0, 40), {}, cols, 10));
+  /* Reversal record (launch M7a, D5/LD27): the page still carries 40 lines,
+     but lines 11–40 ship in the island and render on reveal through the same
+     body renderer. Property kept: the page's lines — the DOM's and the
+     island's rendered the client's way — are the client's repaint, byte for
+     byte, and a reveal inside them needs no fetch. */
+  assert.equal((serverBody.match(/<tr class="si-hit/g) ?? []).length, 10, "the first ten lines are in the page");
+  assert.equal((serverBody.match(/ hidden>/g) ?? []).length, 0);
+  assert.equal(serverBody, hitsBodyHtml(view.lines.slice(0, 10), {}, cols, 10));
+  const { ctxOfCut } = await import("../src/lib/ui/signals.ts");
+  /* launch integration: the hits ship in the site's one held-rows island
+     (lib/held-rows.ts: `{ v, offset, shared, rows }`, the row function named
+     in `data-held-render`), drawn by the one binder */
+  const island = JSON.parse(/<script type="application\/json" data-held-for="signal-hits-body" data-held-render="signal-hits">([\s\S]*?)<\/script>/.exec(html)![1]!);
+  assert.equal(island.offset, 10, "the island's first line is line 11");
+  assert.equal(island.rows.length, 30, "lines 11–40 wait in the island");
+  const carried = serverBody + "\n" + hitsBodyHtml(island.rows, ctxOfCut(island.shared.cut), island.shared.columns, 0);
   // the pure composition the island paints with
   const first = hitsRepaint(active, { family: "all", stocksOnly: true }, 10, {}, cols, 40);
-  assert.equal(first.body, serverBody, "the client's repaint at shown = 10 is the server's body, byte for byte");
+  assert.equal(first.body, carried, "the client's repaint at shown = 10 is the page's 40 lines, byte for byte");
   assert.equal(first.range, /id="signal-hits-range"[^>]*>([^<]*)</.exec(html)![1], "and the server's range");
   assert.equal(hitsRepaint(active, { family: "all", stocksOnly: true }, 45, {}, cols, 40).held, 60, "past the held rows the body holds the next multiple of 40 (here all 60 lines)");
   // the island itself, mounted over the server's bytes
@@ -332,7 +372,7 @@ test("T2.7 / signals-v4 T1.6: the island's repaint equals the server body (40 he
     const pager = initHitPager()!;
     assert.equal(body(), serverBody, "mounting changes nothing");
     await pager.setBase(25);
-    assert.equal(fetches, 0, "setBase(25): no fetch — lines 11–25 are held");
+    assert.equal(fetches, 0, "setBase(25): no fetch — lines 11–25 render from the island");
     assert.deepEqual(visible(), view.lines.slice(0, 25).map((l) => l.lead.id));
     assert.equal(doc.getElementById("signal-hits-range")!.textContent, `1–25 of 60 lines · 60 hits`);
     assert.equal(doc.getElementById("hits")!.getAttribute("data-shown"), "25");
@@ -369,7 +409,8 @@ test("T2.7 / signals-v4 T1.6: the island's repaint equals the server body (40 he
     (fresh.doc.querySelector('#families button[data-family="COMPLIANCE"]') as unknown as MiniElement).bubbleClick();
     await tick();
     const compliance = hitsView(active, { family: "COMPLIANCE", stocksOnly: true }).lines;
-    assert.equal(fbody(), hitsBodyHtml(compliance.slice(0, 40), {}, cols, 10), "the server's renderer, the fit's base, no extension");
+    // launch M1a (R40): the repaint carries the explicit table roles; the rows compared are unchanged
+    assert.equal(stripTableRoles(fbody()), hitsBodyHtml(compliance.slice(0, 40), {}, cols, 10), "the server's renderer, the fit's base, no extension");
     assert.equal(fresh.doc.querySelector('#families button[data-family="COMPLIANCE"]')!.getAttribute("aria-pressed"), "true");
     assert.equal(fresh.doc.querySelector('#families button[data-family="BEHAVIOUR"]')!.getAttribute("aria-pressed"), "false");
     assert.equal(fresh.doc.getElementById("signal-family-pill-row")!.hidden, false, "the removable pill shows");
@@ -378,7 +419,8 @@ test("T2.7 / signals-v4 T1.6: the island's repaint equals the server body (40 he
     // the pill removes the filter
     (fresh.doc.getElementById("signal-family-pill") as unknown as MiniElement).click();
     await tick();
-    assert.equal(fbody(), serverBody, "back to the server's view");
+    // launch M1a (R40): the repaint carries the explicit table roles; stripped, the rows are unchanged
+    assert.equal(stripTableRoles(fbody()), carried, "back to the page's view: its forty lines, the island's rendered the client's way");
     assert.equal(fresh.doc.getElementById("signal-family-pill-row")!.hidden, true);
     assert.equal(fetches, 1, "one lazy fetch, memoised");
   } finally {

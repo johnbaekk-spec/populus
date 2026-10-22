@@ -280,6 +280,11 @@ export function installLedgerProbe(): void {
   const MARK_CHARS = "§†‡≈¶ⓘ";
   const CONTROLS =
     ".note-btn, .th-sort, .seg > button, .chips > button, .mgr-chips > button, .pager-btn, .compact-toggle";
+  /** the links that carry the hit square under a coarse pointer or at the
+      ≤720px fold — scripts/hit-areas.ts `LINKS`, verbatim */
+  /** chips are boxes: their edge is the border box (G10's CHIPS, G1's numerals) */
+  const G1_CHIPS = ".flag, .qoq-chip, .nc-chip, .id-chip, span.mgr-chip, .badge-planned";
+  const HIT_LINKS = "a[href]:not(:is(p, li, dd, .note-pop, .footer-notice) a)";
   const SEGMENT_ITEMS = ".seg > button, .chips > button, .mgr-chips > button, .pager-btn, .compact-toggle";
   const ACTIVE_ITEMS =
     ':is(.seg, .chips, .mgr-chips) > :is([aria-pressed="true"], [aria-current]:not([aria-current="false"]), [aria-checked="true"])';
@@ -615,6 +620,25 @@ export function installLedgerProbe(): void {
     );
   }
   const nested = (t: Element): boolean => !!t.parentElement?.closest("table");
+  /** launch M1b (D4, LD5): at ≤720px a table carrying `data-card` (the feed
+      excepted, which keeps its own grid) is no longer a grid of columns — each
+      row is a wrapping card and the head is folded (clipped, still announced).
+      The column predicates (G1, G6, G8, G10, headFont) then measure the card's
+      form of the same property instead of skipping the table (fix round on
+      the integrated gate, 75e9920): the figure names its column (G1), no
+      column is empty everywhere (G6), no card is under the hit square (G8),
+      the cells keep the card's one gap and the gutters, and the kind edge
+      rides on the card (G10), and the printed labels read the label type
+      (headFont). Read off the cascade (`display`), never off the width. */
+  const cardFolded = (t: Element): boolean =>
+    t.matches('[data-card]:not([data-card="feed"])') && getComputedStyle(t).display !== "table";
+  /** the card's printed column label: `data-label` through its ::before */
+  function cardLabel(cell: Element): { attr: string; printed: boolean } {
+    const attr = (cell.getAttribute("data-label") ?? "").trim();
+    const content = getComputedStyle(cell, "::before").content;
+    const printed = !!attr && content !== "none" && content !== "normal" && content !== '""';
+    return { attr, printed };
+  }
   function tableLabel(t: HTMLTableElement): string {
     const idx = allTables().indexOf(t);
     const host = t.closest("section, .panel, details, .design-band");
@@ -882,6 +906,41 @@ export function installLedgerProbe(): void {
       const table = tableLabel(t);
       const tableIndex = allTables().indexOf(t);
       const hr = headerRow(t);
+      if (hr && cardFolded(t)) {
+        /* D4 (LD5): a card has no header line to align to — its head is
+           folded — so a figure is read against the label it PRINTS. Each
+           numeric cell (by role, as below) prints its column's label, and the
+           label is its own head's (`data-label`, copied from the head by
+           withTableRoles): a bare "12", or a figure under another column's
+           name, fails. The declared identity first column is the row's name. */
+        const hmap = colMap(hr);
+        bodyRows(t).forEach((r, ri) => {
+          const m = colMap(r);
+          m.forEach((e, c) => {
+            if (e.span > 1 || m.findIndex((x) => x.cell === e.cell) !== c) return;
+            const th = hmap[c]?.cell;
+            if (!e.cell.classList.contains("c-num") && !th?.classList.contains("c-num")) return;
+            if (!isVisible(e.cell) || !hasBox(e.cell) || visibleString(e.cell) === "") return;
+            const want = (th?.getAttribute("data-label") ?? "").trim();
+            const column = `[${c}] ${want.slice(0, 24)}`;
+            if (c === 0 && th?.classList.contains("c-flex")) {
+              if (ri === 0) exclude(res, { table, tableIndex, column, columnIndex: c, detail: "a declared identity first column (c-flex): the card's name" });
+              return;
+            }
+            res.measured++;
+            const { attr, printed } = cardLabel(e.cell);
+            const fig = visibleString(e.cell).slice(0, 24);
+            if (!attr || !printed) {
+              fail(res, { table, tableIndex, column, columnIndex: c, row: ri, detail: `card figure "${fig}" prints no column label (data-label ${attr ? `"${attr}" is not printed` : "absent"}): the head is folded, so nothing names it` });
+            } else if (!want) {
+              fail(res, { table, tableIndex, column, columnIndex: c, row: ri, detail: `card figure "${fig}" prints "${attr}", but its head carries no data-label to check it against` });
+            } else if (attr !== want) {
+              fail(res, { table, tableIndex, column, columnIndex: c, row: ri, detail: `card figure "${fig}" prints "${attr}", its head is "${want}"` });
+            }
+          });
+        });
+        continue;
+      }
       if (!hr) { exclude(res, { table, tableIndex, detail: "no <thead> row: no header to align to" }); continue; }
       if (!isVisible(hr) || !hasBox(hr)) { exclude(res, { table, tableIndex, detail: "header row not rendered at this width" }); continue; }
       const hmap = colMap(hr);
@@ -935,11 +994,18 @@ export function installLedgerProbe(): void {
           const ce = textEdge(e.cell);
           if (!ce) return;
           res.measured++;
-          const d = ce.right - he.right;
+          /* A chip ending the cell (a flag after the amount: launch M4b moved
+             the member's flags into its Range column) is a box: its edge is
+             its border box, not the text inset within it — G10's chip rule */
+          let right = ce.right;
+          for (const chip of Array.from(e.cell.querySelectorAll(G1_CHIPS))) {
+            if (isVisible(chip) && hasBox(chip)) right = Math.max(right, chip.getBoundingClientRect().right);
+          }
+          const d = right - he.right;
           if (Math.abs(d) > 1) {
             fail(res, {
               table, tableIndex, column, columnIndex: c, row: ri, delta: r2(d),
-              detail: `cell "${visibleString(e.cell).slice(0, 24)}" ends at ${r2(ce.right)}, header label at ${r2(he.right)}`,
+              detail: `cell "${visibleString(e.cell).slice(0, 24)}" ends at ${r2(right)}, header label at ${r2(he.right)}`,
             });
           }
         });
@@ -1036,10 +1102,14 @@ export function installLedgerProbe(): void {
     reset();
     const res = newResult("G4");
     const agg = aggregator(res);
+    /* launch M1b (R6, LD12): the floor is width-aware — 11px at the ≤720px
+       fold (the phone ramp), 9.5px above it. */
+    const floor = innerWidth <= 720 ? 11 : 9.5;
+    res.notes.push(`floor ${floor}px at ${innerWidth}px`);
     for (const s of sizeCensus()) {
       res.measured++;
-      if (s.size < 9.5 - 0.01) {
-        agg.add(`${s.size}|${s.where}`, { el: s.where, delta: r2(s.size - 9.5), detail: `${r2(s.size)}px text "${s.text}" in ${s.where} (floor 9.5px)` });
+      if (s.size < floor - 0.01) {
+        agg.add(`${s.size}|${s.where}`, { el: s.where, delta: r2(s.size - floor), detail: `${r2(s.size)}px text "${s.text}" in ${s.where} (floor ${floor}px)` });
       }
     }
     agg.flush();
@@ -1087,8 +1157,10 @@ export function installLedgerProbe(): void {
     const tokens = fsTokens();
     const values = [...new Set(tokens.map((t) => r2(t.px)))].sort((a, b) => a - b);
     res.notes.push(`tokens: ${tokens.map((t) => `${t.name}=${r2(t.px)}`).join(" ")}`);
-    if (tokens.length < 14) {
-      fail(res, { detail: `only ${tokens.length} --fs-* tokens resolve here (need the 14 of Architecture B): ${tokens.map((t) => t.name).join(", ")}` });
+    /* launch M1b (LD12): fifteen tokens — Architecture B's fourteen plus
+       --fs-input (reversal record: docs/frontend/design-principles.md §6). */
+    if (tokens.length < 15) {
+      fail(res, { detail: `only ${tokens.length} --fs-* tokens resolve here (need the 15: Architecture B's 14 plus --fs-input): ${tokens.map((t) => t.name).join(", ")}` });
     }
     const agg = aggregator(res);
     const sizes = new Map<number, number>();
@@ -1103,7 +1175,7 @@ export function installLedgerProbe(): void {
     agg.flush();
     const distinct = [...sizes.keys()].sort((a, b) => a - b);
     res.notes.push(`rendered sizes: ${distinct.map((d) => `${d}px×${sizes.get(d)}`).join(" ")}`);
-    if (distinct.length > 14) fail(res, { detail: `${distinct.length} distinct rendered sizes (at most 14): ${distinct.join(", ")}` });
+    if (distinct.length > 15) fail(res, { detail: `${distinct.length} distinct rendered sizes (at most 15): ${distinct.join(", ")}` });
     return done(res);
   }
 
@@ -1115,7 +1187,11 @@ export function installLedgerProbe(): void {
       const table = tableLabel(t);
       const tableIndex = allTables().indexOf(t);
       const hr = headerRow(t);
-      if (!hr || !isVisible(hr)) { exclude(res, { table, tableIndex, detail: "no rendered header row" }); continue; }
+      /* D4 (LD5): a card table's head is folded, never removed, and its
+         columns are still the head's: a column empty in every card fails as
+         it does on the grid (the cells are read by column index) */
+      const folded = cardFolded(t);
+      if (!hr || (!folded && !isVisible(hr))) { exclude(res, { table, tableIndex, detail: "no rendered header row" }); continue; }
       const listed = (t.getAttribute("data-columns") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
       /* Only a column a VALUE proved over the full collection is excused
          (`data-columns-proven`, review Q2-5): an `always` column is listed in
@@ -1126,11 +1202,14 @@ export function installLedgerProbe(): void {
       if (!maps.length) { exclude(res, { table, tableIndex, detail: "no visible body rows" }); continue; }
       for (let c = 0; c < hmap.length; c++) {
         const { cell: th, span } = hmap[c]!;
-        if (span > 1 || !isVisible(th) || !hasBox(th)) continue;
+        if (span > 1 || (!folded && (!isVisible(th) || !hasBox(th)))) continue;
         let n = 0, empty = 0;
         for (const m of maps) {
           const e = m[c];
           if (!e || e.span > 1 || !isVisible(e.cell)) continue;
+          /* on a card a cell with no box shows nothing — no empty column is
+             seen (the graphic it held is one the card omits) */
+          if (folded && !hasBox(e.cell)) continue;
           n++;
           const s = visibleString(e.cell);
           if ((s === "" || s === "—" || s === "-") && !hasGraphic(e.cell)) empty++;
@@ -1222,6 +1301,12 @@ export function installLedgerProbe(): void {
       if (t.matches("[data-multiline]")) { exclude(res, { table, tableIndex, detail: "declared prose table ([data-multiline])" }); continue; }
       const fold = t.matches(FEED) && env.width <= 1080;
       const foldRows: { ri: number; h: number }[] = [];
+      /* D4 (LD5): a row card wraps its cells onto two or three lines by its
+         content (names and assets wrap, never clamp), so there is no single
+         row height to hold it to; the property kept is the one a finger needs
+         — no card is shorter than the hit square */
+      const card = cardFolded(t);
+      const cardRows: { ri: number; h: number }[] = [];
       /* Multi-line rows at the fold or under a coarse pointer, by line count
          (M1 review Q-8): a table whose rows are two lines by design there (the
          member's dates, then the lag) is measured, never skipped — each group
@@ -1234,11 +1319,16 @@ export function installLedgerProbe(): void {
           return;
         }
         if (r.querySelector("details[open]")) { exclude(res, { table, tableIndex, row: ri, detail: "row holds an open <details>" }); return; }
+        if (card) { cardRows.push({ ri, h }); return; }
         if (fold) {
           /* flags WRAP rather than truncate (§5): a row whose chips run onto
              a second line is taller by design, and says so */
           const range = r.querySelector(".cell-range");
           if (range && wrapsChildren(range)) { exclude(res, { table, tableIndex, row: ri, detail: `its flags wrap (${r1(h)}px)` }); return; }
+          /* and so does a long member name on a phone (launch M1c, R5: names
+             wrap, never clamp — `.reference-feed .cell-member` at ≤720px) */
+          const member = r.querySelector(".cell-member");
+          if (member && lineCount(textRuns(member, false).flatMap((x) => x.rects)) > 1) { exclude(res, { table, tableIndex, row: ri, detail: `its member name wraps (${r1(h)}px)` }); return; }
           foldRows.push({ ri, h });
           return;
         }
@@ -1257,6 +1347,13 @@ export function installLedgerProbe(): void {
         res.measured++;
         if (Math.abs(h - want) > 1) fail(res, { table, tableIndex, row: ri, delta: r2(h - want), detail: `single-line row is ${r2(h)}px, expected ${want}±1` });
       });
+      if (cardRows.length) {
+        res.measured += cardRows.length;
+        const short = cardRows.filter((x) => x.h < env.expectedHitMin - 1);
+        if (short.length) {
+          fail(res, { table, tableIndex, count: short.length, detail: `row cards under the ${env.expectedHitMin}px hit square: ${short.slice(0, 8).map((x) => `${x.ri}:${r1(x.h)}`).join(", ")}` });
+        }
+      }
       if (foldRows.length) {
         res.measured += foldRows.length;
         const hs = foldRows.map((x) => x.h);
@@ -1451,6 +1548,111 @@ export function installLedgerProbe(): void {
     fontCtx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
     return run.rects[0]!.top + fontCtx.measureText("Hxg").fontBoundingBoxAscent;
   }
+  /** G10 on a D4 row card (LD5). The card's form of each part:
+      (a) GAPS — the cells on one line of a card keep the card's one gap (12px,
+          the card rule in entities.css), read in VISUAL order: the role classes
+          reorder the cells, so DOM neighbours are not neighbours. A cell an
+          auto margin pushes to the line's end (the receipt) is measured net of
+          that margin.
+      (b) SLACK — a card has no columns: nothing to measure (excluded).
+      (c) EDGES — every line of a card starts on its inset (the band's gutter
+          when the table sits in a band, 11px clear of a kind edge), and no box
+          in it — a hanging mark included — passes its right inset.
+      (f) COLOURS — the kind edge rides on the card (the row), not on its first
+          cell, in the kind's own edge token. */
+  function g10Card(
+    res: LedgerResult,
+    sub: Record<G10Part, number>,
+    gapAgg: ReturnType<typeof aggregator>,
+    t: HTMLTableElement,
+    table: string,
+    tableIndex: number,
+    rows: HTMLTableRowElement[],
+  ): void {
+    const GAP = 12;
+    const cardL = resolveLength(t, "var(--card-l)");
+    const cardR = resolveLength(t, "var(--card-r)");
+    exclude(res, { table, tableIndex, detail: "a D4 row card has no columns: no column slack to measure" });
+    if (!Number.isFinite(cardL) || !Number.isFinite(cardR)) {
+      fail(res, { table, tableIndex, detail: "--card-l / --card-r do not resolve on this card table" });
+      return;
+    }
+    rows.forEach((r, ri) => {
+      if (Array.from(r.cells).some((c) => c.colSpan > 1)) return;
+      const rr = r.getBoundingClientRect();
+      const edge = r.getAttribute("data-edge");
+      const cells = Array.from(r.cells)
+        .filter((c) => isVisible(c) && hasBox(c))
+        .map((c) => ({ c, b: c.getBoundingClientRect(), cs: getComputedStyle(c) }));
+      /* the card's lines: flex lines, each the cells whose boxes overlap it */
+      const lines: (typeof cells)[] = [];
+      for (const x of [...cells].sort((a, b) => a.b.top - b.b.top)) {
+        const line = lines.find((l) => l.some((y) => x.b.top < y.b.bottom && y.b.top < x.b.bottom));
+        if (line) line.push(x);
+        else lines.push([x]);
+      }
+      const wantL = rr.left + (edge ? Math.max(cardL, 11) : cardL);
+      const limitR = rr.right - cardR;
+      /* An auto margin (the receipt's, entities.css card rule) pushes a cell
+         to the line's END; the computed margin reads 0px, so it is known by
+         where it lands — flush on the right inset, last on its line. Its gap
+         is then at least the card's gap, never exactly it. */
+      const pushed = (line: typeof cells, x: (typeof cells)[number]): boolean =>
+        x === line[line.length - 1] && Math.abs(x.b.right - limitR) <= 1;
+      for (const line of lines) {
+        line.sort((a, b) => a.b.left - b.b.left);
+        /* (c) the line starts on the inset, unless an auto margin moved it */
+        const head = line[0]!;
+        if (!(line.length === 1 && pushed(line, head) && head.b.left > wantL + 1)) {
+          sub.edges++;
+          res.measured++;
+          const d = head.b.left - wantL;
+          if (Math.abs(d) > 1) {
+            gapAgg.add(`${tableIndex}|edgeL`, { table, tableIndex, row: ri, delta: r2(d), detail: `row card ${ri}: a line starts at x ${r2(head.b.left)}, its inset is ${r2(wantL)} (--card-l ${cardL}${edge ? ", 11px clear of the kind edge" : ""})` });
+          }
+        }
+        /* (a) the one gap between neighbours on the line */
+        for (let i = 1; i < line.length; i++) {
+          const a = line[i - 1]!, b = line[i]!;
+          const gap = b.b.left - a.b.right - px(a.cs.marginRight) - px(b.cs.marginLeft);
+          sub.gaps++;
+          res.measured++;
+          if (pushed(line, b) ? gap < GAP - 2 : Math.abs(gap - GAP) > 2) {
+            const idx = Array.from(r.cells).indexOf(b.c as HTMLTableCellElement);
+            gapAgg.add(`${tableIndex}|${idx}|card`, {
+              table, tableIndex, columnIndex: idx, row: ri, delta: r2(gap - GAP),
+              detail: `row card: gap before ${describe(b.c)} is ${r2(gap)}px, the card's gap is ${GAP}±2${pushed(line, b) ? " (at least, before a cell pushed to the line's end)" : ""}`,
+            });
+          }
+        }
+      }
+      /* (c) nothing passes the right inset: the cells, and every box in them */
+      sub.edges++;
+      res.measured++;
+      let far: { el: Element; right: number } | null = null;
+      for (const x of cells) {
+        for (const el of [x.c, ...Array.from(x.c.querySelectorAll("*"))]) {
+          if (!isVisible(el) || !hasBox(el)) continue;
+          const right = el.getBoundingClientRect().right;
+          if (right > limitR + 1 && (!far || right > far.right)) far = { el, right };
+        }
+      }
+      if (far) {
+        gapAgg.add(`${tableIndex}|edgeR`, { table, tableIndex, row: ri, el: describe(far.el), delta: r2(far.right - limitR), detail: `row card ${ri}: ${describe(far.el)} ends at ${r2(far.right)}, past the right inset ${r2(limitR)} (--card-r ${cardR})` });
+      }
+      /* (f) the kind edge, on the card */
+      if (!edge) return;
+      const token = EDGE_TOKEN[edge];
+      if (!token) { fail(res, { table, tableIndex, row: ri, detail: `unknown data-edge="${edge}"` }); return; }
+      sub.colours++;
+      res.measured++;
+      const want = resolveColor(r, `var(${token})`);
+      const got = shadows(getComputedStyle(r).boxShadow).find((sh) => sh.inset && Math.abs(sh.x - 3) <= 0.5 && sh.y === 0);
+      if (!want) fail(res, { table, tableIndex, row: ri, detail: `${token} does not resolve` });
+      else if (!got || !got.color) fail(res, { table, tableIndex, row: ri, detail: `data-edge="${edge}" row card paints no inset 3px edge` });
+      else if (!sameColor(got.color, want)) fail(res, { table, tableIndex, row: ri, detail: `data-edge="${edge}" card edge is ${hex(got.color)}, ${token} is ${hex(want)}` });
+    });
+  }
   function g10(opts?: { min?: Partial<Record<G10Part, number>> }): LedgerResult {
     reset();
     const res = newResult("G10");
@@ -1465,6 +1667,10 @@ export function installLedgerProbe(): void {
       const compact = t.matches(".etable-compact");
       const hr = headerRow(t);
       const rows = bodyRows(t);
+      if (cardFolded(t)) {
+        g10Card(res, sub, gapAgg, t, table, tableIndex, rows);
+        continue;
+      }
       const all = [...(hr && isVisible(hr) && hasBox(hr) ? [hr] : []), ...rows];
       /* (a) the gap between adjacent cells' content boxes */
       for (const r of all) {
@@ -1927,11 +2133,23 @@ export function installLedgerProbe(): void {
       fail(res, { el: ":root", detail: `--hit-min computes to ${env.computedHitMin}px here; the plan requires ${min}px` });
     }
     const ctls = Array.from(document.querySelectorAll<HTMLElement>(CONTROLS)).filter((c) => isVisible(c) && hasBox(c));
+    /* launch M1c (LD7, R7): under a coarse pointer or at the ≤720px fold a
+       LINK carries the hit square too (layout.css) and joins the page's
+       midpoint split (scripts/hit-areas.ts, its LINKS). The audit splits
+       against the same neighbours the page does — without them a control's
+       square, rightly stopped at the midpoint to the link beside it, was
+       sampled at corners the page gives the link (the gate on 75e9920: every
+       tip beside a link "missed" onto it). Links are neighbours here, not
+       measured targets: their own taps are the phone gate's (small and
+       covered taps, phone.spec.ts). */
+    const links = !env.desktopFine
+      ? Array.from(document.querySelectorAll<HTMLElement>(HIT_LINKS)).filter((c) => isVisible(c) && hasBox(c))
+      : [];
     let targets = opts.only
       ? Array.from(document.querySelectorAll<HTMLElement>(opts.only)).filter((c) => isVisible(c) && hasBox(c))
       : ctls;
     if (opts.limit !== undefined) targets = targets.slice(0, opts.limit);
-    const all = [...new Set([...ctls, ...targets])];
+    const all = [...new Set([...ctls, ...links, ...targets])];
     const x0 = window.scrollX, y0 = window.scrollY;
     /* candidate neighbours, widened by a whole square on each side: the
        table-side clamp SHIFTS a square by up to its side, and beside a sticky
@@ -2064,7 +2282,13 @@ export function installLedgerProbe(): void {
         checkedPairs.add(key);
         for (const [who, by, r] of [[all[j]!, c, pr[1]], [c, all[j]!, pr[0]]] as const) {
           const cx = (r.left + r.right) / 2, cy = (r.top + r.bottom) / 2;
-          const h = hitOk(who, cx, cy);
+          let h = hitOk(who, cx, cy);
+          /* A link that WRAPS (an inline link on two lines, which a phone's
+             width makes common now that links are neighbours, launch M1c) has
+             a bounding box whose centre lies between its two fragments, on
+             the text beside them: there the centre of a fragment is its own */
+          const frags = Array.from(who.getClientRects()).filter((q) => q.width >= 1 && q.height >= 1);
+          if (h && frags.length > 1 && frags.some((q) => !hitOk(who, (q.left + q.right) / 2, (q.top + q.bottom) / 2))) h = null;
           if (h) {
             fail(res, {
               el: `${describe(who)}`,
@@ -2095,6 +2319,39 @@ export function installLedgerProbe(): void {
     for (const t of visibleTables(LEDGER)) {
       if (nested(t)) continue;
       const hr = headerRow(t);
+      if (hr && cardFolded(t)) {
+        /* D4 (LD5): the folded head's words are printed on the card, before
+           each labelled figure (`[data-label]::before`): they read the label
+           type — the mono at 600, uppercase, on the --fs-label token (11px
+           in the phone ramp, LD12), tracked .08em (the card rule in
+           entities.css: tighter than the head's .12em at the larger size) */
+        const table = tableLabel(t);
+        const tableIndex = allTables().indexOf(t);
+        bodyRows(t).forEach((r) => {
+          Array.from(r.cells).forEach((cell, c) => {
+            if (!isVisible(cell) || !hasBox(cell) || !cardLabel(cell).printed) return;
+            const cs = getComputedStyle(cell, "::before");
+            res.measured++;
+            const fam = cs.fontFamily.split(",")[0]!.replace(/["']/g, "").trim();
+            const size = px(cs.fontSize);
+            const want = resolveLength(cell, "var(--fs-label)");
+            const ls = cs.letterSpacing === "normal" ? 0 : px(cs.letterSpacing);
+            const bad: string[] = [];
+            if (fam !== "JetBrains Mono") bad.push(`family ${fam}`);
+            if (cs.fontWeight !== "600") bad.push(`weight ${cs.fontWeight}`);
+            if (!(Math.abs(size - want) <= 0.01)) bad.push(`size ${r2(size)}px (--fs-label ${r2(want)}px)`);
+            if (Math.abs(ls - 0.08 * size) > 0.05) bad.push(`letter-spacing ${r2(ls)}px (.08em = ${r2(0.08 * size)}px)`);
+            if (cs.textTransform !== "uppercase") bad.push(`transform ${cs.textTransform}`);
+            if (bad.length) {
+              agg.add(`${tableIndex}|${c}|card|${bad.join()}`, {
+                table, tableIndex, columnIndex: c,
+                detail: `card label "${cardLabel(cell).attr.slice(0, 20)}": ${bad.join(", ")} (spec: JetBrains Mono 600 --fs-label, .08em, uppercase)`,
+              });
+            }
+          });
+        });
+        continue;
+      }
       if (!hr || !isVisible(hr)) continue;
       const table = tableLabel(t);
       const tableIndex = allTables().indexOf(t);
@@ -2297,4 +2554,630 @@ export function formatResult(r: LedgerResult, max = 25): string {
   ];
   if (r.failures.length > max) lines.push(`  … ${r.failureCount - max} more`);
   return lines.join("\n");
+}
+
+/* ================================================================ phone predicates
+   launch M1a (T1.2; R4, R5, R6, R7, R10, R13, R35, R40). The mock's one-off
+   phone audit (`audit_mobile.mjs`, docs/design/launch-redesign-mock/tools/) is
+   re-homed here as repository test code, so the local gate and the live probe
+   use ONE ruler (`phone.spec.ts`, also run by playwright.production.config.ts).
+   Every predicate runs in the page from `phoneAuditInPage` — a self-contained
+   function (page.evaluate serialises it; it closes over nothing) — and each one
+   counts what it measured, so a pass over nothing is visible as such.
+
+   The audit's definitions are kept: a tap target's EFFECTIVE hit area is its
+   own box joined with an absolutely positioned ::before/::after that extends
+   it (and a wrapping label for an input); a link set inline inside running
+   prose (p, li, dd, a tip) is exempt; visually hidden text (the clip pattern)
+   is skipped; a sideways scroller is any visible element whose overflow-x
+   scrolls with content past its box. Added for the launch plan: covered
+   targets (`elementFromPoint` at the centre of each target's own box must hit
+   the target or a descendant — R7), the R10 scroller allowlist with names and
+   snap, G3 in full over every table container (R4), honesty visibility (R5),
+   explicit table roles (R40), the shell's side gutters (R13), the DOM count
+   (R35) and a font map (R6: no text node smaller than at T0). */
+
+export interface PhoneAuditArg {
+  /** HONESTY_SELECTORS (test/lib/honesty-selectors.ts) */
+  honesty: readonly string[];
+  /** the only elements allowed to scroll sideways at ≤720px (R10) */
+  scrollerAllow: readonly string[];
+  /** the swipe strips among them, which must snap (LD11) */
+  swipe: readonly string[];
+  /** the effective tap floor, px (44) */
+  minTap: number;
+  /** the visible text floor, px (11 at ≤720px) */
+  minFont: number;
+  /** containers a reader shows or hides with a control on the page (not a
+      width): an honesty field inside one that is display:none is a
+      structural hide, like a closed details body (launch gate: the Signals
+      lead cards' ranking variant, `#si-rank-absolute` switches it) */
+  structural?: readonly string[];
+}
+
+export interface PhoneAudit {
+  vw: number;
+  pageW: number;
+  height: number;
+  dom: number;
+  tables: number;
+  sidewaysTables: string[];
+  scrollers: { el: string; allowed: boolean; named: boolean; table: boolean; swipe: boolean; snaps: boolean }[];
+  scrollerProblems: string[];
+  taps: number;
+  smallTaps: string[];
+  coverChecked: number;
+  coveredTaps: string[];
+  textChars: number;
+  under11Pct: number;
+  smallText: string[];
+  fontMap: Record<string, number>;
+  escapes: string[];
+  honestyChecked: number;
+  honestyProblems: string[];
+  cardTables: number;
+  roleProblems: string[];
+  gutterL: number | null;
+  gutterR: number | null;
+}
+
+export function phoneAuditInPage(arg: PhoneAuditArg): PhoneAudit {
+  /* The LAYOUT viewport's width (launch review, B1). In a mobile context
+     (isMobile) `innerWidth` grows to the content: a page 720px wide reads
+     innerWidth 720 at a 390px viewport, so "scrollWidth > innerWidth" could
+     never see a page that scrolls sideways, nor a table or an honesty field
+     past the edge. `clientWidth` stays the viewport's 390. */
+  const vw = document.documentElement.clientWidth;
+  const csOf = new Map<Element, CSSStyleDeclaration>();
+  const cs = (el: Element): CSSStyleDeclaration => {
+    let s = csOf.get(el);
+    if (!s) {
+      s = getComputedStyle(el);
+      csOf.set(el, s);
+    }
+    return s;
+  };
+  const label = (el: Element): string => {
+    const cls = typeof (el as HTMLElement).className === "string" && (el as HTMLElement).className ? "." + (el as HTMLElement).className.trim().split(/\s+/).slice(0, 2).join(".") : "";
+    const text = ((el as HTMLElement).innerText || (el as HTMLInputElement).value || el.getAttribute("aria-label") || "").trim().replace(/\s+/g, " ").slice(0, 30);
+    return `${el.tagName.toLowerCase()}${cls} "${text}"`;
+  };
+  const srMemo = new Map<Element, boolean>();
+  /** visually hidden through the clip pattern (still announced) */
+  const srOnly = (el: Element | null): boolean => {
+    if (!el || el === document.body || el === document.documentElement) return false;
+    const hit = srMemo.get(el);
+    if (hit !== undefined) return hit;
+    const s = cs(el);
+    const r = el.getBoundingClientRect();
+    const own = (s.position === "absolute" || s.position === "fixed") && (r.width <= 1 || r.height <= 1) && (s.overflow !== "visible" || s.clip !== "auto" || s.clipPath !== "none");
+    const v = own || srOnly(el.parentElement);
+    srMemo.set(el, v);
+    return v;
+  };
+  const vis = (el: Element): boolean => {
+    const r = el.getBoundingClientRect();
+    const s = cs(el);
+    if (!(r.width > 1 && r.height > 1 && s.visibility !== "hidden" && s.display !== "none" && s.opacity !== "0")) return false;
+    /* launch gate (75e9920 on 20261019.2): Chromium renders a CLOSED
+       <details> body through `::details-content { content-visibility: hidden }`,
+       so its descendants keep a laid-out box (getBoundingClientRect forces
+       layout) yet are neither painted nor hit-testable. Without this check
+       every link in a folded row read as a tap target "covered" by whatever
+       paints at that point (103 of 248 targets on a filer page), and its
+       size was gated although no reader can reach it. `checkVisibility()`
+       is false exactly for content that is not rendered. */
+    if (typeof (el as HTMLElement).checkVisibility === "function" && !(el as HTMLElement).checkVisibility()) return false;
+    return true;
+  };
+  const scrolls = (el: Element): boolean => {
+    const ox = cs(el).overflowX;
+    return (ox === "auto" || ox === "scroll") && el.scrollWidth > el.clientWidth + 1;
+  };
+  const inScroller = (el: Element): boolean => {
+    for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) if (scrolls(p)) return true;
+    return false;
+  };
+  const all = Array.from(document.querySelectorAll("body *"));
+  const out: PhoneAudit = {
+    vw,
+    pageW: document.documentElement.scrollWidth,
+    height: document.documentElement.scrollHeight,
+    dom: document.getElementsByTagName("*").length,
+    tables: 0,
+    sidewaysTables: [],
+    scrollers: [],
+    scrollerProblems: [],
+    taps: 0,
+    smallTaps: [],
+    coverChecked: 0,
+    coveredTaps: [],
+    textChars: 0,
+    under11Pct: 0,
+    smallText: [],
+    fontMap: {},
+    escapes: [],
+    honestyChecked: 0,
+    honestyProblems: [],
+    cardTables: 0,
+    roleProblems: [],
+    gutterL: null,
+    gutterR: null,
+  };
+
+  /* R4 — G3 in full: no table container scrolls or clips sideways, no table
+     box leaves the viewport, and the document never scrolls sideways. */
+  if (document.documentElement.scrollWidth > vw + 1) out.sidewaysTables.push(`document scrolls sideways (${document.documentElement.scrollWidth}px at ${vw}px)`);
+  for (const t of Array.from(document.querySelectorAll("table"))) {
+    if (!vis(t) || srOnly(t)) continue;
+    out.tables += 1;
+    const r = t.getBoundingClientRect();
+    if (r.right > vw + 1 || r.left < -1) out.sidewaysTables.push(`${label(t)} spans ${Math.round(r.left)}..${Math.round(r.right)}`);
+    for (let p = t.parentElement; p && p !== document.body; p = p.parentElement) {
+      if (cs(p).overflowX !== "visible" && p.scrollWidth > p.clientWidth + 1) {
+        out.sidewaysTables.push(`${label(p)} holds a table and is ${p.scrollWidth - p.clientWidth}px too narrow`);
+        break;
+      }
+    }
+  }
+
+  /* R10 — the only sideways scrollers are the allowlist; each is named, holds
+     no table, and a swipe strip snaps. */
+  for (const el of all) {
+    if (!scrolls(el) || !vis(el)) continue;
+    const allowed = arg.scrollerAllow.some((s) => el.matches(s));
+    const swipe = arg.swipe.some((s) => el.matches(s));
+    const named = el.hasAttribute("data-scroll-region") || el.hasAttribute("aria-label") || el.hasAttribute("aria-labelledby");
+    const table = el.querySelector("table") !== null;
+    const snap = cs(el).scrollSnapType;
+    const snaps = /x|inline|both/.test(snap) && /mandatory/.test(snap);
+    out.scrollers.push({ el: label(el), allowed, named, table, swipe, snaps });
+    if (!allowed) out.scrollerProblems.push(`${label(el)} scrolls sideways and is not an allowed scroller`);
+    if (table) out.scrollerProblems.push(`${label(el)} scrolls sideways with a table inside`);
+    if (!named) out.scrollerProblems.push(`${label(el)} is an unnamed scroll region`);
+    if (swipe && !snaps) out.scrollerProblems.push(`${label(el)} is a swipe strip without x mandatory snap`);
+  }
+
+  /* R7 — effective tap areas, and no target covered by another. */
+  const hit = (el: Element): { w: number; h: number } => {
+    const r = el.getBoundingClientRect();
+    let L = r.left;
+    let T = r.top;
+    let R = r.right;
+    let B = r.bottom;
+    let cb: Element | null = el;
+    while (cb && cb !== document.body && cs(cb).position === "static") cb = cb.parentElement;
+    if (cb && cb !== document.body) {
+      const c = cb.getBoundingClientRect();
+      const ccs = cs(cb);
+      const box = {
+        left: c.left + parseFloat(ccs.borderLeftWidth),
+        top: c.top + parseFloat(ccs.borderTopWidth),
+        right: c.right - parseFloat(ccs.borderRightWidth),
+        bottom: c.bottom - parseFloat(ccs.borderBottomWidth),
+      };
+      for (const pse of ["::before", "::after"]) {
+        const p = getComputedStyle(el, pse);
+        if (p.content === "none" || p.content === "normal" || p.display === "none" || p.position !== "absolute") continue;
+        const px = (v: string): number | null => (/px$/.test(v) ? parseFloat(v) : null);
+        const t = px(p.top);
+        const l = px(p.left);
+        const rr = px(p.right);
+        const b = px(p.bottom);
+        if (t === null || l === null || rr === null || b === null) continue;
+        L = Math.min(L, box.left + l);
+        T = Math.min(T, box.top + t);
+        R = Math.max(R, box.right - rr);
+        B = Math.max(B, box.bottom - b);
+      }
+    }
+    const lab = el.tagName === "INPUT" ? el.closest("label") : null;
+    if (lab) {
+      const q = lab.getBoundingClientRect();
+      L = Math.min(L, q.left);
+      T = Math.min(T, q.top);
+      R = Math.max(R, q.right);
+      B = Math.max(B, q.bottom);
+    }
+    return { w: R - L, h: B - T };
+  };
+  const taps = Array.from(
+    document.querySelectorAll('a[href], button, input:not([type=hidden]), select, textarea, summary, label[for], [role="button"], [role="tab"]'),
+  ).filter((el) => vis(el) && !el.closest("[popover]") && !srOnly(el));
+  out.taps = taps.length;
+  for (const el of taps) {
+    const prose = cs(el).display === "inline" && el.closest("p, li, dd, .note-pop") !== null;
+    if (prose) continue;
+    const h = hit(el);
+    if (h.w < arg.minTap - 0.5 || h.h < arg.minTap - 0.5) out.smallTaps.push(`${label(el)} ${Math.round(h.w)}x${Math.round(h.h)}`);
+  }
+  const scrollY0 = window.scrollY;
+  const vh = document.documentElement.clientHeight; // innerHeight grows with innerWidth (above)
+  /* The probe point is the centre of the target's FIRST line box (launch
+     gate): an inline link that wraps has a bounding box spanning both lines,
+     whose centre often sits on the neighbouring words of the paragraph (or
+     list) around it — 40 of the 52 "covered" targets on 20261019.2 were such
+     wrapped links, every one tappable on its own text. */
+  const probeBox = (el: Element): DOMRect => {
+    const rects = Array.from(el.getClientRects()).filter((q) => q.width >= 1 && q.height >= 1);
+    return rects[0] ?? el.getBoundingClientRect();
+  };
+  /** the nearest sideways-scrolling ancestor, whose box clips what it holds */
+  const scrollerOf = (el: Element): Element | null => {
+    for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) if (scrolls(p)) return p;
+    return null;
+  };
+  for (const el of taps) {
+    const r0 = probeBox(el);
+    const cxDoc = r0.left + r0.width / 2;
+    const cyDoc = r0.top + window.scrollY + r0.height / 2;
+    if (cxDoc < 0 || cxDoc > vw) continue; // past the viewport's edge (inside a sideways scroller, or the page overflows: R4 names it)
+    window.scrollTo(0, Math.max(0, cyDoc - vh / 2));
+    const r = probeBox(el);
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    if (cy < 0 || cy > vh) continue;
+    /* A target a sideways scroller (R10's allowlist: tab bars, chip rows,
+       swipe strips) currently holds past its own edge is reached by swiping
+       that strip, not covered: the strip's box clips it, so hit testing at
+       that point lands on whatever lies behind the strip. */
+    const sc = scrollerOf(el);
+    if (sc) {
+      const q = sc.getBoundingClientRect();
+      if (cx < q.left || cx > q.right) continue;
+    }
+    out.coverChecked += 1;
+    const top = document.elementFromPoint(cx, cy);
+    if (!top || top === el || el.contains(top)) continue;
+    if (top.tagName === "LABEL" && top.contains(el)) continue;
+    out.coveredTaps.push(`${label(el)} is under ${label(top)}`);
+  }
+  window.scrollTo(0, scrollY0);
+
+  /* R6 — visible text at or above the floor; the font map for the T0 diff. */
+  const sizes: Record<string, number> = {};
+  const small: Record<string, number> = {};
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const t = (n.textContent ?? "").trim();
+    if (!t) continue;
+    const el = n.parentElement;
+    if (!el || !vis(el) || el.closest("[popover], script, style, noscript, template, .visually-hidden") || srOnly(el)) continue;
+    const fs = Math.round(parseFloat(cs(el).fontSize) * 2) / 2;
+    sizes[fs] = (sizes[fs] ?? 0) + t.length;
+    if (fs < arg.minFont - 0.01) {
+      const k = `${label(el).split(' "')[0]} ${fs}px`;
+      small[k] = (small[k] ?? 0) + t.length;
+    }
+  }
+  const total = Object.values(sizes).reduce((a, b) => a + b, 0);
+  out.textChars = total;
+  out.fontMap = sizes;
+  out.under11Pct = total === 0 ? 0 : Math.round((Object.entries(sizes).filter(([s]) => Number(s) < 11).reduce((a, [, c]) => a + c, 0) / total) * 1000) / 10;
+  out.smallText = Object.entries(small).sort((a, b) => b[1] - a[1]).map(([k, c]) => `${k} (${c} chars)`);
+
+  /* nothing escapes the viewport outside a scroller */
+  const esc = new Set<string>();
+  for (const el of all) {
+    if (cs(el).position === "fixed" || !vis(el) || srOnly(el) || el.closest("[popover]")) continue;
+    const r = el.getBoundingClientRect();
+    if ((r.right > vw + 1 || r.left < -1) && !inScroller(el)) esc.add(`${label(el)} ${Math.round(r.left)}..${Math.round(r.right)}`);
+  }
+  out.escapes = [...esc];
+
+  /* R2 / R5 — every honesty element a reader is meant to see is rendered,
+     unclamped, not cut by an ellipsis or a clipping ancestor, and inside the
+     viewport (or inside an allowed scroller). Structural hides are not media
+     hides: a closed details body, a closed tip, a hidden panel. The clip
+     pattern is a deliberate visual hide that stays announced. */
+  for (const sel of arg.honesty) {
+    for (const el of Array.from(document.querySelectorAll(sel))) {
+      if (el.closest("[hidden], [popover], template, noscript, [inert], [aria-hidden=true]")) continue;
+      /* A closed <details> hides everything but its OWN summary. The test
+         walks every closed ancestor (launch gate: a triage row's summary,
+         itself inside a closed tier, read as "not rendered" 372 times on
+         /signals/ because only the nearest closed details was consulted). */
+      let structural = false;
+      for (let d = el.closest("details:not([open])"); d; d = d.parentElement?.closest("details:not([open])") ?? null) {
+        const own = el.closest("summary");
+        if (!own || own.parentElement !== d) {
+          structural = true;
+          break;
+        }
+      }
+      if (structural) continue;
+      if ((arg.structural ?? []).some((sel) => {
+        const box = el.closest(sel);
+        return box !== null && cs(box).display === "none";
+      })) continue;
+      out.honestyChecked += 1;
+      if (srOnly(el)) continue;
+      if (typeof (el as HTMLElement).checkVisibility === "function" && !(el as HTMLElement).checkVisibility({ visibilityProperty: true } as CheckVisibilityOptions)) {
+        out.honestyProblems.push(`${sel}: ${label(el)} is not rendered`);
+        continue;
+      }
+      let r: DOMRect = el.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) {
+        /* A hung mark (`.hang`: an inline-block of width 0, overflow visible)
+           has no advance by design yet paints its glyph: measure the painted
+           text, not the box (launch review: "≈ has no box" on every card). */
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        const painted = Array.from(range.getClientRects()).filter((q) => q.width >= 1 && q.height >= 1);
+        if (painted.length === 0) {
+          if ((el.textContent ?? "").trim()) out.honestyProblems.push(`${sel}: ${label(el)} has no box`);
+          continue;
+        }
+        const L = Math.min(...painted.map((q) => q.left));
+        const T = Math.min(...painted.map((q) => q.top));
+        r = new DOMRect(L, T, Math.max(...painted.map((q) => q.right)) - L, Math.max(...painted.map((q) => q.bottom)) - T);
+      }
+      const s = cs(el);
+      const clamp = s.getPropertyValue("-webkit-line-clamp");
+      if (clamp && clamp !== "none") out.honestyProblems.push(`${sel}: ${label(el)} is line-clamped (${clamp})`);
+      if (s.textOverflow === "ellipsis" && s.overflowX !== "visible" && el.scrollWidth > el.clientWidth + 1) out.honestyProblems.push(`${sel}: ${label(el)} is cut by an ellipsis`);
+      for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+        const ps = cs(p);
+        if (ps.overflowX === "visible" && ps.overflowY === "visible") continue;
+        if (scrolls(p)) break;
+        const pr = p.getBoundingClientRect();
+        if (r.left < pr.left - 1 || r.right > pr.right + 1 || r.top < pr.top - 1 || r.bottom > pr.bottom + 1) {
+          out.honestyProblems.push(`${sel}: ${label(el)} is clipped by ${label(p)}`);
+          break;
+        }
+      }
+      if ((r.left < -1 || r.right > vw + 1) && !inScroller(el)) out.honestyProblems.push(`${sel}: ${label(el)} is outside the viewport`);
+    }
+  }
+
+  /* R40 — every table selects a card layout, and every card table carries
+     its roles explicitly. */
+  const want: Record<string, string[]> = { THEAD: ["rowgroup"], TBODY: ["rowgroup"], TFOOT: ["rowgroup"], TR: ["row"], TH: ["columnheader", "rowheader"], TD: ["cell"] };
+  for (const t of Array.from(document.querySelectorAll("table"))) {
+    if (!t.hasAttribute("data-card")) {
+      out.roleProblems.push(`${label(t)} has no data-card`);
+      continue;
+    }
+    out.cardTables += 1;
+    if (t.getAttribute("role") !== "table") out.roleProblems.push(`${label(t)} lacks role=table`);
+    const own = (el: Element): void => {
+      for (const c of Array.from(el.children)) {
+        if (c.tagName === "TABLE") continue;
+        const w = want[c.tagName];
+        if (w && !w.includes(c.getAttribute("role") ?? "")) out.roleProblems.push(`${label(c)} in ${label(t)} lacks role ${w.join("|")}`);
+        own(c);
+      }
+    };
+    own(t);
+  }
+
+  /* R13 — the shell's side gutters */
+  const shell = document.querySelector(".shell");
+  if (shell) {
+    out.gutterL = parseFloat(cs(shell).paddingLeft);
+    out.gutterR = parseFloat(cs(shell).paddingRight);
+  }
+  return out;
+}
+
+/* ------------------------------------------- the cards (launch review)
+
+   The card predicates of the phone-surfaces suite
+   (test/launch-phone-surfaces.test.ts), self-contained for page.evaluate,
+   kept here beside `phoneAuditInPage` so a later caller reads one ruler:
+
+   - TAPS. A card's tap target is the row's MAIN link: the first link of its
+     main cell — the first cell of the first tier (`mainTiers`) holding a link
+     that is not a receipt. Its renderer marks it, and only it, with
+     `rowLinkAttr`, and a tap on the card's free area (a point no other
+     target, and no nested table, covers) lands on it. A row with no main link
+     marks none, and a tap on it opens nothing. A tap never opens a receipt.
+     The signal cards (`.si-card`) follow the same rule with `.si-card-open`,
+     and a Named-moves receipt (`.mv-item > .mv-src`) stays on its row's
+     summary line, inside the row (launch review M1).
+   - LABELS. Every visible body `.c-num` cell of a card table (not the feed,
+     which keeps its own grid) carries a non-empty `data-label` and prints it
+     through its ::before: a bare "12" means nothing once the head folds.
+   - OVERFLOW. The boxes that reach past the viewport's right edge with no
+     clipping or scrolling ancestor — what names a page that scrolls sideways. */
+
+export interface PhoneCardArg {
+  /** the main cells, one selector per tier, highest priority first */
+  mainTiers: readonly string[];
+  /** the containers a receipt sits in */
+  receipt: string;
+  /** the attribute a renderer marks the row's main link with */
+  rowLinkAttr: string;
+  /** the tap floor, px (44): a target's square, which a "free" point avoids */
+  hit: number;
+}
+
+export interface PhoneCardAudit {
+  rows: number;
+  tapChecked: number;
+  tapProblems: string[];
+  numCells: number;
+  labelProblems: string[];
+  siCards: number;
+  siCardProblems: string[];
+  receipts: number;
+  receiptProblems: string[];
+  overflow: string[];
+}
+
+export function phoneCardAuditInPage(arg: PhoneCardArg): PhoneCardAudit {
+  const out: PhoneCardAudit = { rows: 0, tapChecked: 0, tapProblems: [], numCells: 0, labelProblems: [], siCards: 0, siCardProblems: [], receipts: 0, receiptProblems: [], overflow: [] };
+  /* the layout viewport (see phoneAuditInPage: innerWidth grows to the content) */
+  const vw = document.documentElement.clientWidth;
+  /* rendered: a box, and no hiding ancestor — display:none, visibility, or the
+     content-visibility of a closed <details> (whose rows still report boxes) */
+  const vis = (el: Element): boolean => {
+    const r = el.getBoundingClientRect();
+    if (r.width <= 1 || r.height <= 1) return false;
+    const he = el as HTMLElement;
+    if (typeof he.checkVisibility === "function") return he.checkVisibility({ visibilityProperty: true } as CheckVisibilityOptions);
+    const s = getComputedStyle(el);
+    return s.visibility !== "hidden" && s.display !== "none";
+  };
+  const text = (el: Element | null): string => ((el as HTMLElement | null)?.innerText ?? el?.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, 40);
+  const tag = (el: Element | null): string => {
+    if (!el) return "nothing";
+    const cls = typeof (el as HTMLElement).className === "string" && (el as HTMLElement).className ? "." + (el as HTMLElement).className.trim().split(/\s+/).slice(0, 2).join(".") : "";
+    const href = el.getAttribute("href");
+    return `${el.tagName.toLowerCase()}${cls}${href ? `[href=${href.slice(0, 48)}]` : ""} "${text(el)}"`;
+  };
+  const isReceipt = (a: Element): boolean => a.closest(arg.receipt) !== null;
+  const shown = (a: Element): boolean => a.getClientRects().length > 0 && !a.closest("[hidden], [popover]");
+  const TARGETS = 'a[href], button, summary, input, select, textarea, label, [tabindex], [role="button"], table';
+  /** a point of `box` outside every target's tap square — each target's box
+      grown to the `hit` floor on each axis (+2px), the square the hit rule
+      gives it (layout.css), a neighbour's included — and outside any nested
+      table, in the viewport. Only a STRETCHED link can answer a tap there. */
+  const allTargets = Array.from(document.querySelectorAll(TARGETS));
+  const freePoint = (root: Element, box: DOMRect): { x: number; y: number } | null => {
+    const near = (q: DOMRect): boolean => q.right >= box.left - arg.hit && q.left <= box.right + arg.hit && q.bottom >= box.top - arg.hit && q.top <= box.bottom + arg.hit;
+    const blockers = allTargets
+      .filter((el) => el !== root && !el.contains(root))
+      .flatMap((el) => Array.from(el.getClientRects()).filter(near))
+      .map((r) => {
+        const dx = Math.max(0, (arg.hit - r.width) / 2) + 2;
+        const dy = Math.max(0, (arg.hit - r.height) / 2) + 2;
+        return { l: r.left - dx, r: r.right + dx, t: r.top - dy, b: r.bottom + dy };
+      });
+    const vh = document.documentElement.clientHeight;
+    for (let y = box.top + 3; y <= box.bottom - 3; y += 4) {
+      if (y < 1 || y > vh - 1) continue;
+      for (let x = box.left + 4; x <= box.right - 4; x += 6) {
+        if (x < 1 || x > vw - 1) continue;
+        if (blockers.some((q) => x >= q.l && x <= q.r && y >= q.t && y <= q.b)) continue;
+        return { x, y };
+      }
+    }
+    return null;
+  };
+  const where = (table: Element, i: number): string => {
+    const cap = table.querySelector(":scope > caption");
+    const sec = table.closest("[id], [aria-label]");
+    const name = cap ? text(cap) : sec ? (sec.id ? `#${sec.id}` : sec.getAttribute("aria-label") ?? "") : "";
+    return `table[data-card=${table.getAttribute("data-card")}] "${name}" row ${i + 1}`;
+  };
+
+  for (const table of Array.from(document.querySelectorAll('table[data-card]:not([data-card="feed"])'))) {
+    if (!vis(table)) continue;
+    const rows = Array.from(table.querySelectorAll(":scope > tbody > tr")).filter(vis);
+    rows.forEach((tr, i) => {
+      out.rows += 1;
+      const at = where(table, i);
+      /* LABELS */
+      for (const cell of Array.from(tr.children)) {
+        if (!cell.matches(".c-num") || !vis(cell)) continue;
+        if ((Number.parseInt(cell.getAttribute("colspan") ?? "1", 10) || 1) > 1) continue;
+        out.numCells += 1;
+        const label = (cell.getAttribute("data-label") ?? "").trim();
+        const before = getComputedStyle(cell, "::before");
+        if (!label) out.labelProblems.push(`${at}: the number "${text(cell)}" names no column (no data-label)`);
+        else if (before.content === "none" || before.content === "normal" || before.display === "none") out.labelProblems.push(`${at}: the number "${text(cell)}" does not print its label "${label}"`);
+      }
+      /* TAPS */
+      let main: Element | null = null;
+      for (const tier of arg.mainTiers) {
+        for (const cell of Array.from(tr.children)) {
+          if (!cell.matches(tier)) continue;
+          main = Array.from(cell.querySelectorAll("a[href]")).find((a) => shown(a) && !isReceipt(a)) ?? null;
+          if (main) break;
+        }
+        if (main) break;
+      }
+      const marked = Array.from(tr.querySelectorAll(`a[${arg.rowLinkAttr}]`)).filter((a) => a.closest("tr") === tr);
+      for (const m of marked) if (isReceipt(m)) out.tapProblems.push(`${at}: a receipt is marked as the row link: ${tag(m)}`);
+      if (main && (marked.length !== 1 || marked[0] !== main)) {
+        out.tapProblems.push(`${at}: the main link ${tag(main)} is not the one marked row link (marked: ${marked.map(tag).join(", ") || "none"})`);
+      }
+      if (!main && marked.length > 0) out.tapProblems.push(`${at}: marks ${marked.map(tag).join(", ")} but its main cell holds no main link`);
+      tr.scrollIntoView({ block: "center", inline: "nearest" });
+      const p = freePoint(tr, tr.getBoundingClientRect());
+      if (!p) return;
+      out.tapChecked += 1;
+      const hit = document.elementFromPoint(p.x, p.y);
+      const link = hit?.closest("a[href]") ?? null;
+      if (link && isReceipt(link)) out.tapProblems.push(`${at}: a tap on the card opens the receipt ${tag(link)}`);
+      else if (main && link !== main) out.tapProblems.push(`${at}: a tap on the card lands on ${tag(hit)}, not the main link ${tag(main)}`);
+      else if (!main && link) out.tapProblems.push(`${at}: the row has no main link, yet a tap on the card opens ${tag(link)}`);
+    });
+  }
+
+  for (const card of Array.from(document.querySelectorAll(".si-card"))) {
+    /* the card's rendered open link (a card shows one of its variants) */
+    const open = Array.from(card.querySelectorAll(".si-card-open")).find((a) => a.getClientRects().length > 0) ?? null;
+    if (!open || !vis(card)) continue;
+    out.siCards += 1;
+    card.scrollIntoView({ block: "center", inline: "center" });
+    const p = freePoint(card, card.getBoundingClientRect());
+    if (!p) {
+      out.siCardProblems.push(`${tag(card)}: no free point to tap`);
+      continue;
+    }
+    const hit = document.elementFromPoint(p.x, p.y);
+    const link = hit?.closest("a[href]") ?? null;
+    if (link !== open) out.siCardProblems.push(`${tag(card)}: a tap on the card lands on ${tag(hit)}, not ${tag(open)}`);
+  }
+
+  for (const item of Array.from(document.querySelectorAll(".mv-item"))) {
+    const src = item.querySelector(":scope > .mv-src");
+    const sum = item.querySelector(":scope > details > summary");
+    if (!src || !sum || !vis(item) || src.getClientRects().length === 0) continue;
+    out.receipts += 1;
+    const r = src.getBoundingClientRect();
+    const s = sum.getBoundingClientRect();
+    const it = item.getBoundingClientRect();
+    if (r.top >= s.bottom - 1 || r.right > it.right + 0.5 || r.left < it.left - 0.5) {
+      out.receiptProblems.push(`${tag(src)} is off its row's summary line: ${Math.round(r.left)}..${Math.round(r.right)} at y ${Math.round(r.top)}; the summary ends at y ${Math.round(s.bottom)}, the row spans ${Math.round(it.left)}..${Math.round(it.right)}`);
+    }
+  }
+  window.scrollTo(0, 0);
+
+  /* OVERFLOW: the widest unclipped boxes past the right edge */
+  const past: { right: number; d: string }[] = [];
+  for (const el of Array.from(document.querySelectorAll("body *"))) {
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.right <= vw + 0.5 || getComputedStyle(el).position === "fixed") continue;
+    let clipped = false;
+    for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
+      if (getComputedStyle(a).overflowX !== "visible") {
+        clipped = true;
+        break;
+      }
+    }
+    if (!clipped) past.push({ right: r.right, d: `${tag(el)} reaches ${Math.round(r.right)}px` });
+  }
+  out.overflow = past.sort((a, b) => b.right - a.right).slice(0, 3).map((x) => x.d);
+  return out;
+}
+
+/** Visible words in the SERVED HTML (the SC5 ruler): run in a page loaded with
+    JavaScript off and any meta refresh removed. Words are tokens with a letter
+    or digit; tips, popovers, hidden and visually hidden text, table bodies
+    (data, not copy) and the bodies of closed disclosures (their summary
+    counts) are not words. Self-contained for page.evaluate. */
+export function servedWordsInPage(rootSel: string): number {
+  const root = document.querySelector(rootSel) ?? document.body;
+  let words = 0;
+  const walk = (n: Node): void => {
+    if (n.nodeType === 1) {
+      const el = n as Element;
+      const s = getComputedStyle(el);
+      if (s.display === "none" || s.visibility === "hidden") return;
+      if (el.matches(".note-pop, [popover], .visually-hidden, script, style, template, noscript, tbody")) return;
+      if (el.tagName === "DETAILS" && !(el as HTMLDetailsElement).open) {
+        const sum = el.querySelector(":scope > summary");
+        if (sum) walk(sum);
+        return;
+      }
+      for (const c of Array.from(el.childNodes)) walk(c);
+    } else if (n.nodeType === 3) {
+      words += ((n.textContent ?? "").match(/\S+/g) ?? []).filter((w) => /[A-Za-z0-9]/.test(w)).length;
+    }
+  };
+  walk(root);
+  return words;
 }

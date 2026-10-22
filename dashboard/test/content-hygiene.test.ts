@@ -30,6 +30,7 @@ import { qoqPresentation } from "../src/lib/derive.ts";
 import {
   changesTableHtml,
   entityTxnRowsHtml,
+  entityTxnTable,
   filerEdgarBlock,
   hitRowHtml,
   memberV2Sections,
@@ -177,7 +178,7 @@ test("T3.2 (R18): BUY / SELL / EXCHANGE / — everywhere; a late row keeps its s
   /* control (P-10, M3 review — the old control matched a string literal
      against itself): the retired rendering, the late row's kind cell reading
      LATE, planted into the real row, fails the same side-word check */
-  const retired = domOf(late.replace(/(<td class="cell cell-side c-kind [^"]*">)SELL/, "$1LATE"));
+  const retired = domOf(late.replace(/(<td class="cell cell-side c-kind [^"]*"[^>]*>)SELL/, "$1LATE"));
   assert.doesNotMatch(visibleText(retired.querySelectorAll("tr")[0]!.querySelector("td.c-kind")!), /^SELL/, "control: a LATE kind cell is caught");
   // the member flows' Net words
   assert.equal(netKindWord({ kind: "finite", low: 5000, high: 15000 }).word, "NET BUY");
@@ -200,11 +201,15 @@ test("T3.2 (R18): BUY / SELL / EXCHANGE / — everywhere; a late row keeps its s
   assert.doesNotMatch(client, /const SHORT\b/);
   assert.match(client, /\bhitsBodyHtml\(/);
   assert.doesNotMatch(client, /signalKindShort|"(?:LARGE|NEW|RARE|LATE|COMMITTEE)"/, "no kind word is spelled in the island");
-  // the side filter's segments
+  // the side filter's segments. REVERSED by launch M3a (R20, the approved
+  // Congress board): the quick side filter reads All · Buys · Sells; the
+  // EXCHANGE side keeps the feed's own kind word under More filters. The
+  // property kept: one closed vocabulary, never the retired "Purchase"/"Sale".
   const congress = readFileSync(path.join(SRC, "pages", "congress", "index.astro"), "utf-8");
-  assert.match(congress, /data-value="buy"[^>]*>BUY</);
-  assert.match(congress, /data-value="sell"[^>]*>SELL</);
+  assert.match(congress, /data-group="side" data-value="buy"[^>]*>Buys</);
+  assert.match(congress, /data-group="side" data-value="sell"[^>]*>Sells</);
   assert.match(congress, /data-value="exch"[^>]*>EXCHANGE</);
+  assert.doesNotMatch(congress, /data-group="side"[^>]*>(?:Purchase|Sale)s?</, "control: no retired side word on a filter");
   // control: the dist predicate catches a retired side word in a cell
   assert.ok(contentHits("<td class=\"c-kind\">Purchase</td>").some((h) => h.check === "a cell reads the retired side word"));
   assert.equal(contentHits("<td class=\"c-kind\">BUY</td>").length, 0);
@@ -268,7 +273,12 @@ test("T3.3 (R17): the default asset text drops [ST], the ticker and 'Common Stoc
   assert.match(print, /\.asset-line > \.asset-text,[\s\S]*?white-space: normal/);
 });
 
-test("T3.3 (R17; W-9, CD3-4): the member's net-flow Issuer cell shows the NAME, its note keyed on the ticker, only when more than the mechanical parts differ", () => {
+/* launch M4b (R26): the net-flow table became the side column's Top
+   tickers (Ticker · bar · B·S · Net) and its Issuer column left with the
+   mock's layout. The property it pinned — the asset as filed is reachable
+   from the member page, its mechanical parts dropped only where nothing else
+   differs — now lives on the trades table's asset line (R17), pinned here. */
+test("T3.3 → launch M4b (R17): the member's trades show each asset's default text, with the as-filed note only when more than the mechanical parts differ", () => {
   const m = {
     bioguide: "T000001", name: "Fixture Member", party: "R", state: "OK", district: null, chamber: "senate", servingSince: "1999", filingCount: 1,
     txns: [
@@ -277,24 +287,19 @@ test("T3.3 (R17; W-9, CD3-4): the member's net-flow Issuer cell shows the NAME, 
     ],
     paper: [],
   };
-  const html = memberV2Sections(m as never, { buildId: "b", generatedAt: "2026-07-24 06:56 UTC", generatedAtDate: "2026-07-24" }, CTX, { resolveSector: null, sectorMeta: null, committees: null });
+  const html = entityTxnTable(m.txns as never, { kind: "member", caption: "c", page: 0, ctx: CTX, notes: { scope: "member-txns" } });
   const dom = domOf(html);
   const cellOf = (ticker: string) =>
-    dom.querySelectorAll("tr.design-net-row").find((tr) => visibleText(tr.querySelector("td.c-ticker")!).trim() === ticker)!.querySelector("td.design-issuer")!;
-  // a mechanical-only row: the name, and NO per-row note (the header states the rule)
+    dom.querySelectorAll("tbody tr").find((tr) => visibleText(tr.querySelector("td.c-ticker")!).trim() === ticker)!.querySelector("td.c-asset")!;
   const cvx = cellOf("CVX");
   assert.equal(visibleText(cvx).trim(), "Chevron Corporation");
   assert.equal(cvx.querySelectorAll(".note-pop").length, 0, "CD3-4 (c): no per-row note for a mechanical-only difference");
-  // a row whose newest trade is an option: the NAME only (W-9), the note gives the filing and the code
   const nflx = cellOf("NFLX");
-  assert.equal(visibleText(nflx.querySelectorAll(".note-label")[0]!).replace(", explain", "").trim(), "Netflix, Inc.", "W-9: no type words on a row that nets every trade");
-  assert.equal(visibleText(nflx.querySelectorAll(".note-pop")[0]!).trim(), "As filed: Netflix, Inc. (NFLX) [OP] · type code OP: Options");
-  assert.equal(nflx.querySelectorAll(".note-pop")[0]!.getAttribute("id"), "n-mf-nflx", "CD3-4 (a): keyed on the ticker");
-  // the Issuer header carries the rule once
-  const issuerHead = dom.querySelectorAll("th").find((th) => /^Issuer/.test(visibleText(th).trim()))!;
-  assert.match(visibleText(issuerHead.querySelectorAll(".note-pop")[0]!), /a trailing “\(TICKER\)” that is the row's ticker, the stock code “\[ST\]”/);
-  // controls: the retired forms — the type words in the label, a txn-keyed id
-  assert.doesNotMatch(visibleText(nflx), /· Options/);
+  assert.match(visibleText(nflx.querySelectorAll(".note-pop")[0]!), /As filed: Netflix, Inc\. \(NFLX\) \[OP\]/, "the note gives the filing as filed");
+  // the Asset · owner header carries the asset rule once
+  const head = dom.querySelectorAll("th").find((th) => /^Asset · owner/.test(visibleText(th).trim()))!;
+  assert.match(visibleText(head.querySelectorAll(".note-pop")[0]!), /a trailing “\(TICKER\)” that is the row's ticker, the stock code “\[ST\]”/);
+  // control: the retired txn-keyed net-flow ids are not back
   assert.doesNotMatch(html, /n-member-flow-asset-/);
 });
 
@@ -376,11 +381,24 @@ function notableFeed(): { feed: ActivityFeed; ciks: Set<string> } {
   return { feed: { present: true, reason: null, filings: FILINGS_ACT, pagination: paginateActivity(records, FILINGS_ACT), records } as ActivityFeed, ciks };
 }
 
-test("T3.8 (H-1, V1 NEW-2, V1 NEW-3): over notable rows the bound, the caption and the count all say newest-first", () => {
+test("T3.8 (H-1, V1 NEW-2, V1 NEW-3): over notable rows the head, the caption and the count all say newest-first", () => {
   const { feed, ciks } = notableFeed();
   const html = activityFeedHtml(feed, { reference: true, notableCiks: ciks });
   const extra = html.slice(html.indexOf('<span class="compact-bound-extra">'));
-  assert.match(extra, /^<span class="compact-bound-extra"> These rows are notable managers' new, added, trimmed and exited positions, at most two per manager, newest filing first, then largest change; each manager's full list is on its filer page\. This build publishes all 14 of its changes, ranked by size of change with undisclosed values last, as 1 file of at most 2,000 changes or 2,097,152 bytes each\. <a href="[^"]+">Open the first file ↗<\/a>/);
+  /* launch copy items inst-06/inst-07 (reversal record: launch-copy ledger):
+     what the notable rows ARE — the four kinds, the per-manager cap, newest
+     filing first, the filer-page pointer — moved from the bound's first
+     sentence to the head meta's tip, said once; the bound keeps the
+     publication bound whole, every number, and the no-JavaScript link. */
+  assert.match(extra, /^<span class="compact-bound-extra"> This build publishes all 14 of its changes, ranked by size of change with undisclosed values last, as 1 file of at most 2,000 changes or 2,097,152 bytes each\. <a href="[^"]+">Open the first file ↗<\/a>/);
+  const head = html.slice(0, html.indexOf("</div>"));
+  assert.match(head, /<span class="panel-note">Notable managers · newest first<\/span>/, "the head meta, four words");
+  assert.match(
+    head.replace(/&#39;/g, "'"),
+    /<span class="note-pop"[^>]*>New, added, trimmed and exited positions only, at most two per manager, newest filing first, then largest change; each manager's full list is on its filer page\.<\/span>/,
+    "the meta's tip says what the rows are, once",
+  );
+  assert.doesNotMatch(html, /These rows are notable managers/, "the bound no longer repeats it");
   assert.match(html, /<caption class="visually-hidden">Quarter-over-quarter position changes by notable managers, at most two per manager, newest filing first, then largest change<\/caption>/);
   assert.match(html, /1–10 of the 14 newest changes by notable managers shown here/);
   // controls: the old sentences over these rows are false and absent
@@ -419,16 +437,22 @@ test("T3.8 (G-11, V1 NEW-4): the empty-activity sentence is true of what QoQ emi
   assert.doesNotMatch(html, /appears in both quarters|nothing keyable/, "control: the false and the pipeline wordings");
 });
 
-test("T3.8 (V1 NEW-1): the EDGAR block and the holdings-absent sentence state the 2026-08-01 decision, never a served-since claim", () => {
+test("T3.8 (V1 NEW-1): the EDGAR block and the holdings-absent sentence never make a served-since claim; the absent sentence states the 2026-08-01 decision", () => {
   const edgar = filerEdgarBlock("0001067983", "F");
   const absent = projectionAbsentHtml("filer", "https://www.sec.gov/x");
   for (const html of [edgar, absent]) {
-    assert.match(html, /Public Filings decided on 2026-08-01 to serve this list from its published build/);
     assert.doesNotMatch(html, /has served|has published [^.]* since/, "control: a served-since claim");
     assert.doesNotMatch(html, /2026-08-02/, "control: the parameter-lock date");
     assert.doesNotMatch(html, /M2-CONTRACT §3/);
   }
-  assert.match(edgar, /where the page cannot embed every reported row, the list says how many it leaves out/);
+  assert.match(absent, /Public Filings decided on 2026-08-01 to serve this list from its published build/);
+  /* Launch copy audit filer-11 (reversal record, docs/frontend/launch-redesign.md):
+     the EDGAR block keeps its receipt and names the filing as the record; the
+     internal decision log and the completeness sentence left it (the list's own
+     terminus states any cap, so the block needs neither). */
+  assert.match(edgar, /<p>The filing on EDGAR is the record, including any filed after this build\.<\/p>/);
+  assert.match(edgar, /<a class="cta" href="https:\/\/www\.sec\.gov\/[^"]*CIK=0001067983[^"]*"[^>]*>Open F's 13F filings on SEC EDGAR ↗<\/a>/, "the receipt link stays");
+  assert.doesNotMatch(edgar, /decided on 2026-08-01|provenance, not a substitute|says how many it leaves out/, "control: the retired decision log");
 });
 
 test("T3.8 (H-8): the Reported positions caveat is true of the rows — complete vs size-capped, grouped vs as filed", () => {
@@ -439,13 +463,20 @@ test("T3.8 (H-8): the Reported positions caveat is true of the rows — complete
   const complete = holdingsTableHtml({ reference: true, cik: "0001067983", filerName: "F", period: "2026-03-31", rows, filings: FILINGS, page: 0 });
   const capped = holdingsTableHtml({ reference: true, cik: "0001067983", filerName: "F", period: "2026-03-31", rows, filings: FILINGS, page: 0, totalRows: 40 });
   const caveat = (html: string): string => visibleText(domOf(html).querySelectorAll(".caveat-line").at(-1)!);
-  assert.match(caveat(complete), /^One line per issuer, largest first; a row with no issuer key stands on its own line\. Open a line for its rows as this filer reported them\. The list holds every row this filer reported for the quarter\. Issuer totals on the holders pages count each manager's own report once; that never removes a row here\./);
+  /* Launch copy audit filer-09 (reversal record, docs/frontend/launch-redesign.md):
+     what the table is in one line, the grouping detail one link away on
+     /methodology/#filer-positions. The caveat no longer carries the positive
+     completeness sentence ("The list holds every row …"): the head counts the
+     rows, and a size-capped list's terminus states how many it leaves out —
+     the honesty half of the old property, asserted just below. */
+  assert.match(caveat(complete), /^One line per issuer, largest first — open a line for its reported rows\. Grouping ↗$/);
+  assert.match(complete, /<a href="\/methodology\/#filer-positions">Grouping ↗<\/a>/, "the de-duplication detail is one link away");
   assert.doesNotMatch(caveat(capped), /every row this filer reported/, "control: no completeness sentence over a size-capped page");
   assert.match(capped, /38 of this filer's 40 reported rows for 2026-03-31 are not embedded in this page/, "…whose terminus states the count");
   // a row with no issuer key stands on its own line
   const names = domOf(complete).querySelectorAll("tr.design-holding-row .filed-name").map((n) => visibleText(n));
   assert.ok(names.includes("NO KEY CO") && names.includes("APPLE INC"));
-  assert.match(holdingsCaveatHtml(false, 3, 3), /Each row as this filer reported it\. The list holds every row/);
+  assert.match(holdingsCaveatHtml(false, 3, 3), /^<div class="caveat-line">Each row as this filer reported it\. <a href="\/methodology\/#filer-positions">Grouping ↗<\/a><\/div>$/);
   assert.doesNotMatch(holdingsCaveatHtml(true, 5, 3), /every row this filer reported/);
 });
 
@@ -524,4 +555,15 @@ test("M2V-D2: a grouped holdings table showing its whole collection carries its 
   const capped = holdingsTableHtml({ reference: true, cik: "0001067983", filerName: "F", period: "2026-03-31", rows, filings: FILINGS, page: 0, totalRows: 30 });
   assert.doesNotMatch(capped, /data-compact-for="filer-holdings-tbody"/, "control: a size-capped page never reads as complete");
   assert.doesNotMatch(capped, /<tbody id=/);
+});
+
+/* Launch copy audit global-01 (M6): the masthead search panel's foot keeps its
+   privacy promise in five words; "the index ships with the build" was
+   engineering. The device-only meaning is the property: the query is matched on
+   the reader's device, against a file the page fetched. */
+test("launch M6 (global-01): the search panel's foot says search runs on this device, and nothing more", () => {
+  const base = readFileSync(path.resolve(import.meta.dirname, "..", "src", "layouts", "Base.astro"), "utf-8");
+  assert.match(base, /<div class="search-panel-foot">Search runs on this device\.<\/div>/);
+  assert.doesNotMatch(base, /never leaves this device — the index ships with the build/, "control: the old line is gone");
+  assert.equal((base.match(/class="search-panel-foot"/g) ?? []).length, 1, "one foot, inside the one search panel");
 });

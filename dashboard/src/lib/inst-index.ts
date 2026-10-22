@@ -73,20 +73,15 @@ export function buildInstIndexRow(
   typing: ManagerTyping | null = null,
   change: BiggestChangeResult = { best: null, unrankable: 0 },
 ): InstIndexRow {
-  let hhi: number | null = null;
-  let hhiNote = "";
-  if (conc === null) {
-    hhiNote = "no concentration row for this filer's latest period";
-  } else if (conc.null_value_positions > 0) {
-    // Constraint 5: a filer with disclosed positions AND NULL-valued ones
-    // would score concentration on a partial denominator — withheld from
-    // ordering entirely rather than renamed.
-    hhiNote = `${conc.null_value_positions} of ${conc.position_count} positions carry a NULL value — HHI over a partial denominator is not comparable and is withheld`;
-  } else if (conc.hhi == null) {
-    hhiNote = "concentration_unavailable: the producer stores NULL, never a fabricated 0";
-  } else {
-    hhi = conc.hhi;
-  }
+  // Constraint 5: a filer with disclosed positions AND NULL-valued ones would
+  // score concentration on a partial denominator — withheld from ordering
+  // entirely rather than renamed (`hhiNoteFor` states which reason applies).
+  const hhi: number | null = conc === null || conc.null_value_positions > 0 || conc.hhi == null ? null : conc.hhi;
+  const hhiNote = hhiNoteFor(
+    conc === null ? null : conc.position_count,
+    conc === null ? null : conc.null_value_positions,
+    hhi,
+  );
   return {
     cik: filer.cik,
     name: filer.filer_name,
@@ -100,6 +95,19 @@ export function buildInstIndexRow(
     typing: typing ?? null,
     changeHtml: biggestChangeCellHtml(change),
   };
+}
+
+/** Why a row's HHI is withheld, or "" when it is shown. ONE function for the
+    server row builder and the directory shard reader (launch M7b, LD28): the
+    note is derived from the fields a slim shard row carries, so it is never
+    shipped a second time per filer and can never disagree with the row. */
+export function hhiNoteFor(positions: number | null, nullValuePositions: number | null, hhi: number | null): string {
+  if (positions === null) return "no concentration row for this filer's latest period";
+  if (nullValuePositions !== null && nullValuePositions > 0) {
+    return `${nullValuePositions} of ${positions} positions carry a NULL value — HHI over a partial denominator is not comparable and is withheld`;
+  }
+  if (hhi === null) return "concentration_unavailable: the producer stores NULL, never a fabricated 0";
+  return "";
 }
 
 export type InstSortKey = "value" | "hhi" | "name" | "positions";
@@ -183,11 +191,12 @@ export function applyDirectoryChips(
     reader can match what they see here against the filing itself. */
 function nameCellHtml(r: InstIndexRow, href: string): string {
   const typing = r.typing ?? null;
+  /* the row's main link (launch review M2): the name cell is the row's */
   if (typing === null) {
-    return `<a href="${esc(href)}">${esc(r.name)}</a>`;
+    return `<a data-row-link href="${esc(href)}">${esc(r.name)}</a>`;
   }
   return (
-    `<a href="${esc(href)}">${esc(typing.display_name)}</a>` +
+    `<a data-row-link href="${esc(href)}">${esc(typing.display_name)}</a>` +
     (typing.person ? ` <span class="mgr-person">${esc(typing.person)}</span>` : "") +
     `<span class="mono-note filed-name"> filed as ${esc(r.name)}</span>`
   );
@@ -416,3 +425,186 @@ export const DESIGN_INST_INDEX_HEADS: typeof INST_INDEX_HEADS = [
   { key: null, label: "Top-5", why: "Reported top-five share, available only when the source concentration slice contains five positions." },
   { key: null, label: "Latest notable", why: "Largest reported change within each filer's latest quarter. It is not a cross-filer ranking." },
 ];
+
+/* ---------- the directory shard family (launch redesign M7b; R32, LD28) ----------
+
+   The directory's rows used to ride the /institutional/ page as one inline
+   JSON island (≈3.4 MB on data build 20261019.2, 96% of the page). They now
+   ship as a versioned, byte-bounded file family,
+   `/institutional/data/directory/{n}.v1.json`, which the page fetches on the
+   first search, chip or sort; the server still renders the default first rows,
+   so the page is correct before (and without) any fetch.
+
+   A shard row is SLIM: a positional array of exactly the fields
+   `instIndexRowHtml` reads, with `reference` implied (every directory row is a
+   reference row) and the HHI note derived by `hhiNoteFor` rather than shipped.
+   `expandDirectoryRow(slimDirectoryRow(r))` renders byte-identically to `r`
+   (pinned by `launch-weight-inst.test.ts`), which is what lets the client draw
+   fetched rows through the one row renderer the server uses. */
+
+/** Mirrored from `src/populus/inst_budget.py::INST_DIRECTORY_SHARDS_MAX`; the
+    walk FAILS past it and never truncates (a filer missing from the family
+    would vanish from search). Pinned against the Python constant by
+    `test/post/file-budget.test.ts`. */
+export const INST_DIRECTORY_SHARDS_MAX = 8;
+/** The LD-10 client-response ceiling (`lib/shards.ts`), restated as this
+    family's per-file bound. */
+export const INST_DIRECTORY_SHARD_CEILING_BYTES = 1_048_576;
+/** The family's transport version; bump it (and keep a tombstone) on any
+    breaking change to the slim row, as the filer tail family does. */
+export const INST_DIRECTORY_VERSION = 1;
+
+/** `[cik, name, period, value, positions, nullValuePositions, hhi, tier (1 top,
+    0 tail), typing ([display_name, person, manager_type, notable 1|0] | null),
+    changeHtml, top5Share?]` — `top5Share` is present exactly when the row
+    carries the field (the table's Top-5 column exists). */
+export type SlimDirectoryRow = [
+  string,
+  string,
+  string,
+  number | null,
+  number | null,
+  number | null,
+  number | null,
+  0 | 1,
+  [string, string | null, string, 0 | 1] | null,
+  string,
+  (number | null)?,
+];
+
+export function slimDirectoryRow(r: InstIndexRow): SlimDirectoryRow {
+  const t = r.typing ?? null;
+  const slim: SlimDirectoryRow = [
+    r.cik,
+    r.name,
+    r.period,
+    r.value,
+    r.positions,
+    r.nullValuePositions,
+    r.hhi,
+    r.tier === "top" ? 1 : 0,
+    t === null ? null : [t.display_name, t.person ?? null, t.manager_type, t.notable ? 1 : 0],
+    r.changeHtml,
+  ];
+  if (r.top5Share !== undefined) slim.push(r.top5Share);
+  return slim;
+}
+
+export function expandDirectoryRow(s: SlimDirectoryRow): InstIndexRow {
+  const [cik, name, period, value, positions, nullValuePositions, hhi, tier, t, changeHtml] = s;
+  const row: InstIndexRow = {
+    reference: true,
+    cik,
+    name,
+    period,
+    value,
+    positions,
+    nullValuePositions,
+    hhi,
+    hhiNote: hhiNoteFor(positions, nullValuePositions, hhi),
+    tier: tier === 1 ? "top" : "tail",
+    typing: t === null ? null : { cik, display_name: t[0], person: t[1], manager_type: t[2] as ManagerType, notable: t[3] === 1 },
+    changeHtml,
+  };
+  if (s.length > 10) row.top5Share = s[10] ?? null;
+  return row;
+}
+
+/** Same-origin path of directory shard `n`. The page inlines the list it
+    built from this, so the client never composes a path itself. */
+export function directoryShardHref(n: number): string {
+  return `/institutional/data/directory/${n}.v1.json`;
+}
+
+export interface DirectoryShard {
+  name: string;
+  body: string;
+  rows: number;
+}
+
+export interface DirectoryFamily {
+  shards: DirectoryShard[];
+  total: number;
+  /** the tiny list the page inlines (`#inst-index-shards`) */
+  listJson: string;
+}
+
+/** Envelope keys, in order: `{"v":1,"kind":"inst-directory-shard","shard":n,
+    "shard_count":k,"total":T,"rows":[...]}`. */
+function shardBody(shard: number, shardCount: number, total: number, rowJsons: readonly string[]): string {
+  return (
+    `{"v":${INST_DIRECTORY_VERSION},"kind":"inst-directory-shard","shard":${shard},` +
+    `"shard_count":${shardCount},"total":${total},"rows":[${rowJsons.join(",")}]}`
+  );
+}
+
+/** Cut the slim directory rows into the family through the ONE byte-bounded
+    filler (`fillShardsByBytes`). The envelope reservation is measured on the
+    widest envelope this family can emit (shard and count at the maximum, the
+    real total), so no emitted body can exceed the ceiling. Throws past the
+    shard maximum or on a single over-ceiling row — never truncates. */
+export function planDirectoryShards(
+  rows: readonly InstIndexRow[],
+  fill: (
+    items: readonly { key: string; json: string }[],
+    limits: { ceilingBytes: number; overheadBytes: number; itemLimit: number; shardLimit: number },
+    policy: { onOverflow: "fail"; onOversizedItem: "fail"; itemNoun: string },
+  ) => { shards: { itemJsons: string[] }[] },
+  opts: { ceilingBytes?: number; shardLimit?: number } = {},
+): DirectoryFamily {
+  const ceilingBytes = opts.ceilingBytes ?? INST_DIRECTORY_SHARD_CEILING_BYTES;
+  const shardLimit = opts.shardLimit ?? INST_DIRECTORY_SHARDS_MAX;
+  const total = rows.length;
+  const items = rows.map((r) => ({ key: r.cik, json: JSON.stringify(slimDirectoryRow(r)) }));
+  const widest = shardBody(shardLimit, shardLimit, total, []);
+  const { shards } = fill(
+    items,
+    // TextEncoder, not Buffer: this module also ships in the client bundle.
+    { ceilingBytes, overheadBytes: new TextEncoder().encode(widest).length, itemLimit: Number.MAX_SAFE_INTEGER, shardLimit },
+    { onOverflow: "fail", onOversizedItem: "fail", itemNoun: "directory row" },
+  );
+  // An empty directory still publishes shard 0, whose body states the empty
+  // total — a page that fetches it learns "no filers", never a 404.
+  const jsonsPerShard = shards.length === 0 ? [[]] : shards.map((s) => s.itemJsons);
+  const out = jsonsPerShard.map((jsons, i) => ({
+    name: String(i),
+    body: shardBody(i, jsonsPerShard.length, total, jsons),
+    rows: jsons.length,
+  }));
+  return {
+    shards: out,
+    total,
+    listJson: JSON.stringify({ v: INST_DIRECTORY_VERSION, total, shards: out.map((_, i) => directoryShardHref(i)) }),
+  };
+}
+
+/** The page's inlined shard list, validated; null when it is absent or not
+    this version's shape (the client then keeps the server rows and says so). */
+export function parseDirectoryShardList(raw: string | null | undefined): { total: number; shards: string[] } | null {
+  try {
+    const v = JSON.parse(raw ?? "") as { v?: unknown; total?: unknown; shards?: unknown };
+    if (v.v !== INST_DIRECTORY_VERSION || !Number.isInteger(v.total) || !Array.isArray(v.shards)) return null;
+    if (!v.shards.every((s) => typeof s === "string" && s.startsWith("/institutional/data/directory/"))) return null;
+    return { total: v.total as number, shards: v.shards as string[] };
+  } catch {
+    return null;
+  }
+}
+
+/** One fetched shard body, validated against its place in the family. Throws
+    with a reason on any mismatch — a partial or stale family must never be
+    drawn as if it were the whole directory. */
+export function parseDirectoryShard(body: unknown, index: number, count: number, total: number): InstIndexRow[] {
+  const b = body as { v?: unknown; kind?: unknown; shard?: unknown; shard_count?: unknown; total?: unknown; rows?: unknown };
+  if (b === null || typeof b !== "object") throw new Error("directory shard: not an object");
+  if (b.v !== INST_DIRECTORY_VERSION) throw new Error(`directory shard ${index}: version ${String(b.v)}`);
+  if (b.kind !== "inst-directory-shard") throw new Error(`directory shard ${index}: kind ${String(b.kind)}`);
+  if (b.shard !== index || b.shard_count !== count || b.total !== total) {
+    throw new Error(`directory shard ${index}: envelope ${String(b.shard)}/${String(b.shard_count)}/${String(b.total)} does not match ${index}/${count}/${total}`);
+  }
+  if (!Array.isArray(b.rows)) throw new Error(`directory shard ${index}: no rows`);
+  return (b.rows as SlimDirectoryRow[]).map((r) => {
+    if (!Array.isArray(r) || r.length < 10 || typeof r[0] !== "string") throw new Error(`directory shard ${index}: malformed row`);
+    return expandDirectoryRow(r);
+  });
+}

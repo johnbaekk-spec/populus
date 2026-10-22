@@ -7,7 +7,7 @@
 // (the budget-cut rule); cut members stay reachable at /e/?k=m:… with their endpoint.
 import Base from "../../../layouts/Base.astro";
 import { getBuildData, getSignalArtifact, sectorResolver, chamberBenchmarkFor } from "../../../lib/data";
-import { memberBody, memberSignalsPanel, type BuildStamps, type MemberV2Deps } from "../../../lib/ui/index.ts";
+import { memberBody, memberSignalsPanel, signalKindShort, type BuildStamps, type MemberV2Deps } from "../../../lib/ui/index.ts";
 import type { RenderCtx } from "../../../lib/format";
 
 export function getStaticPaths() {
@@ -20,6 +20,7 @@ export function getStaticPaths() {
 const { bioguide } = Astro.params;
 const build = getBuildData();
 const member = build.membersByKey.get(bioguide!)!;
+const signalArtifact = getSignalArtifact();
 const stamps: BuildStamps = {
   buildId: build.buildId,
   generatedAt: build.generatedAt,
@@ -48,9 +49,20 @@ const v2Deps: MemberV2Deps = {
       }
     : null,
   chamber: chamberBenchmarkFor(build, member.chamber),
+  /* R23 / LD24: the compact layout's Signals fact reads the member's ACTIVE
+     signals of any kind (s1–s6) from the same artifact the panel reads */
+  signals: {
+    retentionDays: signalArtifact.retentionDays,
+    active: signalArtifact.signals
+      .filter((s) => s.entities.bioguide === member.bioguide && s.status === "active")
+      .map((s) => ({ kind: s.kind, label: `S-${s.kind.slice(1, 2)} · ${signalKindShort(s.kind)}`, ticker: s.entities.ticker ?? null })),
+    /* launch review H4: "None" is stated with what was not evaluated */
+    unevaluated: signalArtifact.signals.filter((s) => s.entities.bioguide === member.bioguide && s.status === "unevaluated").length,
+    withheld: signalArtifact.withheld.map((w) => `S-${w.kind.slice(1, 2)} · ${signalKindShort(w.kind)}`),
+  },
 };
 const bodyHtml =
-  memberBody(member, stamps, ssrCtx, 0, v2Deps, memberSignalsPanel(getSignalArtifact(), member.bioguide, ssrCtx));
+  memberBody(member, stamps, ssrCtx, 0, v2Deps, memberSignalsPanel(signalArtifact, member.bioguide, ssrCtx));
 const description =
   `Congressional financial disclosures for ${member.name}: every transaction as filed, ` +
   `statutory amount ranges, dual dates, provenance links — from primary government sources.`;
@@ -63,10 +75,15 @@ const description =
   <script>
     import { initEntityPage } from "../../../scripts/entity-client";
     import { initNotes } from "../../../scripts/notes";
-    import { initDomDisclosures } from "../../../scripts/inst-index-client";
+    import { initDomDisclosures, registerHeldRows } from "../../../scripts/inst-index-client";
+    import { memberNetRowHtml, memberHistoryRowHtml, MEMBER_NET_ROWS, MEMBER_HISTORY_ROWS } from "../../../lib/ui/index.ts";
     initEntityPage();
-    /* R36: the member page's DOM-backed compact tables (net disclosed flow by
-       ticker, filing history) are revealed and re-synced by the one binder. */
+    /* R36 + rule 8 (LD26): the member page's compact tables (net disclosed
+       flow by ticker, filing history) hold their extra rows in JSON islands;
+       the one binder renders them through the SAME row functions the server
+       used, registered here by the names the islands carry. */
+    registerHeldRows(MEMBER_NET_ROWS, memberNetRowHtml);
+    registerHeldRows(MEMBER_HISTORY_ROWS, memberHistoryRowHtml);
     initDomDisclosures();
     /* One `initNotes()` per surface that passes a note scope. Binding
        is DELEGATED on `document`, so one call covers notes created later by an

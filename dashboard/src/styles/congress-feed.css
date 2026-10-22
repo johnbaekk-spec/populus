@@ -21,6 +21,25 @@
   max-width: 100%;
   display: contents;
 }
+/* Launch M3a (LD20): the view and the two quick filters lead as one wrapping
+   group; the text filter stands on its own row (a full-basis flex item breaks
+   the line); More filters follow. No width hides any of them. */
+.filter-quick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 22px;
+}
+.filter-search {
+  flex: 1 0 100%;
+}
+.filter-search .filter-text {
+  flex: 1 1 auto;
+  max-width: 420px;
+  cursor: text;
+  background-image: none;
+  padding-right: 11px;
+}
 /* `.filter-group`, `.filter-label` and the segmented `.seg` control are the
    ledger region's one control spec now (entities.css): one joined group, the
    active item filled with a 2px cue bar. The party tints stay (the design
@@ -33,7 +52,7 @@
   border-radius: 0;
   background: transparent;
   padding: 5px 26px 5px 11px;
-  font: 500 var(--fs-cell) var(--sans);
+  font: 500 var(--fs-input) var(--sans); /* launch M1b (LD12): every field reads --fs-input */
   color: var(--ink2);
   min-height: 28px;
   cursor: pointer;
@@ -107,7 +126,7 @@
 .cell {
   min-width: 0;
 }
-.cell-member a.unjoined {
+.cell-member .unjoined {
   border-bottom: 1.5px dotted var(--ink3);
 }
 .aff {
@@ -214,14 +233,6 @@
   color: var(--ink2);
   white-space: nowrap;
 }
-.paper-note {
-  font: 400 var(--fs-small) var(--sans);
-  color: var(--ink3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 /* footnote + table footer */
 .feed-footnote {
   padding: 9px 16px;
@@ -352,3 +363,112 @@
 }
 
 /* ================= entity, feed & table surfaces ================= */
+
+/* ---------- Monthly flow (launch M3b, R11/R21, LD13/LD23) ----------
+   The default Members view: two lines on a labelled member axis, the
+   "Filling in" zone labelled an estimate, a readout per month. The Dollars
+   view keeps the existing bar grammar (entities.css `.ribbon-monthly`) and
+   gains its dollar axis labels. The plot is one focusable control. */
+.mf-controls { display: flex; flex-wrap: wrap; gap: 8px 12px; margin-left: auto; }
+.mf-legend {
+  display: flex;
+  gap: 16px;
+  margin: 10px 0 0;
+  font: 500 var(--fs-note) var(--sans);
+  color: var(--ink2);
+}
+.mf-key-buy::before,
+.mf-key-sell::before {
+  content: "";
+  display: inline-block;
+  width: 14px;
+  height: 2px;
+  margin-right: 6px;
+  vertical-align: middle;
+  background: var(--buy);
+}
+.mf-key-sell::before { background: var(--sell); }
+.mf-chart { position: relative; margin-top: 8px; padding-left: 34px; }
+.mf-yt {
+  position: absolute;
+  left: 0;
+  top: -2px;
+  font: 400 var(--fs-note) var(--mono);
+  color: var(--ink3);
+}
+.mf-plot {
+  position: relative;
+  height: 180px;
+  margin: 14px 0 22px;
+  border-bottom: 1px solid var(--rule2);
+}
+.mf-hit:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.mf-plot svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.mf-line { fill: none; stroke-width: 2; stroke-linejoin: round; }
+.mf-line-buy { stroke: var(--buy); }
+.mf-line-sell { stroke: var(--sell); }
+.mf-line-est { stroke-dasharray: 4 3; }
+.mf-yaxis { position: absolute; inset: 0; pointer-events: none; }
+.mf-ytick {
+  position: absolute;
+  left: -34px;
+  width: calc(100% + 34px);
+  transform: translateY(50%);
+  border-bottom: 1px dashed var(--rule);
+  font: 400 var(--fs-note) var(--mono);
+  color: var(--ink3);
+  line-height: 1;
+}
+.mf-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in oklab, var(--ink3) 12%, transparent);
+  pointer-events: none;
+}
+.mf-fill span {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  font: 500 var(--fs-note) var(--sans);
+  color: var(--ink2);
+  white-space: nowrap;
+}
+.mf-cursor {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--ink3);
+  pointer-events: none;
+}
+.mf-xaxis { position: absolute; left: 0; right: 0; top: 100%; height: 18px; pointer-events: none; }
+.mf-x {
+  position: absolute;
+  top: 4px;
+  transform: translateX(-50%);
+  font: 400 var(--fs-note) var(--mono);
+  color: var(--ink3);
+  white-space: nowrap;
+}
+.mf-readout {
+  margin: 4px 0 0;
+  min-height: 1.5em;
+  font: 400 var(--fs-note)/1.5 var(--mono);
+  color: var(--ink2);
+}
+.mf-dollars { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px; margin-top: 8px; }
+.mf-dollar-axis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 224px;
+  font: 400 var(--fs-note) var(--mono);
+  color: var(--ink3);
+  text-align: right;
+}
+.mf-notes {
+  margin: 10px 0 0;
+  font: 400 var(--fs-note)/1.6 var(--sans);
+  color: var(--ink3);
+}

@@ -65,7 +65,9 @@ import {
   type FilerAggregateInputs,
   type FilerRouteV2,
 } from "./filer-payload.ts";
-import { paginateByBytes, SHARD_RESPONSE_CEILING_BYTES } from "./shards.ts";
+import { fillShardsByBytes, paginateByBytes, SHARD_RESPONSE_CEILING_BYTES } from "./shards.ts";
+import { buildInstIndexRow, directoryColumns, planDirectoryShards, type DirectoryFamily, type InstIndexRow } from "./inst-index.ts";
+import { biggestChange } from "./manager-directory.ts";
 import { buildSignalArtifact, validateSignalArtifact } from "./signals.ts";
 import { buildTriage } from "./signal-triage.ts";
 import { sicCode } from "./committee-direct.ts";
@@ -551,13 +553,6 @@ export function sectorResolver(build: BuildData): ((ticker: string) => import(".
   };
 }
 
-/** Modules present in this build's manifest — drives S1 surfaces and the S7
-    suppression rule. Derived from the manifest, never assumed. */
-export function moduleAvailability(build: BuildData): { congress: boolean; inst: boolean } {
-  const modules = build.manifest?.modules ?? {};
-  return { congress: "congress" in modules, inst: "inst" in modules };
-}
-
 /* ---------- source resolution ---------- */
 
 // astro build/dev always runs with cwd = dashboard/ (module paths get
@@ -708,7 +703,7 @@ function loadRows(dbPath: string): {
   try {
     const txnRows = db
       .prepare(
-        `SELECT t.txn_id, t.filed_date, t.transaction_date, t.bioguide_id, t.chamber,
+        `SELECT t.txn_id, t.filing_id, t.filed_date, t.transaction_date, t.bioguide_id, t.chamber,
                 t.ticker, ${exchangedTickerSelect(db)}, t.asset_name, t.asset_type, t.side, t.owner,
                 t.amount_low, t.amount_high,
                 t.days_to_file, t.is_late, t.flags,
@@ -774,66 +769,62 @@ function loadRows(dbPath: string): {
       doc: String(r.doc_url),
     }));
 
-    // Member metadata + per-member filing counts for the entity pages: one
-    // query each, grouped in memory — no per-entity SQL.
+    // Member metadata + per-member filing counts for the entity pages.
+    //
+    // launch gate (holders lane): the member set and each member's distinct
+    // transaction-filing count are derived from the `v_default_transactions`
+    // rows read above, NOT by scanning the view twice more. The view's
+    // superseding-amendment test is a correlated NOT EXISTS over `filings`
+    // with no index on `supersedes`, so every rescan driven from
+    // `transactions` costs transactions × filings row visits — measured on the
+    // data repo's 906 MB release db (58,059 rows × 9,455 filings): 51 s for the
+    // membership subquery alone, ~147 s for getBuildData at load 20, past the
+    // holders lane's 180 s webServer wait under load. Same rows, same counts:
+    // the view is read once.
+    const txnBioguides = new Map<string, Set<string>>();
+    for (const r of txnRows) {
+      if (r.bioguide_id == null) continue;
+      const b = String(r.bioguide_id);
+      let filings = txnBioguides.get(b);
+      if (!filings) txnBioguides.set(b, (filings = new Set()));
+      filings.add(String(r.filing_id));
+    }
+    const paperCounts = new Map<string, number>(
+      (
+        db
+          .prepare(
+            `SELECT bioguide_id, COUNT(*) AS c
+             FROM filings
+             WHERE parse_status = 'needs_ocr' AND lifecycle = 'active'
+               AND bioguide_id IS NOT NULL
+             GROUP BY bioguide_id`,
+          )
+          .all() as Record<string, unknown>[]
+      ).map((r) => [String(r.bioguide_id), Number(r.c)]),
+    );
     const memberMeta = new Map<string, MemberDbMeta>();
     const metaRows = db
       .prepare(
         `SELECT m.bioguide_id, m.full_name, m.party, m.state, m.district,
                 m.chamber, m.terms
          FROM members m
-         WHERE m.bioguide_id IN (
-           SELECT DISTINCT bioguide_id FROM v_default_transactions
-            WHERE bioguide_id IS NOT NULL
-           UNION
-           SELECT DISTINCT bioguide_id FROM filings
-            WHERE parse_status = 'needs_ocr' AND lifecycle = 'active'
-              AND bioguide_id IS NOT NULL)`,
+         ORDER BY m.bioguide_id`,
       )
       .all() as Record<string, unknown>[];
     for (const r of metaRows) {
-      memberMeta.set(String(r.bioguide_id), {
+      const b = String(r.bioguide_id);
+      if (!txnBioguides.has(b) && !paperCounts.has(b)) continue;
+      memberMeta.set(b, {
         name: r.full_name == null ? null : String(r.full_name),
         party: r.party == null ? null : String(r.party),
         state: r.state == null ? null : String(r.state),
         district: r.district == null ? null : String(r.district),
         chamber: r.chamber == null ? null : String(r.chamber),
         terms: r.terms == null ? null : String(r.terms),
-        txnFilingCount: 0,
-        paperFilingCount: 0,
+        txnFilingCount: txnBioguides.get(b)?.size ?? 0,
+        paperFilingCount: paperCounts.get(b) ?? 0,
       });
     }
-    const bump = (
-      rows: Record<string, unknown>[],
-      field: "txnFilingCount" | "paperFilingCount",
-    ) => {
-      for (const r of rows) {
-        const meta = memberMeta.get(String(r.bioguide_id));
-        if (meta) meta[field] = Number(r.c);
-      }
-    };
-    bump(
-      db
-        .prepare(
-          `SELECT bioguide_id, COUNT(DISTINCT filing_id) AS c
-           FROM v_default_transactions WHERE bioguide_id IS NOT NULL
-           GROUP BY bioguide_id`,
-        )
-        .all() as Record<string, unknown>[],
-      "txnFilingCount",
-    );
-    bump(
-      db
-        .prepare(
-          `SELECT bioguide_id, COUNT(*) AS c
-           FROM filings
-           WHERE parse_status = 'needs_ocr' AND lifecycle = 'active'
-             AND bioguide_id IS NOT NULL
-           GROUP BY bioguide_id`,
-        )
-        .all() as Record<string, unknown>[],
-      "paperFilingCount",
-    );
 
     return { txns, paper, memberMeta };
   } finally {
@@ -1532,6 +1523,61 @@ export function filerTailShards(build: BuildData): FilerShardFamily {
     }
   }
   filerFamilyCache = { key, family };
+  return family;
+}
+
+/* ---------- the /institutional/ filer directory (launch redesign M7b; R32, LD28) ---------- */
+
+const directoryRowsCache = new WeakMap<object, InstIndexRow[]>();
+
+/** Every directory row, period-correct (A-2, constraint 4: every number from
+    `agg_filer_concentration` for the filer's latest period, never the
+    registry's cross-period accumulators), as the /institutional/ page and the
+    directory shard family both read them. Memoized per build object so the
+    page's first rows and the shards are the SAME rows. Moved here from the
+    page's frontmatter when the rows left the page for the shard family. */
+export function instDirectoryRows(build: BuildData): InstIndexRow[] {
+  const cached = directoryRowsCache.get(build);
+  if (cached) return cached;
+  const inst = build.inst;
+  if (!inst.present) {
+    directoryRowsCache.set(build, []);
+    return [];
+  }
+  const rows = inst.filers.map((f) => {
+    const row = buildInstIndexRow(
+      f,
+      concentrationFor(inst, f.cik, f.latest_period),
+      filerTier(build, f.cik),
+      // Curated typing where the registry has it, null otherwise — the
+      // directory types a curated SUBSET and says so rather than guessing.
+      typingFor(inst, f.cik),
+      // The manager's largest change in its own latest period.
+      biggestChange(deltasFor(inst, f.cik, f.latest_period), f.latest_period),
+    );
+    row.reference = true;
+    /* R12 (DESIGN-POLISH M2; review R2-6): "Top-5" exists only when the
+       build's concentration slices hold five positions; `directoryColumns`
+       decides the column and the field travels only when the column does. */
+    if (inst.topn === 5) row.top5Share = concentrationFor(inst, row.cik, row.period)?.topn_share_bps ?? null;
+    return row;
+  });
+  if (!directoryColumns(rows, inst.topn).columns.includes("top5")) for (const row of rows) delete row.top5Share;
+  directoryRowsCache.set(build, rows);
+  return rows;
+}
+
+const directoryFamilyCache = new WeakMap<object, DirectoryFamily>();
+
+/** The directory shard family (`/institutional/data/directory/{n}.v1.json`):
+    the slim rows cut at the 1 MiB client-response ceiling into at most
+    `INST_DIRECTORY_SHARDS_MAX` files. The route's `getStaticPaths`, its `GET`
+    and the page's inlined list all read this one memoized plan. */
+export function instDirectoryFamily(build: BuildData): DirectoryFamily {
+  const cached = directoryFamilyCache.get(build);
+  if (cached) return cached;
+  const family = planDirectoryShards(instDirectoryRows(build), fillShardsByBytes);
+  directoryFamilyCache.set(build, family);
   return family;
 }
 

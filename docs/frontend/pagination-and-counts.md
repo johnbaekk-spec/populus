@@ -76,6 +76,23 @@ indeterminate-amount disclosure at ≤720px — the honesty layer must not vary 
 viewport or by sink.
 *Test: "feedCountText: the indeterminate-amount disclosure is part of the ONE string"*
 
+**I7 — A view that hides a population says so, in the one count string.**
+A feed VIEW is a standing selection the reader did not type: the /congress/
+default "With ticker" view shows only transactions whose ticker is set, so it
+hides every transaction without a ticker and every paper filing (a paper
+filing has no ticker). Each hidden population's size is stated in the ONE
+string of I6 — so it reaches all three sinks and the server's page alike —
+computed over the WHOLE result set under the reader's other filters (never
+from the page), and labelled as a whole-set figure that names where the rows
+are: "1–20 of 59,842 transactions with a ticker · 12,565 without a ticker and
+3,061 paper filings are in All rows". A population that is zero under the
+current filters is not stated; a filter that would hide paper filings in All
+rows too (rule 5's dimensions) hides them from the statement as well, because
+All rows would not show them either. A view switch is never a silent filter:
+the count line keeps " · filtered on this device" and its reset control in
+every view, and reset returns to the default view.
+*Test: "I7: the default view states its hidden counts in every sink" (launch-congress.test.ts) and "feedCountText I7: hidden populations are whole-set figures"*
+
 ## Rules that follow
 
 1. **Page membership.** An item's page is `floor(t / PAGE_SIZE)`, where `t` is
@@ -85,11 +102,48 @@ viewport or by sink.
    therefore has its own page when the transaction count is a multiple of
    `PAGE_SIZE` — that page is real and must be reachable (I1, I2).
 
+   **1a. The design feed pages 20 rows; the published transport stays at 50
+   (launch M3a, LD20).** `DESIGN_FEED_PAGE_SIZE` is 20 in both /congress/
+   views — the server's first page, the client's pages and every count. The
+   published part index (`/congress/data/feed/index.v1.json`, also inlined as
+   `#feed-parts-index`) keeps `page_size: 50` and its `page_count` at 50
+   byte-for-byte: published artifacts are the API, so no field is added or
+   changed. A 20-row page is derived from the parts' own metadata by rule 2a,
+   never from the index's 50-row `page_count`.
+
 2. **Page count is a walk, not a formula.** `pageCountFor(merged)` walks the
    feed. **A signature taking only counts is prohibited**: with 100
    transactions, a paper row before them needs 2 pages and one after them needs
    3, and no function of `(100, 1)` can return both. This rule exists because
    `pageCount(txnCount, paperCount)` shipped and was wrong.
+
+   **2a. Page count from part metadata is a position, not a formula over
+   counts.** Pages are monotone along the feed, so the last page is the page
+   of the LAST item, and the walk of rule 2 reduces to one position: the part
+   index records `last_seen` — the transactions preceding each part's last
+   item — so `feedPageCount(index, size)` is `floor(lastPart.last_seen / size)
+   + 1` (0 for an empty feed). The parts holding page N are those whose
+   `[first_seen, last_seen]` overlaps `[N·size, (N+1)·size)` (`partsForPage`,
+   unchanged), and `pageSliceFrom` applies rule 1 offset by the first part's
+   `txn_offset`. With a trailing paper row after a multiple of `size`
+   transactions, `last_seen` equals that multiple and the paper row's page is
+   counted — the round-2 defect cannot recur through this path.
+
+   **2b. The "With ticker" view pages by ticker position, located by a
+   build-time offsets island.** The ticker view holds transactions only, in
+   feed order, so a row's page is `floor(k / size)` where `k` is the number of
+   ticker rows preceding it, and its page count is the page of the last ticker
+   row plus one. /congress/ inlines `#feed-ticker-offsets` (not a published
+   file): for each part of the SAME `planFeedParts` output, in index order, the
+   ticker rows before the part and in it, plus the view's whole-set totals
+   (ticker rows, transactions without a ticker, paper filings) that I7 states.
+   The client finds the part or parts holding ticker page N — those whose
+   ticker range `[before, before + rows)` overlaps `[N·size, (N+1)·size)` —
+   fetches ONLY those, keeps their ticker rows in order and slices from the
+   first part's `before`. An offsets island whose part names do not match the
+   index in order is refused, and the view falls back to the full corpus
+   rather than paging against a stale map. Quick filters, the text filter and
+   every More filter keep the full-corpus path (declared debt TD-L1).
 
 3. **Count inputs must carry page-local facts.** `CountInputs` carries
    `txnOnPage` and `paperOnPage` alongside the totals. Any new fragment about
@@ -135,6 +189,69 @@ viewport or by sink.
    tuned to its band partner or to one data build, and never estimated from a
    cell's height (DESIGN-POLISH M2, coordinator decisions CD-1 and CD-5). No row
    may be unreachable: a table with no binder is never compacted.
+
+8. **Held rows live in JSON, never in the DOM (launch redesign LD26, R27).**
+   A table may go further than rule 7 and keep rows N+1.. out of the DOM
+   entirely. It then shows its first N rows, and the held rows reach the client
+   ONLY as JSON: an inline island (`<script type="application/json"
+   data-held-for="<tbody id>" data-held-render="<renderer name>">`, never
+   executable, serialized through `serializeInlineJson`) or a published
+   same-origin file the page already has. The binder is still the ONE binder of
+   rule 7 — `initDomDisclosures`, extended, never a second mechanism — and its
+   disclosure keeps rule 7's count grammar and step: "1–N of M nouns" from
+   `rangeOfTotal`, one press reveals every held row. Five things follow.
+   - **One row function, registered by name.** The server renders the first N
+     rows through a row function; the client renders the held rows through the
+     SAME function, registered with the binder under the island's
+     `data-held-render` name (`registerHeldRows`). A client that recomputes a
+     row from some other payload is prohibited, because it drifts.
+   - **The island carries every input the row function reads.** Rows, and any
+     table-wide input (a bar scale, a column set), and every per-row input the
+     server derived from its neighbours or from build context (an
+     overlaps-the-row-above flag, a budget-cut flag that changes a link). The
+     test of the rule is byte parity: for the same inputs, the binder's output
+     equals the server's row-function output, row for row.
+   - **No-JS reachability is preserved, never invented.** Where a reader
+     without JavaScript can reach the held rows today, a `<noscript>` element
+     AFTER the table holds a SECOND table of exactly those rows, rendered by the
+     same row function. A `<noscript>` never sits inside a `tbody` (the parser
+     hoists it out). With scripting on its content is inert text, so it costs
+     no DOM. Where a no-JS reader cannot see the rows today (a `hidden`
+     variant, a table whose Show-all needs a script), only the island ships.
+   - **The client never turns DOM text back into HTML.** It reads the island
+     with `JSON.parse` and writes rows only from the registered function's
+     output; it never reads a `<noscript>`'s text, and never moves
+     `textContent` into `innerHTML`.
+   - **Sort, filter and print cover every row.** A sort or filter over a held
+     table runs over all M rows of the island and shows the first N of the
+     result, and `beforeprint` renders and reveals every held row (restored on
+     `afterprint`).
+   - **One island, one render path, several views (launch integration).** Every
+     held list on the site ships its rows in the ONE island
+     (`heldIslandHtml`, `lib/held-rows.ts`; body `{ v: 1, offset, shared,
+     rows }`: `offset` is the index of the island's first row in the whole
+     list, `shared` every list-wide input), and every held row reaches the DOM
+     through the binder's ONE render path, `heldRowsHtml`: the registered
+     function, then the explicit table roles of the table it lands in
+     (`rolesFor`), so a drawn row equals the served page's row. What differs is
+     only when rows are drawn: a compact table's disclosure reveals every held
+     row in one press (rule 7's step); a stepped list (the holders' "Show all
+     N holders") and a pager (the Signals hits, Named moves, Congress-lines
+     bank and Overlap names) draw in their own step through the same path and
+     state their counts in rule 6's grammar. A deep link or an in-page link to
+     an element only a held row carries opens what holds it
+     (`revealHeldTarget`) and lands on the row.
+   - **Two more views on /congress/ (launch F2, R35/LD31).** Each Congress
+     board's next step — the fifty rows its first "Show 50 more" reveals
+     before the dataset arrives — is held in the one island after its table,
+     every row with its overlaps-the-row-above flag and budget-cut flag; the
+     board's own pager (`scripts/congress-sections.ts`) draws it through the
+     same path, and a deep link to an element only one of those rows carries
+     opens that step. Monthly flow's hidden views (Dollars on listed stocks,
+     both views of All assets) are one-row islands whose row is the view's
+     whole input; the panel's toggle draws a view the first time it shows it.
+     Neither was reachable without JavaScript, so neither ships a
+     `<noscript>` copy; the board's visible count still states its bound.
 
 ## Changing this mechanism
 

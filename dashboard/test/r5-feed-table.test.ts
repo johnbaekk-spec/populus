@@ -108,7 +108,7 @@ test("R5/R19: honesty content survives the conversion — both dates, lag, flags
      cell reads BUY, never LATE; lateness is the gold edge and the unchanged
      LATE·Nd. */
   assert.match(html, /data-edge="late"/);
-  assert.match(html, /<td class="cell cell-side c-kind buy">BUY<\/td>/, "the late row reads its side, and nothing else sits in the cell");
+  assert.match(html, /<td class="cell cell-side c-kind buy" role="cell">BUY<\/td>/, "the late row reads its side, and nothing else sits in the cell");
   assert.doesNotMatch(html, /c-kind buy">LATE/, "control: LATE never replaces the side");
   assert.match(html, /class="flag solid"><span class="note"><button[^>]*>spouse cap</, "the flag chip survives, as its definition's trigger");
   assert.match(html, /class="cell cell-src c-src"/, "the provenance link is a cell");
@@ -124,8 +124,10 @@ test("R5: the row's classes are its own — no caller can hang a marker on it", 
   assert.equal(feedItemHtml.length, 2, "feedItemHtml takes the item and the context only");
   assert.equal(txnRowHtml.length, 2);
   assert.equal(paperRowHtml.length, 2);
-  assert.match(feedItemHtml(txn(), CTX), /^<tr class="feed-row feed-grid-cols reference-row buy" data-edge="buy">/);
-  assert.match(feedItemHtml(paper(), CTX), /^<tr class="feed-row paper reference-paper">/);
+  /* Launch M3a (R40): the row's only additions are its explicit table role —
+     still the outermost tag, still no caller-supplied marker class. */
+  assert.match(feedItemHtml(txn(), CTX), /^<tr class="feed-row feed-grid-cols reference-row buy" data-edge="buy" role="row">/);
+  assert.match(feedItemHtml(paper(), CTX), /^<tr class="feed-row paper reference-paper" role="row">/);
 });
 
 /* ---------- the page contract ---------- */
@@ -212,7 +214,7 @@ test("R18: the table's direct children are only caption, thead and tbody", () =>
     );
   }
   for (const head of [HEAD]) {
-    assert.match(head, /^<thead><tr class="feed-head feed-grid-cols reference-head">/);
+    assert.match(head, /^<thead role="rowgroup"><tr class="feed-head feed-grid-cols reference-head" role="row">/);
     assert.match(head, /<\/tr><\/thead>$/);
     assert.equal((head.match(/<tr\b/g) ?? []).length, 1, "one header row");
     // nothing but cells directly inside the row
@@ -223,7 +225,7 @@ test("R18: the table's direct children are only caption, thead and tbody", () =>
 
 /** The `<table class="feed-table">` … `</table>` slice of a page source. */
 function tableSegment(src: string): string {
-  const i = src.search(/<table class="feed-table(?: reference-feed)?">/);
+  const i = src.search(/<table class="feed-table(?: reference-feed)?"[^>]*>/);
   assert.ok(i >= 0, "the page renders a feed table");
   return src.slice(i, src.indexOf("</table>", i));
 }

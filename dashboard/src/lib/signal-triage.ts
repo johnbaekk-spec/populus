@@ -520,7 +520,10 @@ export function sentenceClauses(row: Pick<TriageRow, "grouping" | "lines" | "clu
     // lines matched, in the rule book's order (plan deviation, DEV-NOTES).
     const kinds = new Set(row.lines.flatMap((l) => l.signals.map((s) => s.kind)));
     const words = KIND_ORDER.filter((k) => kinds.has(k)).map((k) => KIND_WORDS[k]);
-    out.push(words.length ? `Rules matched: ${words.join(", ")}.` : "Rules matched: none named.");
+    /* copy item signals-06 (launch M7a): the rule words alone, without the
+       "Rules matched:" prefix every such row repeated */
+    const said = words.join(", ");
+    out.push(words.length ? `${said.charAt(0).toUpperCase()}${said.slice(1)}.` : "No rule named.");
   }
   return out;
 }
@@ -594,7 +597,11 @@ export function pickCards(rows: readonly TriageRow[]): TriageCards {
   const buys = withLow.filter((p) => p.line.txn.side === "purchase");
   const sells = withLow.filter((p) => p.line.txn.side === "sale" || p.line.txn.side === "sale_partial");
   const byRecord = (a: LineScore, b: LineScore): number => b.bracketDelta! - a.bracketDelta! || cardOrderAbsolute(a, b);
-  const absFact = (noun: string) => (_l: LineScore, n: number) => `The largest lower bound of ${plural(n, `listed-stock ${noun} line`, `listed-stock ${noun} lines`)} ranked in the window.`;
+  /* copy item signals-04: the same fact, the method words left to Methodology */
+  /* copy item signals-04, adapted (launch review H7, orchestrator decision):
+     the shortened fact keeps its scope qualifier — listed-stock lines, in the
+     window — so the bound is never read as one over every trade */
+  const absFact = (noun: string) => (_l: LineScore, n: number) => `Largest lower bound of ${plural(n, `listed-stock ${noun}`, `listed-stock ${noun}s`)} in the window.`;
   const s5 = pool.filter((p) => p.line.cmte.grade !== null);
   const committee = pick(
     s5,

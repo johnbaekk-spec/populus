@@ -9,9 +9,11 @@
    the T0 run on clean `main`. It applies to the inputs it was measured on: a
    dist built from another data build states that and compares nothing.
 
-   M1 on the page: every triage row renders once; the hits body holds
-   min(lines, SIGNAL_HITS_DOM_ROWS) lines, the first ten visible and the rest
-   `hidden`; the pane switch is server-hidden with every pane visible. */
+   M1 on the page: every triage row renders once; the page carries
+   min(lines, SIGNAL_HITS_DOM_ROWS) hit lines — launch M7a (D5): the first
+   ten in the DOM, visible, the rest in the JSON island; the Named moves'
+   rows are counted across the DOM and their island; the pane switch is
+   server-hidden with every pane visible. */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -21,6 +23,9 @@ import path from "node:path";
 
 const DIST = path.resolve(import.meta.dirname, "../../dist");
 const DOC = path.resolve(import.meta.dirname, "../../../docs/frontend/signals-v4.md");
+/** launch redesign (LD34, R35, T7.7): the decision record whose
+    `launch-routes` block declares the file families the redesign adds. */
+const LAUNCH_DOC = path.resolve(import.meta.dirname, "../../../docs/frontend/launch-redesign.md");
 
 interface Baseline {
   buildId: string;
@@ -39,6 +44,43 @@ export function parseBaseline(doc: string): Baseline {
   const artifacts = new Map([...body.matchAll(/^([0-9a-f]{64})\s{2}(\S+)$/gm)].map((x) => [x[2]!, x[1]!]));
   if (!buildId || !routes || artifacts.size === 0) throw new Error("the t0-baseline block is incomplete");
   return { buildId, routes: { count: Number(routes[1]), sha256: routes[2]! }, artifacts };
+}
+
+/** One declared route family: a `./path` pattern whose `{n}` is a
+    non-negative integer, and the most files it may add. */
+export interface RouteAddition {
+  pattern: string;
+  re: RegExp;
+  max: number;
+}
+
+/** The `launch-routes` block in launch-redesign.md: `added: <pattern> max <n>
+    (<reason>)` lines between the markers. A line of any other shape inside the
+    block is refused, so a typo cannot silently declare nothing. */
+export function parseRouteAdditions(doc: string): RouteAddition[] {
+  const m = /<!-- launch-routes:begin -->([\s\S]*?)<!-- launch-routes:end -->/.exec(doc);
+  if (!m) throw new Error("launch-redesign.md carries no launch-routes block");
+  const out: RouteAddition[] = [];
+  for (const line of m[1]!.split("\n").map((l) => l.trim()).filter(Boolean)) {
+    const x = /^added: (\.\/\S+) max (\d+) \(.+\)$/.exec(line);
+    if (!x) throw new Error(`a launch-routes line is malformed: ${line}`);
+    const src = x[1]!.replace(/[.*+?^$()|[\]\\]/g, "\\$&").replace(/\{n\}/g, "(?:0|[1-9]\\d*)");
+    out.push({ pattern: x[1]!, re: new RegExp(`^${src}$`), max: Number(x[2]) });
+  }
+  if (out.length === 0) throw new Error("the launch-routes block declares nothing");
+  return out;
+}
+
+/** Split a route list into the declared additions (by family) and the rest. */
+export function splitDeclared(routes: readonly string[], adds: readonly RouteAddition[]): { rest: string[]; families: Map<string, string[]> } {
+  const families = new Map(adds.map((a) => [a.pattern, [] as string[]]));
+  const rest: string[] = [];
+  for (const r of routes) {
+    const a = adds.find((x) => x.re.test(r));
+    if (a) families.get(a.pattern)!.push(r);
+    else rest.push(r);
+  }
+  return { rest, families };
 }
 
 const sha = (buf: Buffer | string): string => createHash("sha256").update(buf).digest("hex");
@@ -74,7 +116,20 @@ test("T1.1 controls: the baseline parser reads the block and refuses an incomple
   assert.throws(() => parseBaseline("no block"), /no t0-baseline block/);
 });
 
-test("T1.1 (R23): signals.v1.json and every notable-moves shard are byte-identical to T0's, and the dist route set equals T0's apart from _astro chunks", (t) => {
+test("T1.1 controls (LD34, T7.7): the declared route additions parse, match only their family, and refuse a malformed block", () => {
+  const adds = parseRouteAdditions(readFileSync(LAUNCH_DOC, "utf-8"));
+  assert.deepEqual(adds.map((a) => [a.pattern, a.max]), [["./institutional/data/directory/{n}.v1.json", 8]], "the decision record declares the directory family, at most INST_DIRECTORY_SHARDS_MAX files");
+  const routes = ["./index.html", "./institutional/data/directory/0.v1.json", "./institutional/data/directory/7.v1.json", "./institutional/data/directory/x.v1.json", "./institutional/data/directory/01.v1.json", "./institutional/data/directoryX0.v1.json"];
+  const { rest, families } = splitDeclared(routes, adds);
+  assert.deepEqual(families.get(adds[0]!.pattern), ["./institutional/data/directory/0.v1.json", "./institutional/data/directory/7.v1.json"]);
+  // re-planted control: an undeclared look-alike stays in the remainder, so T1.1 sees it as a new route
+  assert.deepEqual(rest, ["./index.html", "./institutional/data/directory/x.v1.json", "./institutional/data/directory/01.v1.json", "./institutional/data/directoryX0.v1.json"]);
+  assert.throws(() => parseRouteAdditions("no block"), /no launch-routes block/);
+  assert.throws(() => parseRouteAdditions("<!-- launch-routes:begin -->\nadded ./x max 1\n<!-- launch-routes:end -->"), /malformed/);
+  assert.throws(() => parseRouteAdditions("<!-- launch-routes:begin -->\n<!-- launch-routes:end -->"), /declares nothing/);
+});
+
+test("T1.1 (R23; launch R35, T7.7): signals.v1.json and every notable-moves shard are byte-identical to T0's, and the dist route set equals T0's plus the declared launch additions, apart from _astro chunks", (t) => {
   assert.ok(existsSync(DIST), "dist/ must exist — this suite runs post-build");
   const base = parseBaseline(readFileSync(DOC, "utf-8"));
   const id = builtId();
@@ -91,13 +146,29 @@ test("T1.1 (R23): signals.v1.json and every notable-moves shard are byte-identic
   for (const [rel, want] of base.artifacts) {
     assert.equal(sha(readFileSync(path.join(DIST, rel))), want, `${rel} is byte-identical to T0`);
   }
-  const routes = routeList(DIST);
+  /* launch redesign (LD34, T7.7): the families the decision record declares
+     come out first, each within its stated maximum; the rest is T0's */
+  const adds = parseRouteAdditions(readFileSync(LAUNCH_DOC, "utf-8"));
+  const { rest: routes, families } = splitDeclared(routeList(DIST), adds);
+  for (const a of adds) {
+    const n = families.get(a.pattern)!.length;
+    t.diagnostic(`declared addition ${a.pattern}: ${n} files (max ${a.max})`);
+    assert.ok(n >= 1 && n <= a.max, `${a.pattern}: ${n} files, declared 1..${a.max}`);
+  }
   const listed = routes.join("\n") + "\n";
-  assert.equal(routes.length, base.routes.count, "no route or public file added or removed");
-  assert.equal(sha(listed), base.routes.sha256, "the route set is T0's, file for file");
+  assert.equal(routes.length, base.routes.count, "no undeclared route or public file added, none removed");
+  assert.equal(sha(listed), base.routes.sha256, "the route set is T0's plus the declared additions, file for file");
 });
 
-test("signals-v4 M1 on the built page: every triage row once; the hits body holds min(lines, 40) lines with the first ten visible; the pane switch is server-hidden and every pane visible", () => {
+/** launch M7a (D5, LD27): a held list's island on the built page, parsed —
+    the site's one held-rows carrier since the integration (lib/held-rows.ts:
+    `{ v, offset, shared, rows }`, the row function in `data-held-render`). */
+function heldIsland<T>(html: string, listId: string): T | null {
+  const m = new RegExp(`<script type="application/json" data-held-for="${listId}" data-held-render="[a-z-]+">([\\s\\S]*?)</script>`).exec(html);
+  return m ? (JSON.parse(m[1]!) as T) : null;
+}
+
+test("signals-v4 M1 + launch M7a on the built page: every triage row once; the page carries min(lines, 40) hit lines — the first ten in the DOM, visible, the rest in the island; the pane switch is server-hidden and every pane visible", () => {
   const html = readFileSync(path.join(DIST, "signals", "index.html"), "utf-8");
   const ranked = /of ([\d,]+) rows ranked/.exec(html);
   assert.ok(ranked, "the Stand out figure states the rows ranked");
@@ -107,11 +178,12 @@ test("signals-v4 M1 on the built page: every triage row once; the hits body hold
   const hits = /<section class="panel si-hits" id="hits"[^>]*data-shown="(\d+)"[^>]*data-lines="(\d+)"[^>]*data-dom-rows="(\d+)"/.exec(html);
   assert.ok(hits, "the hits section states shown, lines and DOM rows");
   const [shown, lines, domRows] = [Number(hits[1]), Number(hits[2]), Number(hits[3])];
-  const body = /<tbody id="signal-hits-body">([\s\S]*?)<\/tbody>/.exec(html)![1]!;
+  const body = /<tbody id="signal-hits-body"[^>]*>([\s\S]*?)<\/tbody>/.exec(html)![1]!;
   const trs = [...body.matchAll(/<tr class="si-hit[^"]*"[^>]*>/g)].map((m) => m[0]);
-  assert.equal(trs.length, Math.min(lines, domRows));
-  assert.equal(trs.filter((x) => !/ hidden>$/.test(x)).length, Math.min(shown, lines), "the first ten visible");
-  assert.ok(trs.slice(shown).every((x) => / hidden>$/.test(x)), "the rest hidden");
+  assert.equal(trs.length, Math.min(lines, shown), "the first ten lines are in the DOM");
+  assert.ok(trs.every((x) => !/ hidden>$/.test(x)), "and visible");
+  const held = heldIsland<{ rows: unknown[] }>(html, "signal-hits-body");
+  assert.equal(trs.length + (held?.rows.length ?? 0), Math.min(lines, domRows), "with the island, the page carries min(lines, 40) lines");
   assert.match(html, /<div class="seg pane-switch" role="group" aria-label="Show" data-pane-switch hidden>/);
   assert.doesNotMatch(html, /<section class="panel si-triage" id="triage"[^>]*\shidden/);
   assert.doesNotMatch(html, /<div class="si-side" id="signals-side"[^>]*\shidden/);
@@ -155,6 +227,11 @@ export function independentCongressCounts(txns: readonly TxnRow[], period: strin
     The attribute is decoded with `&amp;` LAST, so an escaped "&amp;quot;" never double-decodes. */
 function renderedMoves(html: string): { id: string; kind: string; ikey: string; cg: string; tk: string | null }[] {
   const out: { id: string; kind: string; ikey: string; cg: string; tk: string | null }[] = [];
+  /* launch M7a (D5, LD27): the rows past the first fifteen ship in the island; they count too */
+  type IslandRow = { id: string; kind: string; ikey: string; ticker: string | null; cell: { absent: string } | { side: "buy" | "sell"; n: number } };
+  for (const r of heldIsland<{ rows: IslandRow[] }>(html, "mv-list")?.rows ?? []) {
+    out.push({ id: r.id, kind: r.kind, ikey: r.ikey, cg: "absent" in r.cell ? "—" : `${r.cell.side === "buy" ? "▲" : "▼"}${r.cell.n}`, tk: r.ticker });
+  }
   for (const a of html.matchAll(/<article class="mv-item" id="([^"]+)" data-kind="([^"]+)" data-type="[^"]*" data-ikey="([^"]*)"[^>]*>([\s\S]*?)<\/article>/g)) {
     const cg = /<span class="mv-cg">(?:<span class="cg-on" aria-hidden="true">([^<]*)<\/span>|<span aria-hidden="true">([^<]*)<\/span>)/.exec(a[4]!);
     const tk = /<span class="mv-tk"><span class="mono-ticker">([^<]+)<\/span>/.exec(a[4]!)?.[1] ?? null;
@@ -179,6 +256,7 @@ test("signals-v4 T2.9 (R12, R13, R14): the built Institutional tab — the Congr
   }
   const moves = notableMovesFor(build, model.period);
   const rows = renderedMoves(html);
+  assert.equal(new Set(rows.map((r) => r.id)).size, rows.length, "every carried move row once, across the DOM and the island");
   t.diagnostic(`in-build moves ${moves.length}; rendered rows ${rows.length}; notable managers ${model.notableManagers}`);
   if (moves.length === 0) {
     assert.equal(rows.length, 0);
@@ -259,6 +337,29 @@ test("signals-v4 T2.9 controls: the independent recount reads the quarter, liste
 import { getOverlap, getPlaybookTriggers, getTriage } from "../../src/lib/data.ts";
 import { ROSTER } from "../../src/lib/leadership-roster.ts";
 import { independentOverlap } from "../lib/overlap-recount.ts";
+import { overlapRowId } from "../../src/lib/ui/signals-overlap.ts";
+
+/** The Overlap names the built panel carries — the DOM's `article.ov-item`s
+    and (launch review weight item 6) the held names in the `ov-list` island,
+    which the DOM regex alone never counted. Each: id, the core relation (""
+    when not in core), the broad-inclusive relation, and both ordinals. */
+export function carriedOverlap(panel: string): { id: string; core: string; all: string; oc: string; oa: string; held: boolean }[] {
+  const out = [...panel.matchAll(/<article class="ov-item" id="([^"]+)" data-core="([^"]*)" data-all="([^"]*)" data-oc="([^"]*)" data-oa="([^"]*)"/g)].map((m) => ({ id: m[1]!, core: m[2]!, all: m[3]!, oc: m[4]!, oa: m[5]!, held: false }));
+  type HeldItem = { id: string; core: { rel: string } | null; all: { rel: string }; ord: { core: number | null; all: number } };
+  for (const it of heldIsland<{ rows: HeldItem[] }>(panel, "ov-list")?.rows ?? []) {
+    out.push({ id: it.id, core: it.core?.rel ?? "", all: it.all.rel, oc: it.ord.core === null ? "" : String(it.ord.core), oa: String(it.ord.all), held: true });
+  }
+  return out;
+}
+
+test("signals-v4 T3.7 controls (weight item 6): the Overlap recount reads the island's held names as well as the DOM's", () => {
+  const panel =
+    `<div class="ov-list" id="ov-list"><article class="ov-item" id="ov-a" data-core="same" data-all="same" data-oc="0" data-oa="0"></article></div>` +
+    `<script type="application/json" data-held-for="ov-list" data-held-render="overlap-names">${JSON.stringify({ v: 1, offset: 1, shared: {}, rows: [{ id: "ov-b", core: null, all: { rel: "opposite" }, ord: { core: null, all: 1 } }] })}</script>`;
+  assert.deepEqual(carriedOverlap(panel).map((x) => [x.id, x.core, x.all, x.oc, x.oa, x.held]), [["ov-a", "same", "same", "0", "0", false], ["ov-b", "", "opposite", "", "1", true]]);
+  // re-planted control: the DOM-only count the review found misses the held name
+  assert.equal([...panel.matchAll(/<article class="ov-item"/g)].length, 1);
+});
 
 test("signals-v4 T3.7 (R18, criterion 6): the built Overlap — every carried row and both variants' counts equal an independent recount; or, with no 13F change in the build, its absence is stated", (t) => {
   const html = readFileSync(path.join(DIST, "signals", "index.html"), "utf-8");
@@ -282,13 +383,16 @@ test("signals-v4 T3.7 (R18, criterion 6): the built Overlap — every carried ro
     const attr = rel === "same" ? "data-ov-same" : "data-ov-opp";
     assert.equal(n(new RegExp(`${attr}="([^"]+)"`)), `${want.core.filter((x) => x.endsWith(`:${rel}`)).length} ${want.all.filter((x) => x.endsWith(`:${rel}`)).length}`, rel);
   }
-  const items = [...panel.matchAll(/<article class="ov-item" id="([^"]+)" data-core="([^"]*)" data-all="([^"]*)" data-oc="([^"]*)" data-oa="([^"]*)"/g)];
+  /* launch review weight item 6: the DOM's names AND the island's held names */
+  const items = carriedOverlap(panel);
+  assert.equal(new Set(items.map((x) => x.id)).size, items.length, "every carried name once, across the DOM and the island");
   for (const it of items) {
-    const oa = Number(it[5]);
-    assert.equal(`${want.all[oa]!.split(":")[1]}`, it[3], `${it[1]}: its broad-inclusive relation`);
-    if (it[4] !== "") assert.equal(want.core[Number(it[4])]!.split(":")[1], it[2], `${it[1]}: its relation`);
+    const oa = Number(it.oa);
+    assert.equal(`${want.all[oa]!.split(":")[1]}`, it.all, `${it.id}: its broad-inclusive relation`);
+    assert.equal(overlapRowId(want.all[oa]!.split(":")[0]!), it.id, `${it.id}: the name at its ordinal`);
+    if (it.oc !== "") assert.equal(want.core[Number(it.oc)]!.split(":")[1], it.core, `${it.id}: its relation`);
   }
-  t.diagnostic(`Overlap ${o.period}: core ${want.core.length}, all ${want.all.length}, carried ${items.length}`);
+  t.diagnostic(`Overlap ${o.period}: core ${want.core.length}, all ${want.all.length}, carried ${items.length} (${items.filter((x) => x.held).length} held in the island)`);
 });
 
 test("signals-v4 T3.7 (R20, R21, criterion 7): the Playbooks filter's counts equal the built rows carrying each token, and the triggers recomputed", (t) => {
@@ -313,7 +417,7 @@ test("signals-v4 T3.7 (R22): Methodology carries the roster — every tenure wit
   const html = readFileSync(path.join(DIST, "methodology", "index.html"), "utf-8");
   const sec = /<section class="si-method" id="signals-playbooks"[\s\S]*?<\/section>/.exec(html)?.[0];
   assert.ok(sec, "#signals-playbooks");
-  const rows = [...sec.matchAll(/<tr><td class="c-secondary">[\s\S]*?<\/tr>/g)].map((m) => m[0]);
+  const rows = [...sec.matchAll(/<tr\b[^>]*><td class="c-secondary"[^>]*>[\s\S]*?<\/tr>/g) /* launch M1a (R40): the roster rows carry roles; the parse is otherwise unchanged */].map((m) => m[0]);
   assert.equal(rows.length, ROSTER.length);
   ROSTER.forEach((r, i) => {
     assert.ok(rows[i]!.includes(r.bioguide) && rows[i]!.includes(`href="${r.source}"`) && rows[i]!.includes(`checked ${r.checked}`), `${r.name}`);

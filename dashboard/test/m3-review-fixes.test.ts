@@ -19,7 +19,6 @@ import {
   assetNameCell,
   displayAsset,
   feedHeadHtml,
-  tickerNoteKey,
   txnRowHtml,
   type RenderCtx,
   type TxnRow,
@@ -27,6 +26,7 @@ import {
 import {
   QOQ_FOOTNOTES,
   hitRowHtml,
+  memberBody,
   memberSignalsPanel,
   memberV2Sections,
   notableRailHtml,
@@ -98,8 +98,11 @@ test("W-2 / K-2: the overlap timeline's 13F rows read the caps kind word; the ra
   assert.deepEqual(rows.map((tr) => [tr.getAttribute("data-edge"), visibleText(tr.querySelector("td.c-kind")!).trim()]), [["exit", "EXIT"], ["add", "ADD"]]);
   assert.deepEqual(contentHits(html).filter((h) => /raw producer kind/.test(h.check)), []);
   // the section notes say what the rows are: the kind words, and every row dates by filing
-  assert.match(html, /NEW \+ ADD vs TRIM \+ EXIT, by shares/);
-  assert.match(html, /every row dates by its filing date/);
+  /* launch copy item ticker-12: the kind words moved into the managers'
+     side's tip (still on the page, once); the timeline note says the order
+     and the snapshot caveat in fewer words */
+  assert.match(visibleText(domOf(html).querySelector(".overlap-inst .note-pop")!), /NEW \+ ADD vs TRIM \+ EXIT, by share count\. \$ = reported value now, not the change\./);
+  assert.match(html, /\d+ newest, by filing date · 13F rows are quarter-end snapshots, not trades/);
   assert.doesNotMatch(html, /13F rows by quarter end/, "control: the note's retired claim (13F rows date by their FILED date since T20)");
   // control: the retired cell — the raw producer kind — is caught by the dist scan's predicate
   assert.ok(contentHits('<table><tr data-edge="add"><td class="c-kind c-buy">add</td></tr></table>').some((h) => /raw producer kind/.test(h.check)));
@@ -115,15 +118,16 @@ test("W-3: the ticker page's holders note and terminus are true of the mapped pa
   const mapped = tickerInstSectionHtml({ state: "data", name: "NVIDIA CORP", period: "2026-03-31", latestFiled: "2026-05-20", topn: 2, holdersPage: true, mapped: { issuer: "NVIDIA CORP", titleOfClass: "COM", holderCount: 700 }, holders }, "NVDA");
   assert.match(mapped, /that list carries each holder's share count, share change and filed date \(the full holders view shows them\), but no document links/);
   assert.doesNotMatch(mapped, /per-filer filed dates, share counts and document links are not in that list/, "control: the entity-path sentence, false here");
-  assert.match(mapped, /The 2 largest of the 700 13F filers reporting this share class for the quarter are listed/);
+  // launch M7b (ticker-10): one line, both numbers kept
+  assert.match(mapped, /Top 2 of 700 holders shown; the rest are on EDGAR\./);
   assert.doesNotMatch(mapped, /a build parameter of the Public Filings aggregation/, "control: the top-N claim, false on the mapped path");
   const complete = tickerInstSectionHtml({ state: "data", name: "NVIDIA CORP", period: "2026-03-31", latestFiled: "2026-05-20", topn: 2, holdersPage: false, mapped: { issuer: "NVIDIA CORP", titleOfClass: "COM", holderCount: 2 }, holders }, "NVDA");
-  assert.match(complete, /Every one of the 2 13F filers reporting this share class for the quarter is listed\./);
+  assert.match(complete, /All 2 13F filers reporting this share class are listed\./);
   assert.match(complete, /share change and filed date, which this table does not show/);
   // the entity-keyed path keeps its own, true, sentences
   const entity = tickerInstSectionHtml({ state: "data", name: "NVIDIA CORP", period: "2026-03-31", latestFiled: "2026-05-20", topn: 25, holders: [holders[0]!] }, "NVDA");
   assert.match(entity, /per-filer filed dates, share counts and document links are not in that list/);
-  assert.match(entity, /ranks the top 25 holders per issuer/);
+  assert.match(entity, /Top 25 holders per issuer, set by the site — not a census/);
 });
 
 test("honesty §3: an undisclosed mapped holder value is NULL and renders \"—\", never \"$0\"", async () => {
@@ -208,23 +212,32 @@ test("CD3-4 (b)/(c): the asset rule is stated ONCE on the column; a mechanical-o
   assert.doesNotMatch(unknown + assetLineHtml(txn({ asset: "Apple Inc. (AAPl) [ST]" }), { notes: { scope: "t" } }), /\(House Clerk code list\)/);
 });
 
-test("CD3-4 (a): the net-flow notes are keyed on the ticker, injectively, and every id on a member page is unique", () => {
-  assert.equal(tickerNoteKey("AAPL"), "AAPL");
-  assert.notEqual(tickerNoteKey("BRK.B"), tickerNoteKey("BRK-B"), "slug would fold both to brk-b");
+test("CD3-4 (a): every id on a member page is unique — tickers a slug would fold together (BRK.B, BRK-B, BRK/B) included", () => {
+  /* launch final pass: `tickerNoteKey` (the injective note key of the
+     retired net-flow Issuer column) had no caller left outside this test, so
+     it is retired; the property it served — no two ids on a member page
+     collide, whatever the tickers' punctuation — is asserted here directly. */
   const tickers = ["BRK.B", "BRK-B", "BRK/B", "NFLX", "AAPL"];
   const m = {
     bioguide: "T000001", name: "Fixture Member", party: "R", state: "OK", district: null, chamber: "house", servingSince: "1999", filingCount: 1,
     txns: tickers.map((t, i) => txn({ ticker: t, asset: `Issuer ${i} Holdings (XYZ${i}) [OP]`, assetType: "OP", txnId: `t-${i}` })),
     paper: [],
   };
-  const html = memberV2Sections(m as never, { buildId: "b", generatedAt: "2026-07-24 06:56 UTC", generatedAtDate: "2026-07-24" }, CTX, { resolveSector: null, sectorMeta: null, committees: null });
+  /* launch M4b (R26): the net-flow table became Top tickers and its Issuer
+     column (the `n-mf-<ticker>` notes) left with the approved layout; the
+     as-filed note lives on the trades' asset line. What stays pinned: the
+     ticker key is injective, and every id on the member page — two Top
+     tickers windows over the same tickers included — is unique. */
+  const html = memberBody(m as never, { buildId: "b", generatedAt: "2026-07-24 06:56 UTC", generatedAtDate: "2026-07-24" }, CTX, 0, { resolveSector: null, sectorMeta: null, committees: null });
   const ids = [...html.matchAll(/ id="([^"]+)"/g)].map((x) => x[1]!);
-  const mf = ids.filter((id) => id.startsWith("n-mf-"));
-  assert.equal(mf.length, tickers.length, "one note per ticker row (each name differs non-mechanically)");
+  assert.ok(ids.length > tickers.length, "the fixture renders the active page's ids");
   assert.equal(new Set(ids).size, ids.length, `duplicate ids: ${ids.filter((id, i) => ids.indexOf(id) !== i).join(", ")}`);
-  assert.ok(mf.every((id) => id.length <= 20), "short ids: the 75-character txn-keyed id is gone");
-  // control: the slug of the plain ticker would collide
+  assert.ok(!ids.some((id) => /^n-member-flow-asset-/.test(id)), "the 75-character txn-keyed net-flow id is gone");
+  // control: the slug of the plain ticker would collide, so the fixture tests what it claims to
   assert.equal("BRK.B".toLowerCase().replace(/[^a-z0-9]+/g, "-"), "BRK-B".toLowerCase().replace(/[^a-z0-9]+/g, "-"));
+  // control: the uniqueness check sees a planted duplicate
+  const planted = [...ids, ids[0]!];
+  assert.notEqual(new Set(planted).size, planted.length, "a repeated id is caught");
 });
 
 /* ===================================================== K-4 … K-10 */
@@ -282,7 +295,7 @@ test("K-7: one receipt rule — the link names its regime; where it cannot, or t
   } as Signal);
   assert.match(visibleText(domOf(hitRowHtml(s(["https://example.gov/doc"]), CTX)).querySelectorAll("td.c-src")[0]!), /PTR src/);
   // the member panel prints the same rule over the same fields
-  const artifact = { coverageFrom: "2026-01-01", coverageTo: "2026-06-30", lagCaveat: "c", signals: [s(["https://example.gov/doc"]), { ...s([]), id: "s2" }] } as never;
+  const artifact = { coverageFrom: "2026-01-01", coverageTo: "2026-06-30", retentionDays: 90, lagCaveat: "c", signals: [s(["https://example.gov/doc"]), { ...s([]), id: "s2" }] } as never;
   const panel = domOf(memberSignalsPanel(artifact, "A000001", CTX)).querySelectorAll("td.c-src").map((td) => visibleText(td).replace(/\s+/g, " ").trim());
   assert.deepEqual(panel, ["PTR src ↗", "PTR —"]);
   /* The watch band's own client-side receipt cell went with the band
@@ -338,7 +351,10 @@ test("W-6: an issuer line that shows a reviewed ticker does not also say 'ticker
 
 test("W-7: the †v note says what this build's data did, and what builds from 2026-09-10 on do", () => {
   const tv = QOQ_FOOTNOTES.find((f) => f.mark === "†v")!.html;
-  assert.equal(tv, "the reported share count is unchanged across the pair; this build's data classified the change from its reported value; builds from 2026-09-10 on read it as NO CHANGE <code>classified_by_value</code>");
+  /* Launch copy audit filer-05: the producer slug left the reader copy (the
+     flag and its decoding are untouched); the three facts stay word for word. */
+  assert.equal(tv, "the reported share count is unchanged across the pair; this build's data classified the change from its reported value; builds from 2026-09-10 on read it as NO CHANGE");
+  for (const f of QOQ_FOOTNOTES) assert.doesNotMatch(f.html, /<code>|_[a-z]+_/, `control: no producer slug in the ${f.mark} note`);
   assert.doesNotMatch(tv, /reads as held/, "control: false beside the ADD or TRIM word this marker only ever sits next to");
 });
 
@@ -364,7 +380,8 @@ test("W-10: FLAT only inside the smallest bucket; a wider zero-spanning range re
     paper: [],
   };
   const html = memberV2Sections(m as never, { buildId: "b", generatedAt: "2026-07-24 06:56 UTC", generatedAtDate: "2026-07-24" }, CTX, { resolveSector: null, sectorMeta: null, committees: null });
-  const kind = domOf(html).querySelectorAll("tr.design-net-row td.c-kind")[0]!;
+  // launch M4b: Top tickers speaks the direction word inside the ticker cell
+  const kind = domOf(html).querySelectorAll("tr.design-net-row td.c-ticker .visually-hidden")[0]!;
   assert.equal(visibleText(kind).trim(), "± net range spans zero");
   // control: the retired rule called a range of millions either way "FLAT"
   assert.notEqual(visibleText(kind).trim().split(" ")[0], "FLAT");

@@ -37,7 +37,8 @@
   --mono: "JetBrains Mono", monospace;
 
   /* ---- DESIGN-POLISH M1 tokens (Architecture B). Every font-size on the site
-     reads one of these fourteen, and none is below the 9.5px floor. ---- */
+     reads one of these fifteen, and none is below the 9.5px floor (11px at
+     ≤720px: the launch phone ramp below). ---- */
   --fs-label: 9.5px;    /* table headers, card tags, party tags */
   --fs-meta: 10px;      /* kind word, ledger label, band meta, kicker */
   --fs-control: 10.5px; /* segmented controls, provenance, receipts, pager */
@@ -52,9 +53,25 @@
   --fs-heading: 20px;   /* module-card names, state headings */
   --fs-display: 26px;   /* H1, header-ledger values (22px at ≤720px) */
   --fs-hero: 40px;      /* home and methodology titles (28px at ≤720px) */
+  /* launch M1b (LD12): the fifteenth token. Every input, select and search box
+     reads it — and nothing else does: the name size here, 16px wherever the hit
+     square is 44px (a coarse pointer or ≤720px), so iOS never zooms the page
+     when a field takes focus, in portrait or landscape. */
+  --fs-input: var(--fs-name);
 
   /* spacing */
   --gutter: 32px;       /* band gutter (16px at ≤720px) */
+  /* launch M1c (LD10, R13): the SAFE side gutters. A landscape iPhone (over
+     720px wide) has 47–59px insets; `.shell` and every full-bleed band pad
+     (and pull out) by these, so no row text sits under the notch or the
+     rounded corners, at any width. `.table-scroll` redefines the pair locally
+     for its own cells' flush/band geometry. */
+  --gutter-l: max(var(--gutter), env(safe-area-inset-left));
+  --gutter-r: max(var(--gutter), env(safe-area-inset-right));
+  /* launch M1c (LD8): the sticky masthead's height — 54px at ≤720px, where the
+     masthead sticks; 0 above, where it does not. Sticky tab bars sit below it
+     and in-page anchors land below it (`scroll-padding-top`). */
+  --masthead-h: 0px;
   --col-half: 6px;      /* half the 12px gap between adjacent cell contents */
   --gap-list: 14px;     /* rule book and bar-list rows */
   --num-lead: 16px;     /* lead before a numeric/date column (10px compact) */
@@ -155,12 +172,30 @@
    720px fold take the 16px gutter and the smaller display sizes; a coarse
    pointer (or the fold) takes the 44px hit square and the 44px ledger row. */
 @media (max-width:720px) {
-  :root { --gutter: 16px; --fs-display: 22px; --fs-hero: 28px; }
+  /* --masthead-h is the WHOLE header (launch review m1): the 54px bar, its 1px
+     rule and the top inset its padding clears, so what sticks below it and
+     every anchor lands clear of it */
+  :root { --gutter: 16px; --fs-display: 22px; --fs-hero: 28px; --masthead-h: calc(55px + env(safe-area-inset-top)); }
+  /* launch M1b (LD12, R6): the phone type ramp, as token VALUES. No visible
+     text under 11px at the fold: labels and badges 11, data 12–13, names and
+     prose 14–15. Every value is at or above its desktop value, so no text
+     anywhere renders smaller than it did at T0. */
+  :root {
+    --fs-label: 11px;
+    --fs-meta: 11px;
+    --fs-control: 12px;
+    --fs-note: 12px;
+    --fs-cell: 12.5px;
+    --fs-small: 12.5px;
+    --fs-name: 14px;
+    --fs-body: 14px;
+    --fs-title: 15px;
+  }
 }
 @media (any-pointer: coarse), (max-width: 720px) {
   /* The header row grows with the body rows, so a header control's 44px
      square stays inside its table's scroll box. */
-  :root { --hit-min: 44px; --hit-half: 22px; --row-pad-y: 14.5px; --head-pad-t: 28.5px; }
+  :root { --hit-min: 44px; --hit-half: 22px; --row-pad-y: 14.5px; --head-pad-t: 28.5px; --fs-input: 16px; }
 }
 
 * {
@@ -169,6 +204,8 @@
 
 html {
   height: 100%;
+  /* a hash target and revealTarget land below the sticky masthead (LD8) */
+  scroll-padding-top: var(--masthead-h);
 }
 
 body {
@@ -231,7 +268,7 @@ button {
 .shell {
   max-width: 1360px;
   margin: 0 auto;
-  padding-left: 40px;
-  padding-right: 40px;
+  padding-left: var(--gutter-l);
+  padding-right: var(--gutter-r);
 }
 

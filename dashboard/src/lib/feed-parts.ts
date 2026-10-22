@@ -239,6 +239,128 @@ export function pageSliceFrom(items: readonly FeedItem[], txnOffset: number, pag
   return out;
 }
 
+/** Rule 2a (pagination-and-counts.md): the page count of the merged feed at
+    `pageSize`, from part metadata alone. Pages are monotone along the feed,
+    so the last page is the page of the LAST item — whose preceding-transaction
+    count the index already records as the last part's `last_seen`. A
+    position, never a formula over counts (rule 2): a trailing paper row after
+    a multiple of `pageSize` transactions keeps its own page. */
+export function feedPageCount(index: Pick<FeedPartsIndex, "parts">, pageSize: number): number {
+  const last = index.parts[index.parts.length - 1];
+  if (!last || last.rows === 0) return 0;
+  return Math.floor(last.last_seen / pageSize) + 1;
+}
+
+/* ---------- launch M3a: the "With ticker" view (rule 2b, invariant I7) ---------- */
+
+/** I7: the default view's own noun for its transactions — ONE source for the
+    server's count and the client's. */
+export const TICKER_VIEW_NOUN = "transactions with a ticker";
+
+/** A row the default "With ticker" view shows: a transaction whose ticker is
+    set — the same test the ticker ranking applies (`!t.ticker` is a row with
+    no ticker there). A paper filing has no ticker, so it is never shown. */
+export function feedItemHasTicker(item: FeedItem): boolean {
+  return item.kind === "txn" && Boolean(item.ticker);
+}
+
+/** One part's place in the ticker view: the ticker rows before it and in it. */
+export interface TickerPartOffset {
+  part: string;
+  ticker_before: number;
+  ticker_rows: number;
+}
+
+/** The build-time `#feed-ticker-offsets` island (rule 2b). Not a published
+    file: it rides inline on /congress/ beside `#feed-parts-index`, derived
+    from the SAME `planFeedParts` output, so its part names are the index's
+    in order. The three totals are the whole-set figures I7 states. */
+export interface FeedTickerOffsets {
+  dataset_version: number;
+  build_id: string;
+  /** transactions whose ticker is set — the default view's total */
+  ticker_total: number;
+  /** transactions without a ticker — hidden by the default view, in All rows */
+  no_ticker_total: number;
+  /** paper filings — hidden by the default view, in All rows */
+  paper_total: number;
+  parts: TickerPartOffset[];
+}
+
+/** Build the ticker offsets from the merged feed and ITS part plan. Throws if
+    the plan does not cover the feed row for row — a map that disagreed with
+    the parts would page the wrong rows. */
+export function planTickerOffsets(merged: readonly FeedItem[], index: FeedPartsIndex): FeedTickerOffsets {
+  const parts: TickerPartOffset[] = [];
+  let before = 0;
+  for (const p of index.parts) {
+    const slice = merged.slice(p.offset, p.offset + p.rows);
+    if (slice.length !== p.rows || feedItemKey(slice[0]!) !== p.first_key || feedItemKey(slice[slice.length - 1]!) !== p.last_key) {
+      throw new Error(`ticker offsets: part ${p.part} does not match the merged feed`);
+    }
+    const rows = slice.filter(feedItemHasTicker).length;
+    parts.push({ part: p.part, ticker_before: before, ticker_rows: rows });
+    before += rows;
+  }
+  const txnTotal = merged.filter((it) => it.kind === "txn").length;
+  return {
+    dataset_version: index.dataset_version,
+    build_id: index.build_id,
+    ticker_total: before,
+    no_ticker_total: txnTotal - before,
+    paper_total: merged.length - txnTotal,
+    parts,
+  };
+}
+
+/** The offsets island, accepted only when it belongs to THIS index: same
+    dataset version and build, and the same part names in the same order.
+    Anything else is refused (null) and the view uses the full corpus. */
+export function classifyTickerOffsets(body: unknown, index: Pick<FeedPartsIndex, "dataset_version" | "build_id" | "parts">): FeedTickerOffsets | null {
+  if (typeof body !== "object" || body === null) return null;
+  const b = body as Record<string, unknown>;
+  if (b.dataset_version !== index.dataset_version || b.build_id !== index.build_id || !Array.isArray(b.parts)) return null;
+  const parts = b.parts as TickerPartOffset[];
+  if (parts.length !== index.parts.length) return null;
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
+    if (!p || p.part !== index.parts[i]!.part || !Number.isInteger(p.ticker_before) || !Number.isInteger(p.ticker_rows)) return null;
+  }
+  for (const k of ["ticker_total", "no_ticker_total", "paper_total"] as const) {
+    if (!Number.isInteger(b[k])) return null;
+  }
+  return b as unknown as FeedTickerOffsets;
+}
+
+/** The ticker view's page count: the page of the last ticker row, plus one. */
+export function tickerPageCount(offsets: Pick<FeedTickerOffsets, "ticker_total">, pageSize: number): number {
+  return offsets.ticker_total === 0 ? 0 : Math.floor((offsets.ticker_total - 1) / pageSize) + 1;
+}
+
+/** The parts holding ticker page `page`: those whose ticker range
+    `[before, before + rows)` overlaps `[page·size, (page+1)·size)`. */
+export function tickerPartsForPage(offsets: Pick<FeedTickerOffsets, "parts">, page: number, pageSize: number): TickerPartOffset[] {
+  const lo = page * pageSize;
+  const hi = lo + pageSize;
+  return offsets.parts.filter((p) => p.ticker_rows > 0 && p.ticker_before < hi && p.ticker_before + p.ticker_rows > lo);
+}
+
+/** Ticker page `page` from a CONTIGUOUS run of fetched items that starts
+    `tickerBefore` ticker rows into the view — the ticker rows in feed order,
+    paged by their position. */
+export function tickerPageSliceFrom(items: readonly FeedItem[], tickerBefore: number, page: number, pageSize: number): FeedItem[] {
+  const out: FeedItem[] = [];
+  let k = tickerBefore;
+  for (const item of items) {
+    if (!feedItemHasTicker(item)) continue;
+    const p = Math.floor(k / pageSize);
+    if (p > page) break;
+    if (p === page) out.push(item);
+    k++;
+  }
+  return out;
+}
+
 /** Decode one part response; null when it is not a part of THIS dataset version. */
 export function decodeFeedPart(body: unknown): { part: string; offset: number; txn_offset: number; items: FeedItem[] } | null {
   if (typeof body !== "object" || body === null) return null;

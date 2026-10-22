@@ -342,7 +342,12 @@ function partnerTunedRows(o: { partnerPx: number; chromePx: number; max: number;
   return Math.max(Math.min(3, o.max), Math.min(o.max, Math.round((o.partnerPx - o.chromePx) / (o.rowPx ?? 30))));
 }
 
-test("CD-1 (Q2-10): member flows show 20 and the filing history 12 whatever the side cell holds; a partner-tuned N fails", async () => {
+/* launch M4b (R26, LD24): the member page's net-by-ticker table became the
+   side column's Top tickers — 8 per window, its "Show all N tickers" over the
+   island (rule 8) — and the Filing history left its pair band. The property
+   is unchanged: each default N is FIXED, never tuned to whatever sits beside
+   it; the mechanism (a band partner) became a side column. */
+test("CD-1 (Q2-10): member Top tickers show 8 and the filing history 12 whatever the side column holds; a partner-tuned N fails", async () => {
   const { memberBody, memberSignalsPanel } = await import("../src/lib/ui/index.ts");
   const stamps = { buildId: "b", generatedAt: "2026-07-24 06:56 UTC", generatedAtDate: "2026-07-24" };
   const ctx = {};
@@ -358,11 +363,11 @@ test("CD-1 (Q2-10): member flows show 20 and the filing history 12 whatever the 
   for (const deps of [noSector, sectors]) {
     for (const sig of signals) {
       const html = memberBody(member, stamps, ctx, 0, deps, sig);
-      flows.push(shownOf(html, "member-flows-tbody"));
+      flows.push(shownOf(html, "member-top-24m-tbody"));
       history.push(shownOf(html, "member-history-tbody"));
     }
   }
-  assert.deepEqual(fixedDefaultProblems(flows, 20), [], "member flows: 20, fixed");
+  assert.deepEqual(fixedDefaultProblems(flows, 8), [], "member Top tickers: 8, fixed");
   assert.deepEqual(fixedDefaultProblems(history, 12), [], "filing history: 12, fixed");
   /* control: the M2-D1 model — N tuned to the partner cell by a height
      estimate (the no-sector profile, then a 14-row sector mix beside it) —
@@ -651,18 +656,35 @@ function sourceLedgerItems(page: string): { label: string; tone: string }[] {
   }));
 }
 
-test("T2.8 (D2): the Congress ledger carries the four D2 figures in order, tones ink / ink / blue / gold", () => {
+/* REVERSED by launch M3b (R18, LD18; the approved Congress board): the D2
+   figures (Transactions, House parse, Senate parse, Paper) become Trades, Last
+   30 days, Median lag and E-filings read. The property kept: one four-figure
+   ledger in the page head, through the ONE ledger renderer, with its tones in
+   order — and every parse and paper count still stated (in the E-filings
+   figure's sub and note). The figures are built by `congressLedgerItems`. */
+test("T2.8 (D2) → launch M3b: the Congress ledger carries Trades, Last 30 days, Median lag, E-filings read — tones ink / blue / ink / gold", async () => {
   const page = readFileSync(path.join(SRC, "pages", "congress", "index.astro"), "utf-8");
-  assert.deepEqual(sourceLedgerItems(page), [
-    { label: "Transactions", tone: "ink" },
-    { label: "House parse", tone: "ink" },
-    { label: "Senate parse", tone: "blue" },
-    { label: "Paper", tone: "gold" },
+  const { congressLedgerItems } = await import("../src/lib/ui/rankings.ts");
+  const items = congressLedgerItems(
+    { trades: 10, filedFrom: "2014", last30: { rows: 2, members: 1, unjoined: 0, from: "2026-07-25", to: "2026-08-23" }, lag: { median: 28, withLag: 9, late: 2, withStatus: 9 } },
+    { houseParsed: 5, houseEfile: 6, housePct: "83.3", senateParsed: 2, senateEfile: 2, senatePct: "100", needsOcr: 3, efilePct: "87.5" },
+    (n, d) => (d === 0 ? "—" : n === d ? "100" : (Math.floor((n / d) * 1000) / 10).toFixed(1)),
+  );
+  assert.deepEqual(items.map((i) => ({ label: i.label, tone: i.tone ?? "ink" })), [
+    { label: "Trades", tone: "ink" },
+    { label: "Last 30 days", tone: "blue" },
+    { label: "Median lag", tone: "ink" },
+    { label: "E-filings read", tone: "gold" },
   ]);
-  // the ledger renders in the page head (`ledgerHtml`), replacing the coverage strip
+  assert.match(page, /disclosureLedger\(\s*congressLedgerItems\(/, "the page renders these items through the one ledger");
+  // the ledger renders in the page head (`ledgerHtml`), before the provenance strip
   assert.match(page, /<div class="page-head">[\s\S]*?<Fragment set:html=\{ledgerHtml\} \/>[\s\S]*?<\/div>\s*<div class="design-provenance">/);
-  // control: the reader sees a swapped tone
-  assert.notDeepEqual(sourceLedgerItems(page.replace('tone: "blue"', 'tone: "gold"')).map((i) => i.tone), ["ink", "ink", "blue", "gold"]);
+  // the parse and paper counts stay stated (sub and note), never dropped
+  const efile = items[3]!;
+  assert.equal(efile.detail, "3 paper not yet read");
+  assert.match(efile.noteHtml ?? "", /House: 5 of 6 e-filings read \(83\.3%\)\. Senate: 2 of 2 \(100%\)\./);
+  // control: a swapped tone is caught by the same comparison
+  assert.notDeepEqual(items.map((i, k) => (k === 1 ? "gold" : i.tone ?? "ink")), ["ink", "blue", "ink", "gold"]);
 });
 
 test("T2.8: the filer ledger keeps its accessible name, Period statistics for P", () => {
@@ -678,7 +700,8 @@ test("T2.8: every page header renders its figures through the ONE ledger; statTi
   for (const rel of ["pages/congress/index.astro", "pages/institutional/index.astro"]) assert.match(read(rel), /disclosureLedger\(/, rel);
   for (const [rel, fn] of [
     ["lib/ui/signals.ts", "signalsBody"],
-    ["lib/ui/congress.ts", "memberBody"],
+    // launch M4b: memberBody's header ledger is composed in memberLedgerHtml
+    ["lib/ui/congress.ts", "memberLedgerHtml"],
     ["lib/ui/congress.ts", "congressTickerBody"],
     ["lib/ui/institutional.ts", "filerLedgerHtml"],
     ["lib/ui/institutional.ts", "holdersBody"],

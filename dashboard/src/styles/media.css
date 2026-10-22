@@ -68,20 +68,20 @@
     flex-wrap: wrap;
     white-space: normal;
   }
-  .paper-note {
-    white-space: normal;
-  }
 }
 
 @media (max-width: 720px) {
   .shell {
-    padding-left: 16px;
-    padding-right: 16px;
+    padding-left: var(--gutter-l);
+    padding-right: var(--gutter-r);
   }
 
-  /* masthead folds to logo · search · burger */
+  /* masthead folds to logo · search · burger — and, from launch M1c (LD8, R8),
+     it is a SLIM STICKY header: 54px (--masthead-h), clear of the top inset,
+     with the drawer and the search sheet hanging from it */
   .masthead-inner {
-    height: 52px;
+    height: 54px;
+    min-height: 54px;
   }
   .masthead-left {
     gap: 0;
@@ -97,17 +97,26 @@
     display: none;
   }
   .site-nav.open {
-    display: flex;
-    flex-direction: column;
-    gap: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0 12px;
     position: absolute;
-    top: 52px;
+    top: 100%;
     left: 0;
     right: 0;
     background: var(--paper);
     border-bottom: 1px solid var(--rule2);
     z-index: 20;
-    padding: 8px 16px 12px;
+    padding: 4px var(--gutter-r) max(12px, env(safe-area-inset-bottom)) var(--gutter-l);
+  }
+  .site-nav.open > a { grid-column: 1; }
+  .site-nav.open .nav-count {
+    display: block;
+    grid-column: 2;
+    font: 500 var(--fs-meta) var(--mono);
+    color: var(--ink-meta);
+    text-align: right;
   }
   .site-nav.open a,
   .site-nav.open .nav-soon {
@@ -129,18 +138,27 @@
   .site-search {
     display: none;
   }
+  /* the search sheet: full width under the header, its field at --fs-input */
   .site-search.open {
     display: flex;
+    flex-wrap: wrap;
     position: absolute;
-    top: 52px;
+    top: 100%;
     left: 0;
     right: 0;
     width: auto;
     margin: 0;
     z-index: 20;
-    padding: 12px 16px;
+    padding: 12px var(--gutter-r) 12px var(--gutter-l);
     border-left: none;
     border-right: none;
+  }
+  .site-search.open input { flex: 1 1 0; min-height: var(--hit-min); }
+  .site-search.open .search-sheet-hint {
+    display: block;
+    flex-basis: 100%;
+    font: 400 var(--fs-note) var(--mono);
+    color: var(--ink3);
   }
   .search-toggle,
   .nav-burger {
@@ -156,7 +174,10 @@
     font-family: var(--mono);
   }
   .masthead {
-    position: relative;
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    padding-top: env(safe-area-inset-top);
   }
 
   .page {
@@ -208,8 +229,9 @@
     font-size: var(--fs-label);
   }
 
-  /* filter controls become one horizontally scrollable strip; the count line
-     stays put beneath them */
+  /* launch M1c (R9): filter groups WRAP and stretch full width (no sideways
+     strip); the count line stays put beneath them; a search box stands on its
+     own row */
   .filterbar {
     margin-top: 14px;
     flex-direction: column;
@@ -221,12 +243,14 @@
   .filter-controls {
     display: flex;
     align-items: center;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    gap: 14px;
+    flex-wrap: wrap;
+    overflow-x: visible;
+    gap: 8px 14px;
     min-width: 0;
-    -webkit-overflow-scrolling: touch;
   }
+  .filter-controls > * { max-width: 100%; }
+  .filter-controls .filter-text,
+  .filter-controls input[type="search"] { flex: 1 1 100%; width: 100%; min-width: 0; }
   .filter-label {
     display: none;
   }
@@ -309,9 +333,10 @@
 /* ---------- mobile fold, entity & feed surfaces (≤720px) ----------
    THE FOLD RULE (SS4, standing deviation): nothing honesty-bearing — dates,
    lag, owner/partial qualifiers, flags, SRC receipts, footnotes, terminus
-   rows, as-of stamps — is display:none'd here. Wide tables scroll INSIDE
-   their .table-scroll container with a sticky identity column and an edge
-   fade; the page never scrolls sideways. Enforced by test/css-fold.test.ts. */
+   rows, as-of stamps — is display:none'd here. Tables fold into row cards
+   (launch D4, the ledger region's ≤720px block in entities.css); the page
+   never scrolls sideways. Enforced by test/css-fold.test.ts and
+   test/launch-phone-css.test.ts. */
 
 @media (max-width: 720px) {
   .entity-head {
@@ -335,20 +360,23 @@
   .cta { min-height: 44px; }
   .module-shell, .s1-block, .s2-block, .s4-error { padding: 24px 18px; }
 
-  /* The wide-table fold — in-container scroll, the sticky identity column, the
-     edge fade and the 200px name cap — is in the ledger region's ≤720px block
-     (entities.css) now; all cells stay in the DOM, the fade removes nothing. */
+  /* The table fold — row cards keyed on role classes, the head folded through
+     the clip pattern (launch D4) — is in the ledger region's ≤720px block
+     (entities.css); every cell stays in the DOM and on its card. */
 
   .rb-track { gap: 8px; }
+  .rb-labels { gap: 8px; } /* the labels keep the track's columns (launch review M3) */
   .rb-bar { width: 12px; }
-  .rb-half .rb-bar { width: 10px; }
 
+  /* The results are the open search sheet's last row, under its field and its
+     hint (launch review M5): a panel fixed at the header's edge was laid over
+     the field it answers. The sheet is the only place the panel shows at the
+     fold (.site-search is display:none until it opens). */
   .search-panel {
-    position: fixed;
-    top: 52px;
-    left: 0;
-    right: 0;
-    max-height: calc(100vh - 52px);
+    position: static;
+    flex-basis: 100%;
+    max-height: 60dvh;
+    padding-bottom: env(safe-area-inset-bottom);
   }
 }
 

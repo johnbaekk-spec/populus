@@ -56,7 +56,7 @@ function tickerPages(): Page[] {
 function previewRows(main: string): string[] {
   const at = main.indexOf('aria-label="Congressional disclosures"');
   assert.ok(at >= 0, "the disclosures panel");
-  const body = /<tbody>([\s\S]*?)<\/tbody>/.exec(main.slice(at));
+  const body = /<tbody\b[^>]*>([\s\S]*?)<\/tbody>/.exec(main.slice(at)) /* launch M1a (R40): tbody carries role="rowgroup" */;
   return body ? body[1]!.match(/<tr[^>]*>/g) ?? [] : [];
 }
 

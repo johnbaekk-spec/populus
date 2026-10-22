@@ -7,13 +7,15 @@
      through the server's own view and row renderer, so a repaint is the
      server's markup (signals-v3 M2, R13);
    - signals-v4 R6 (LD6): the column fit — the hits fill to the height of
-     "Filings to read" (`column-fit.ts`), revealing the rows the server holds
-     `hidden`, and past them the memoised artifact;
+     "Filings to read" (`column-fit.ts`), revealing the lines the page
+     carries (launch M7a: the first ten in the DOM, the rest rendered from
+     the JSON island on demand), and past them the memoised artifact;
    - signals-v4 R7 (LD7): the pane switch where the band stacks;
    - signals-v4 R4 (LD5): a lead card, or a hash naming a row, opens the row;
    - signals-v4 M2 (R9, R12, R14, LD8, LD11): the tabs (`tabs.ts`), the Named
-     moves' chips, name filter and "Show 15 more" over the rows the server
-     holds, the Consensus rows and lead cards that set the name filter, the
+     moves' chips, name filter and "Show 15 more" over the rows the page
+     carries (launch M7a: fifteen in the DOM, the rest in the island, each
+     rendered as the server's held row when a view needs it), the Consensus rows and lead cards that set the name filter, the
      Named moves' column fit, and `revealTarget` — the ONE sequence every
      in-page navigation runs (a hash, a card, a Consensus row).
    - signals-v4 M3 (R18, R19, R21, LD8, LD14, LD16): Overlap's relation
@@ -27,13 +29,15 @@
 
 import { fmtInt, parseDataColumns, type RenderCtx } from "../lib/format.ts";
 import { hitsBodyHtml, hitsRangeText, sortHits, SIGNAL_HITS_PAGE_SIZE, SIGNAL_HITS_COMPACT_ROWS, hitsView, hitsHiddenText, type HitFilter } from "../lib/ui/index.ts";
+import { heldHitRowHtml, SIGNAL_HITS_ROWS, type HitLine } from "../lib/ui/signals.ts";
 import type { Signal, SignalArtifact } from "../lib/signals.ts";
 import { NAMED_MOVES_MIN, NAMED_MOVES_STEP, namedMovesSliceKey } from "../lib/notable-moves.ts";
-import { moveDetailHtml, namedMovesBoundText, namedMovesRangeText, overlapLinkFor, parseNamedMovesTotals, type MoveDetail } from "../lib/ui/signals-institutional.ts";
-import { overlapBoundText, overlapRangeText } from "../lib/ui/signals-overlap.ts";
+import { CONGRESS_BANK_ROWS, heldBankBlockHtml, heldMoveRowHtml, moveDetailHtml, NAMED_MOVES_ROWS, namedMovesBoundText, namedMovesRangeText, overlapLinkFor, parseNamedMovesTotals, type BankBlock, type MoveDetail, type MoveRowData } from "../lib/ui/signals-institutional.ts";
+import { heldOverlapItemHtml, OVERLAP_NAME_ROWS, overlapBoundText, overlapRangeText, type HeldOverlapItem } from "../lib/ui/signals-overlap.ts";
 import { bindFit, type FitBinding, type FitElement, type FitTarget } from "./column-fit.ts";
+import { rolesFor } from "./table-roles.ts";
 import { initTabs, selectTabFor, type TabsEnv } from "./tabs.ts";
-import { expandDomDisclosureFor } from "./inst-index-client.ts";
+import { drawHeldRows, drawHeldRun, expandDomDisclosureFor, heldDrawn, heldRows, heldRowsHtml, markHeldDrawn, registerHeldRows, revealHeldTarget } from "./inst-index-client.ts";
 
 /** An empty row spans the table's own header — the column list the server
     rendered — never a literal count (DESIGN-POLISH M1, section E). */
@@ -41,6 +45,15 @@ function columnCount(body: HTMLElement | null, fallback: number): number {
   const n = body?.closest("table")?.querySelectorAll("thead th").length ?? 0;
   return n > 0 ? n : fallback;
 }
+
+/* launch M7a (D5, LD26/LD27): the hits, the Named moves, the Congress-lines
+   bank and the Overlap names hold their rows past the first view in the
+   site's ONE held-rows island (`heldIslandHtml`, lib/held-rows.ts), drawn by
+   the ONE binder (`scripts/inst-index-client.ts`): each pager registers its
+   list's row function and asks the binder for rows — `drawHeldRun` for the
+   next contiguous run, `drawHeldRows` / `heldRowsHtml` for named rows —
+   which renders them through that function with the page's table roles.
+   DOM text is never turned back into HTML. */
 
 /* R13: the server rendered the first lines; the first filter, or a fit or
    "Show more" past the rows the server holds, fetches `signals.v1.json` once
@@ -123,6 +136,16 @@ export function initHitPager(): HitPager | null {
   let heldKey = "all|true";
   let all: Promise<Signal[]> | null = null;
   let token = 0;
+  /* launch M7a (D5, LD27): the default view's lines past the first ten wait
+     in the island and render, hidden, through the server's body renderer
+     when a reveal needs them; a repaint from the artifact retires them */
+  registerHeldRows(SIGNAL_HITS_ROWS, heldHitRowHtml);
+  const island = heldRows<HitLine>("signal-hits-body");
+  function materializeLines(want: number): void {
+    if (!island || heldKey !== "all|true") return;
+    /* one line past the reveal stays held, so the fit can measure the next line */
+    drawHeldRun("signal-hits-body", Math.max(0, want + 1 - rows().length));
+  }
 
   function loadAll(): Promise<Signal[]> {
     all ??= fetch(ARTIFACT_HREF)
@@ -194,10 +217,14 @@ export function initHitPager(): HitPager | null {
     }
     if (mine !== token) return;
     const v = hitsRepaint(hits, filter(), base + extra, ctx, parseDataColumns(body!.closest("table")?.getAttribute("data-columns")), domRows);
-    body!.innerHTML =
+    /* a repaint renders from the artifact: the island's lines are retired */
+    if (island) markHeldDrawn("signal-hits-body", island.length);
+    body!.innerHTML = rolesFor(
+      body,
       v.held === 0
         ? `<tr><td colspan="${columnCount(body, 6)}" class="si-empty">No hits match this view — a computed answer over every rule, not missing coverage.</td></tr>`
-        : v.body;
+        : v.body,
+    );
     lines = v.lines;
     hitsN = v.hits;
     heldKey = key();
@@ -220,6 +247,7 @@ export function initHitPager(): HitPager | null {
       of the current view, else repaint from the artifact. */
   function render(say: boolean): void | Promise<void> {
     const want = Math.min(lines, base + extra);
+    if (heldKey === key()) materializeLines(want);
     if (heldKey === key() && want <= rows().length) {
       reveal(want);
       if (say) announce(rangeEl!.textContent ?? "", hiddenEl?.textContent ?? "");
@@ -361,6 +389,10 @@ export interface MovesPager {
       row's body and its Congress lines inserted — once per `toggle` (the fit
       re-runs, keeping the "Show more" extension and every open row) */
   onLayout: (() => void) | null;
+  /** launch M7a: render the island's rows up to and including `id` (a hash
+      naming a held row) and return it — the row itself when it is already
+      in the DOM — or null when no carried row has it */
+  materialize(id: string): Element | null;
 }
 
 export function initNamedMoves(): MovesPager | null {
@@ -391,28 +423,68 @@ export function initNamedMoves(): MovesPager | null {
     (type === null || el.getAttribute("data-type") === type) &&
     (name === null || el.getAttribute("data-ikey") === name);
   const matching = (): HTMLElement[] => items().filter(matchesNow);
+  /* launch M7a (D5, LD27): the rows past the first fifteen wait in the
+     island, in the page's order; they render — as the server's held rows,
+     through `moveRowFrom` — when a view needs them, always as the next
+     contiguous run, so the DOM stays in the page's order */
+  registerHeldRows(NAMED_MOVES_ROWS, heldMoveRowHtml);
+  registerHeldRows(CONGRESS_BANK_ROWS, heldBankBlockHtml);
+  const held = heldRows<MoveRowData>("mv-list");
+  /** the island's rows not yet in the DOM, in the page's order */
+  const pending = (): MoveRowData[] => (held ? held.slice(heldDrawn("mv-list")) : []);
+  const pendingMatches = (r: MoveRowData): boolean => (kind === null || r.kind === kind) && (type === null || r.type === type) && (name === null || r.ikey === name);
+  function materializeRun(n: number): void {
+    drawHeldRun("mv-list", n);
+  }
+  /** Render island rows until the DOM holds `want` rows matching the view —
+      and one more, held, so the column fit (and its geometry check) can
+      measure the next row — or the island is spent. */
+  function ensure(want: number): void {
+    const rest = pending();
+    let need = want + 1 - matching().length;
+    let upTo = 0;
+    for (; upTo < rest.length && need > 0; upTo++) if (pendingMatches(rest[upTo]!)) need--;
+    materializeRun(upTo);
+  }
+  /** Every carried row matching the view: the DOM's and the island's. */
+  const matchingCount = (): number => matching().length + pending().filter(pendingMatches).length;
   /** The TRUE in-build total for the filter: the slice total for the chips;
-      for a name filter the DOM's own count, which is complete for that key. */
-  const total = (): number => (name !== null ? matching().length : Number(totals[namedMovesSliceKey(kind, type)] ?? 0));
+      for a name filter the page's own count, which is complete for that key. */
+  const total = (): number => (name !== null ? matchingCount() : Number(totals[namedMovesSliceKey(kind, type)] ?? 0));
   const bank = document.getElementById("mv-bank");
+  /* launch M7a (D5): the blocks only held rows link wait in the bank's island */
+  const heldBank = heldRows<BankBlock>("mv-bank");
+  const bankBlockHtml = (k: string): string | null => {
+    const inPage = bank?.querySelector<HTMLElement>(`[data-cong="${k}"]`) ?? null;
+    if (inPage) return inPage.innerHTML;
+    const at = heldBank ? heldBank.findIndex((x) => x.k === k) : -1;
+    const html = at < 0 ? null : heldRowsHtml("mv-bank", [at]);
+    if (html === null) return null;
+    /* the block's inner markup, as the bank would hold it */
+    return html.slice(html.indexOf(">") + 1, html.lastIndexOf("</section>"));
+  };
   /** LD11: a held row's opened body, from the row's own data and its
       section's — the server's renderer, so the two cannot differ */
   const detailOf = (row: Element): MoveDetail => {
     const tk = row.querySelector(".mv-tk .mono-ticker")?.textContent?.trim() || null;
-    const filed = row.querySelector(".mv-fil time")?.textContent?.trim() || null;
     return {
       type: row.getAttribute("data-type") ?? "",
       kind: (row.getAttribute("data-kind") ?? "new") as MoveDetail["kind"],
-      filed,
-      period: section!.getAttribute("data-mv-period") || "—",
       quarter: section!.getAttribute("data-mv-q"),
       ticker: tk,
       verified: row.hasAttribute("data-tv") ? row.getAttribute("data-tv") || null : section!.getAttribute("data-mv-tv"),
       filerPage: row.getAttribute("data-fp") ?? "",
       congress: Number(row.getAttribute("data-cg")) || 0,
       /* M3 (R21, D8): the name's Overlap row, where the page carries it — the
-         server's one predicate, never gated on the side's Congress count */
-      overlap: section!.hasAttribute("data-mv-ov") ? overlapLinkFor(tk, (id) => document.getElementById(id)?.classList.contains("ov-item") === true) : null,
+         server's one predicate, never gated on the side's Congress count.
+         Launch review H5: the server's answer travels on the lean row
+         (`data-ov`), because the Overlap row may itself be held in its island
+         and absent from the DOM; the DOM check stays for a row without it. */
+      overlap: row.hasAttribute("data-ov")
+        ? row.getAttribute("data-ov") || null
+        : section!.hasAttribute("data-mv-ov")
+          ? overlapLinkFor(tk, (id) => document.getElementById(id)?.classList.contains("ov-item") === true)
+          : null,
     };
   };
   /** LD10: an opened row's (or a shown name's) Congress side lists its lines:
@@ -425,9 +497,9 @@ export function initNamedMoves(): MovesPager | null {
     }
     for (const ref of Array.from(root.querySelectorAll<HTMLElement>(".mv-cong[data-cong]"))) {
       if (ref.hasAttribute("data-cong-filled") || ref.closest("#mv-bank")) continue;
-      const block = bank?.querySelector<HTMLElement>(`[data-cong="${ref.getAttribute("data-cong") ?? ""}"]`) ?? null;
-      if (!block) continue;
-      ref.innerHTML = block.innerHTML;
+      const block = bankBlockHtml(ref.getAttribute("data-cong") ?? "");
+      if (block === null) continue;
+      ref.innerHTML = block;
       ref.setAttribute("data-cong-filled", "");
     }
   }
@@ -439,6 +511,7 @@ export function initNamedMoves(): MovesPager | null {
 
   function render(say = false): void {
     const want = base + extra;
+    ensure(want);
     let shown = 0;
     let m = 0;
     for (const el of items()) {
@@ -448,6 +521,8 @@ export function initNamedMoves(): MovesPager | null {
       el.hidden = !show;
       if (show) shown++;
     }
+    /* the matching rows still waiting in the island are carried too */
+    m += pending().filter(pendingMatches).length;
     const t = total();
     const range = namedMovesRangeText(shown, t);
     if (rangeEl) rangeEl.textContent = range;
@@ -481,7 +556,7 @@ export function initNamedMoves(): MovesPager | null {
     fitTarget: {
       list: () => list as unknown as FitElement,
       rows: () => matching() as unknown as FitElement[],
-      matching: () => matching().length,
+      matching: matchingCount,
       visible: () => items().filter((el) => !el.hidden).length,
       extra: () => extra,
       apply: (n: number) => {
@@ -524,6 +599,14 @@ export function initNamedMoves(): MovesPager | null {
     state: () => ({ kind, type, name, base, extra }),
     onFilter: null,
     onLayout: null,
+    materialize(id: string): Element | null {
+      const here = list!.querySelector(`#${id}`);
+      if (here) return here;
+      const at = pending().findIndex((r) => r.id === id);
+      if (at < 0) return null;
+      materializeRun(at + 1);
+      return document.getElementById(id);
+    },
   };
   /* a `<details>` in the column opened or closed by the reader — a move row
      (opened: a held row's body is rendered and its side's Congress lines
@@ -584,6 +667,8 @@ export interface OverlapPager {
       the page until it shows */
   reveal(item: Element): void;
   state(): { variant: "core" | "all"; rel: "all" | "same" | "opposite"; extra: number; shown: number };
+  /** launch M7a: render a carried name from the island (a hash naming it) */
+  materialize(id: string): Element | null;
 }
 
 type OvRel = "all" | "same" | "opposite";
@@ -610,30 +695,49 @@ export function initOverlap(): OverlapPager | null {
   let extra = 0;
   let shownNow = 0;
   const items = (): HTMLElement[] => Array.from(list.querySelectorAll<HTMLElement>("article.ov-item"));
-  const ordOf = (el: Element, v: 0 | 1): number | null => {
-    const raw = el.getAttribute(v === 0 ? "data-oc" : "data-oa");
-    return raw === null || raw === "" ? null : Number(raw);
-  };
-  const relOf = (el: Element, v: 0 | 1): string | null => el.getAttribute(v === 0 ? "data-core" : "data-all") || null;
+  /* launch M7a (D5, LD27): the carried names past the first view wait in the
+     island and render through `overlapItemHtml` when a view shows them; a
+     view is read over the page's names and the island's alike */
+  type OvEntry = { id: string; core: string | null; all: string | null; oc: number | null; oa: number | null };
+  registerHeldRows(OVERLAP_NAME_ROWS, heldOverlapItemHtml);
+  const held = heldRows<HeldOverlapItem>("ov-list");
+  const fromEl = (el: Element): OvEntry => ({
+    id: el.getAttribute("id") ?? "",
+    core: el.getAttribute("data-core") || null,
+    all: el.getAttribute("data-all") || null,
+    oc: el.getAttribute("data-oc") ? Number(el.getAttribute("data-oc")) : null,
+    oa: el.getAttribute("data-oa") ? Number(el.getAttribute("data-oa")) : null,
+  });
+  const pendingItems = (): HeldOverlapItem[] => (held ? held.filter((it) => list.querySelector(`#${it.id}`) === null) : []);
+  const fromHeld = (it: HeldOverlapItem): OvEntry => ({ id: it.id, core: it.core?.rel ?? null, all: it.all.rel, oc: it.ord.core, oa: it.ord.all });
+  const entries = (): OvEntry[] => [...items().map(fromEl), ...pendingItems().map(fromHeld)];
+  function materialize(ids: ReadonlySet<string>): void {
+    if (!held) return;
+    /* the named, not-yet-drawn names, in the island's order */
+    const at = held.flatMap((it, i) => (ids.has(it.id) && list!.querySelector(`#${it.id}`) === null ? [i] : []));
+    drawHeldRows("ov-list", at, "");
+  }
+  const ordOf = (e: OvEntry, v: 0 | 1): number | null => (v === 0 ? e.oc : e.oa);
+  const relOf = (e: OvEntry, v: 0 | 1): string | null => (v === 0 ? e.core : e.all);
   /** The active view: its carried names in the variant's order, the length of
       the run the page carries from the view's first name (a view is a
       contiguous run of the variant's order: same, then opposite, then mixed),
       and its true total. */
-  function view(): { inView: HTMLElement[]; run: number; total: number } {
+  function view(): { inView: OvEntry[]; run: number; total: number } {
     const n = totals.all[variant];
     const sm = totals.same[variant];
     const op = totals.opposite[variant];
     const start = rel === "opposite" ? sm : 0;
     const total = rel === "all" ? n : rel === "same" ? sm : op;
-    const inView = items()
-      .filter((el) => {
-        const r = relOf(el, variant);
+    const inView = entries()
+      .filter((e) => {
+        const r = relOf(e, variant);
         return r !== null && (rel === "all" || r === rel);
       })
       .sort((a, b) => ordOf(a, variant)! - ordOf(b, variant)!);
     let run = 0;
-    for (const el of inView) {
-      if (ordOf(el, variant) === start + run) run++;
+    for (const e of inView) {
+      if (ordOf(e, variant) === start + run) run++;
       else break;
     }
     return { inView, run, total };
@@ -642,12 +746,14 @@ export function initOverlap(): OverlapPager | null {
     const { inView, run, total } = view();
     const want = Math.min(run, step + extra);
     shownNow = want;
+    materialize(new Set(inView.slice(0, want).map((e) => e.id)));
     /* the list in the variant's order (the other variant's names after) */
     const all = items();
-    const sorted = [...all].sort((a, b) => (ordOf(a, variant) ?? Infinity) - (ordOf(b, variant) ?? Infinity) || all.indexOf(a) - all.indexOf(b));
+    const ord = (el: Element): number => ordOf(fromEl(el), variant) ?? Infinity;
+    const sorted = [...all].sort((a, b) => ord(a) - ord(b) || all.indexOf(a) - all.indexOf(b));
     if (sorted.some((el, i) => el !== all[i])) (list as unknown as { append(...n: Element[]): void }).append(...sorted);
-    const shown = new Set(inView.slice(0, want));
-    for (const el of all) el.hidden = !shown.has(el);
+    const shown = new Set(inView.slice(0, want).map((e) => e.id));
+    for (const el of all) el.hidden = !shown.has(el.getAttribute("id") ?? "");
     const v = variant === 0 ? "core" : "all";
     for (const sp of Array.from(section!.querySelectorAll<HTMLElement>("[data-v]"))) sp.hidden = sp.getAttribute("data-v") !== v;
     for (const b of Array.from(section!.querySelectorAll<HTMLElement>("button[data-ov-rel]"))) b.setAttribute("aria-pressed", String(b.getAttribute("data-ov-rel") === rel));
@@ -670,9 +776,11 @@ export function initOverlap(): OverlapPager | null {
   /** the name's place in the active view's carried run, or -1 */
   const reach = (item: Element): number => {
     const { inView, run } = view();
-    const at = inView.indexOf(item as HTMLElement);
+    const id = item.getAttribute("id");
+    const at = inView.findIndex((e) => e.id === id);
     return at >= 0 && at < run ? at : -1;
   };
+  const relOfEl = (item: Element, v: 0 | 1): string | null => relOf(fromEl(item), v);
   section.addEventListener("click", (ev) => {
     const btn = (ev?.target as HTMLElement | undefined)?.closest?.("button[data-ov-rel], #ov-broad, #ov-more") as HTMLElement | null | undefined;
     if (!btn) return;
@@ -694,17 +802,21 @@ export function initOverlap(): OverlapPager | null {
         rel = "all";
         extra = 0;
       }
-      if (reach(item) < 0) rel = (relOf(item, variant) as OvRel | null) === "same" || relOf(item, variant) === "opposite" ? (relOf(item, variant) as OvRel) : "all";
-      if (reach(item) < 0 && relOf(item, variant === 0 ? 1 : 0) !== null) {
+      if (reach(item) < 0) rel = (relOfEl(item, variant) as OvRel | null) === "same" || relOfEl(item, variant) === "opposite" ? (relOfEl(item, variant) as OvRel) : "all";
+      if (reach(item) < 0 && relOfEl(item, variant === 0 ? 1 : 0) !== null) {
         variant = variant === 0 ? 1 : 0;
         rel = "all";
-        if (reach(item) < 0) rel = relOf(item, variant) === "same" || relOf(item, variant) === "opposite" ? (relOf(item, variant) as OvRel) : "all";
+        if (reach(item) < 0) rel = relOfEl(item, variant) === "same" || relOfEl(item, variant) === "opposite" ? (relOfEl(item, variant) as OvRel) : "all";
       }
       const at = reach(item);
       if (at >= step + extra) extra = at + 1 - step;
       render(true);
     },
     state: () => ({ variant: variant === 0 ? "core" : "all", rel, extra, shown: shownNow }),
+    materialize(id: string): Element | null {
+      materialize(new Set([id]));
+      return list!.querySelector(`#${id}`);
+    },
   };
 }
 
@@ -875,7 +987,8 @@ export function hashTargetId(hash: string): string {
     sequence (a row opens, a hidden pane is selected, a held move shows). */
 export function revealHash(hash: string): Element | null {
   const id = hashTargetId(hash);
-  return id ? revealTarget(document.getElementById(id)) : null;
+  /* launch M7a: a held move row or Overlap name is rendered from its island first */
+  return id ? revealTarget(document.getElementById(id) ?? moves?.materialize(id) ?? overlap?.materialize(id) ?? revealHeldTarget(id)) : null;
 }
 
 export function initRowLinks(): void {
@@ -929,7 +1042,9 @@ export function initInPageLinks(): void {
       if (!a || a.classList.contains("si-card-open")) return;
       const href = a.getAttribute("href") ?? "";
       if (!href.startsWith("#") || href.length < 2) return;
-      const target = document.getElementById(hashTargetId(href));
+      const id = hashTargetId(href);
+      /* launch M7a: a held move row or Overlap name renders from its island first */
+      const target = document.getElementById(id) ?? moves?.materialize(id) ?? overlap?.materialize(id) ?? revealHeldTarget(id);
       if (!target || !target.closest('[role="tabpanel"]')) return;
       (ev as Event | undefined)?.preventDefault?.();
       const filter = a.getAttribute("data-pb-filter");
@@ -940,64 +1055,63 @@ export function initInPageLinks(): void {
   }
 }
 
-/* ---------------------------------------------------------------- R-8: scroll regions */
+/* R-8: the scroll regions (`data-scroll-region`) are synced on every page by
+   `scripts/scroll-regions.ts`, which `Base.astro` runs (launch integration:
+   the home carries scroll regions too). */
 
-/** The narrow surface `syncScrollRegion` touches, declared structurally so
-    it runs under `node --test` as well as on a real element. */
-export interface ScrollRegionNode {
-  scrollWidth: number;
-  clientWidth: number;
-  dataset: Record<string, string | undefined>;
-  getAttribute(name: string): string | null;
-  setAttribute(name: string, value: string): void;
-  removeAttribute(name: string): void;
-}
+/* Launch review weight item 9 (LD26 "print renders every held row"): the
+   Signals islands — the hit lines past the first ten, the Named moves past
+   the first fifteen, the Overlap names past the first view — get the same
+   paper rule as every other held list. `beforeprint` draws every row an
+   island still holds (as the pagers would, hidden) and unhides every row of
+   the three lists; `afterprint` hides exactly the rows it unhid. The drawn
+   rows stay drawn: each pager counts drawn rows as carried, so its next view
+   is unchanged. */
+const PRINT_LISTS: readonly (readonly [string, string])[] = [
+  ["signal-hits-body", "tr.si-hit"],
+  ["mv-list", "article.mv-item"],
+  ["ov-list", "article.ov-item"],
+];
 
-/** A wrapper is a focusable, named "scroll sideways" region exactly while
-    its content overflows it, and a plain box otherwise (review R-8). The
-    name is the one the server rendered in `data-scroll-region`.
-
-    signals-v4 LD8: `data-scroll-region` goes only on a ROLE-LESS wrapper. An
-    element that carries a role or an accessible name of its own in the
-    server HTML (a tablist, a group) is never re-roled: the first sync finds
-    it, logs a console error and leaves it untouched — the roles this
-    function writes are recorded (`data-scroll-region-owned`), so a later
-    sync can tell them from the server's. */
-export function syncScrollRegion(el: ScrollRegionNode): boolean {
-  if (el.getAttribute("data-scroll-region-owned") !== "1") {
-    if (el.getAttribute("role") !== null || el.getAttribute("aria-label") !== null) {
-      console.error("populus: [data-scroll-region] on an element with its own role or name; it is not re-roled", el);
-      return false;
+/** Draw and show every held Signals row; returns the restore step. */
+export function signalsPrintAll(): () => void {
+  const unhid: HTMLElement[] = [];
+  for (const [id, sel] of PRINT_LISTS) {
+    const root = document.getElementById(id);
+    if (!root) continue;
+    const held = heldRows<{ id?: string }>(id);
+    if (held) {
+      if (id === "ov-list") {
+        /* the Overlap draws its names by id, out of island order */
+        drawHeldRows(id, held.flatMap((it, i) => (it.id && document.getElementById(it.id) === null ? [i] : [])), "");
+      } else {
+        drawHeldRun(id, held.length);
+      }
     }
-    el.setAttribute("data-scroll-region-owned", "1");
+    for (const el of Array.from(root.querySelectorAll<HTMLElement>(sel))) {
+      if (!el.hidden) continue;
+      el.hidden = false;
+      unhid.push(el);
+    }
   }
-  const name = el.dataset.scrollRegion;
-  const scrolls = !!name && el.scrollWidth > el.clientWidth + 1;
-  if (scrolls) {
-    el.setAttribute("tabindex", "0");
-    el.setAttribute("role", "region");
-    el.setAttribute("aria-label", name!);
-  } else {
-    el.removeAttribute("tabindex");
-    el.removeAttribute("role");
-    el.removeAttribute("aria-label");
-  }
-  return scrolls;
+  return () => {
+    for (const el of unhid) el.hidden = true;
+  };
 }
 
-function initScrollRegions(): void {
-  for (const el of Array.from(document.querySelectorAll<HTMLElement>("[data-scroll-region]"))) {
-    const sync = (): void => void syncScrollRegion(el);
-    sync();
-    // the wrapper's width moves with the viewport, its content's (the hits
-    // table, the tablist, a chip row) with what it holds
-    if (typeof ResizeObserver === "function") {
-      const ro = new ResizeObserver(sync);
-      ro.observe(el);
-      const content = el.querySelector("table") ?? el.firstElementChild;
-      if (content) ro.observe(content);
-    } else window.addEventListener("resize", sync);
-  }
+let signalsPrintBound = false;
+function bindSignalsPrint(): void {
+  if (signalsPrintBound || typeof window === "undefined" || typeof window.addEventListener !== "function") return;
+  signalsPrintBound = true;
+  let restore: (() => void) | null = null;
+  window.addEventListener("beforeprint", () => {
+    restore?.();
+    restore = signalsPrintAll();
+  });
+  window.addEventListener("afterprint", () => {
+    restore?.();
+    restore = null;
+  });
 }
 
 let fit: FitBinding | null = null;
@@ -1014,9 +1128,9 @@ export function initSignalsPage(opts: { tabsEnv?: TabsEnv } = {}): void {
   playbookList = initPlaybooks();
   pbFilter = initPlaybookFilter();
   initPaneSwitches();
-  initScrollRegions();
   initInPageLinks();
   initRowLinks();
+  bindSignalsPrint();
   /* LD6 (Congress): the hits fill to the height of "Filings to read" */
   const ref = document.getElementById("triage");
   const col = document.getElementById("signals-side");

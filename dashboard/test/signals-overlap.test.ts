@@ -21,13 +21,15 @@ import {
   overlapCarried,
   overlapCounts,
   overlapRangeText,
+  overlapItemHtml,
   overlapRowId,
+  type HeldOverlap,
   type Overlap,
   type OverlapRow,
 } from "../src/lib/ui/signals-overlap.ts";
 import { signalsBody, signalsOverlapHtml, signalsOverlapMethodHtml } from "../src/lib/ui/index.ts";
 import { moveRowHtml, namedMoveIds, signalsInstitutionalHtml } from "../src/lib/ui/signals-institutional.ts";
-import { congressLineHtml } from "../src/lib/ui/signals.ts";
+import { congressLineHtml, ctxOfCut } from "../src/lib/ui/signals.ts";
 import { BROAD_ACCOUNT_NAMES, CONGRESS_DETAIL_LINES, congressQuarter } from "../src/lib/congress-quarter.ts";
 import { scanBannedWording } from "../src/lib/activity.ts";
 import { BANNED_PATTERNS, redactFiledNames } from "./lib/banned-scan.ts";
@@ -113,10 +115,23 @@ test("T3.3 (LD14): no quarter, no moves — the stated absences; ticker spelling
   assert.equal(overlapRowId("BRK.B"), "ov-brk-b");
 });
 
-test("T3.3 (R18, LD14): one row per carried name — the default view's first 12 show, both variants' relation and counts on it, the segment counts equal the rows per variant, the bound stated where a view runs out", () => {
+/** launch M7a (D5): the carried names — the page's and the island's, the
+    island's rendered the client's way (through `overlapItemHtml`, held). */
+function carriedItems(html: string): MiniElement[] {
+  // launch integration: the site's one held-rows island (lib/held-rows.ts)
+  const m = /<script type="application\/json" data-held-for="ov-list" data-held-render="overlap-names">([\s\S]*?)<\/script>/.exec(html);
+  const held = m ? (JSON.parse(m[1]!) as HeldOverlap) : null;
+  const island = held ? held.rows.map((it) => overlapItemHtml(it.core, it.all, it.ord, held.shared.q, ctxOfCut(held.shared.cut), false)).join("") : "";
+  return [...domOf(html).querySelectorAll("article.ov-item"), ...domOf(island).querySelectorAll("article.ov-item")];
+}
+
+test("T3.3 (R18, LD14) + launch M7a (D5): one row per carried name — the first view's 12 in the page and showing, the rest in the island; both variants' relation and counts on it, the segment counts equal the rows per variant, the bound stated where a view runs out", () => {
   const o = fixtureOverlap();
-  const root = domOf(signalsOverlapHtml(o, CTX));
-  const items = root.querySelectorAll("article.ov-item");
+  const html = signalsOverlapHtml(o, CTX);
+  const root = domOf(html);
+  assert.equal(root.querySelectorAll("article.ov-item").length, OVERLAP_STEP, "the first view's names are in the page");
+  const items = carriedItems(html);
+  const find = (id: string): MiniElement | null => items.find((i) => i.getAttribute("id") === id) ?? null;
   const carried = overlapCarried(o);
   assert.equal(items.length, carried.size);
   assert.deepEqual(new Set(items.map((i) => text(i.querySelector(".ov-tk")))), carried);
@@ -133,23 +148,23 @@ test("T3.3 (R18, LD14): one row per carried name — the default view's first 12
   assert.equal(root.querySelector('button[data-ov-rel="all"]')!.getAttribute("aria-pressed"), "true", "All by default, with or without script");
   assert.equal(text(root.querySelector("#ov-range")), overlapRangeText(12, 42));
   // a row the broad account changes carries both variants; a broad-only row carries only the second, hidden
-  const t41 = root.querySelector("#ov-t41");
+  const t41 = find("ov-t41");
   if (t41) {
     assert.deepEqual(t41.querySelectorAll(".ov-rl .ov-rel").map((r) => text(r)), ["SAME · BUY SIDE", "MIXED"]);
     assert.equal(t41.querySelector('.ov-rl[data-v="all"]')!.hasAttribute("hidden"), true);
   }
-  const b01 = root.querySelector("#ov-b01")!;
+  const b01 = find("ov-b01")!;
   assert.equal(b01.getAttribute("data-core"), "");
   assert.equal(b01.hasAttribute("hidden"), true);
   // labels: the four relation words; the counts with their words for assistive technology
-  const t11 = root.querySelector("#ov-t11")!;
+  const t11 = find("ov-t11")!;
   assert.equal(text(t11.querySelector(".ov-rel")), "SAME · BUY SIDE");
   assert.equal(text(t11.querySelector(".ov-cg")), "▲3 · ▼0Congress: 3 members with a purchase, 0 with a sale");
   assert.equal(text(t11.querySelector(".ov-mg")), "▲4 · ▼0Managers: 4 managers opened or added, 0 trimmed or exited");
-  assert.equal(text(root.querySelector("#ov-t19 .ov-rel")), "SAME · SELL SIDE");
-  assert.equal(text(root.querySelector("#ov-t26 .ov-rel")), "OPPOSITE");
-  assert.equal(root.querySelector("#ov-t37"), null, "a mixed name past every view's carried run is not on the page");
-  assert.equal(text(domOf(signalsOverlapHtml(fixtureOverlap({ sliceRows: 100 }), CTX)).querySelector("#ov-t37 .ov-rel")), "MIXED");
+  assert.equal(text(find("ov-t19")!.querySelector(".ov-rel")), "SAME · SELL SIDE");
+  assert.equal(text(find("ov-t26")!.querySelector(".ov-rel")), "OPPOSITE");
+  assert.equal(find("ov-t37"), null, "a mixed name past every view's carried run is not on the page");
+  assert.equal(text(carriedItems(signalsOverlapHtml(fixtureOverlap({ sliceRows: 100 }), CTX)).find((i) => i.getAttribute("id") === "ov-t37")!.querySelector(".ov-rel")), "MIXED");
   // the bound: at 24 a view the core All view carries a 24-name run of 42
   assert.equal(root.querySelector("#ov-bound")!.hasAttribute("hidden"), true, "12 shown of a longer run: not yet");
   assert.match(text(root.querySelector("noscript")), /Filtering, Broad accounts and paging need JavaScript; 42 names are in this view, broad accounts not counted\./);
@@ -159,8 +174,7 @@ test("T3.3 (R18, LD14): one row per carried name — the default view's first 12
 
 test("T3.3 (R18, R24, LD10, LD14): an opened row lists each member's newest line through congressLineHtml — owner, range, both dates, receipt — the broad accounts' apart, and each manager's change with its 13F receipt; a removal control fails", () => {
   const o = fixtureOverlap();
-  const root = domOf(signalsOverlapHtml(o, CTX));
-  const t15 = root.querySelector("#ov-t15")!;
+  const t15 = carriedItems(signalsOverlapHtml(o, CTX)).find((i) => i.getAttribute("id") === "ov-t15")!;
   const det = t15.querySelector(".ov-det")!;
   const lines = det.querySelectorAll("li.cl-line");
   const row = o.core.find((r) => r.ticker === "T15")!;
@@ -189,11 +203,12 @@ test("T3.3 (R18, R24, LD10, LD14): an opened row lists each member's newest line
     assert.match(li.querySelector("a.mv-src")!.getAttribute("href")!, /^https:\/\/www\.sec\.gov\//);
   }
   // the broad account's lines sit apart, named, counted only with Broad accounts on
-  const t41 = domOf(signalsOverlapHtml(o, CTX)).querySelector("#ov-t41") ?? domOf(signalsOverlapHtml(buildOverlap(congressQuarter(overlapTxns(), OVERLAP_PERIOD), overlapMoves(), { sliceRows: 100 }), CTX)).querySelector("#ov-t41")!;
+  const byId = (html: string, id: string): MiniElement | null => carriedItems(html).find((i) => i.getAttribute("id") === id) ?? null;
+  const t41 = byId(signalsOverlapHtml(o, CTX), "ov-t41") ?? byId(signalsOverlapHtml(buildOverlap(congressQuarter(overlapTxns(), OVERLAP_PERIOD), overlapMoves(), { sliceRows: 100 }), CTX), "ov-t41")!;
   assert.match(text(t41.querySelector(".ov-det")), /Broad accounts — more than 25 names in the quarter, counted only with Broad accounts on: Broad Account \(32 names\)\./);
   assert.equal(t41.querySelectorAll(".ov-det li.cl-line").length, 2, "its counted buyer and the broad account's sale");
   // no control in a summary; the quarter heading
-  for (const s of root.querySelectorAll("summary.ov-sum")) assert.doesNotMatch(s.innerHTML, /<a\s|<button\s/);
+  for (const it of carriedItems(signalsOverlapHtml(o, CTX))) for (const s of it.querySelectorAll("summary.ov-sum")) assert.doesNotMatch(s.innerHTML, /<a\s|<button\s/);
   assert.match(text(det.querySelector(".ov-det-h")), /^Congress · traded in Q1 2026 \(2026-01-01 → 2026-03-31\)$/);
   assert.equal(CONGRESS_DETAIL_LINES, 12);
 });
@@ -201,7 +216,8 @@ test("T3.3 (R18, R24, LD10, LD14): an opened row lists each member's newest line
 test("T3.3 (R18, R25): the co-occurrence wording is visible and in the tip; no banned wording; a planted word is caught", () => {
   const html = signalsOverlapHtml(fixtureOverlap(), CTX);
   const root = domOf(html);
-  assert.match(text(root.querySelector(".ov-lede")), /a co-occurrence in public filings, never coordination or intent\.$/);
+  /* copy item signals-15 (adapted around the "move" ban) */
+  assert.match(text(root.querySelector(".ov-lede")), /^Names Congress traded and notable managers changed in Q1 2026 — co-occurrence, not coordination or intent\.$/);
   assert.match(text(root.querySelector("#ov-section .panel-head .note-pop")), /A co-occurrence in public filings — never coordination, never intent\./);
   assert.match(text(root.querySelector("#ov-section .ov-tools .note-pop")), /Broad Account \(32\)/, "the Broad accounts tip names the members");
   assert.deepEqual(scanBannedWording(html), []);
@@ -384,6 +400,8 @@ test("T3.5 (R21, LD8): a move row's 'See {TICKER} in Overlap →' links the name
   try {
     doc.getElementById("mv-bank")!.innerHTML = "";
     const pager = initNamedMoves()!;
+    /* launch M7a (D5): render every held row from the island first */
+    pager.materialize(ids.at(-1)!);
     const rows = doc.querySelectorAll("#mv-list article.mv-item");
     let linked = 0;
     rows.forEach((r, i) => {
@@ -464,9 +482,12 @@ test("codex M3 r1 F1 (R21, D8): a move with no counted member on its own side st
   // the held row's client-rendered body equals the server's, the link included
   const { doc, restore } = installDom(html);
   try {
-    const row = doc.getElementById(allIds[oppIdx]!)!;
+    /* launch M7a (D5): the held row ships in the island; it renders on demand as the server's held row */
+    assert.equal(doc.getElementById(allIds[oppIdx]!), null, "precondition: held in the island");
+    const pager = initNamedMoves()!;
+    const row = pager.materialize(allIds[oppIdx]!)! as unknown as MiniElement;
     assert.ok(row.hasAttribute("hidden") && row.hasAttribute("data-fp") && text(row.querySelector(".mv-det")) === "", "precondition: held, its body empty");
-    initNamedMoves()!.fill(row.querySelector("details")!);
+    pager.fill(row.querySelector("details")!);
     assert.equal(row.querySelector(".mv-det")!.innerHTML, oppServer.innerHTML);
     assert.equal(row.querySelector(".mv-ov-link a")?.getAttribute("href"), "#ov-oppx");
   } finally {

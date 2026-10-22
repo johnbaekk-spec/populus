@@ -29,24 +29,13 @@ const description =
   <main class="shell page">
     <div class="page-head">
       <div class="page-head-copy">
-        <div class="kicker">/congress/leaders</div>
         <h1 class="page-title">This view moved</h1>
+        <!-- Launch M3b (copy item stub-01): one line and a visible link that
+             works with scripting and refresh both disabled. -->
+        <p class="page-lede">Member rankings are now on the Congress page.</p>
         <p class="page-lede">
-          Member net disclosed flow is now a section of the single Congress
-          page, so it can be read beside the ticker momentum and the disclosure
-          feed without navigating between them.
+          <a class="stub-link" href={target}>Go to Members →</a>
         </p>
-        <p class="page-lede">
-          <a class="stub-link" href={target}>Go to member net disclosed flow →</a>
-        </p>
-        <div class="caveat-line">
-          The target windows by <strong>trade date</strong>, where this page used a
-          trade date with a filing-date fallback, so rows disclosing no trade date
-          are excluded there and their count is stated. It also renders a compact
-          slice by default and expands on request. The interval arithmetic and the
-          separate wholly-undisclosed bucket are unchanged, and the full published
-          data remains at <a href="/congress/data/">congress/data</a>.
-        </div>
       </div>
     </div>
   </main>

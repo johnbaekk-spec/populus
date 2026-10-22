@@ -63,6 +63,7 @@ import {
   dataColumnsAttr,
   tableFootReasonHtml,
   type PresentColumns,
+  rowLink,
 } from "./format.ts";
 export { reportingLagDays };
 import { edgarFilerUrl } from "./derive.ts";
@@ -240,6 +241,11 @@ export interface IssuerShard {
     Python constant the MCP envelope and the ingest CLI carry — by
     `test/activity.test.ts`, so the two cannot drift.
 
+    Launch copy item signals-14 shortened only what no pinned qualifier needs
+    (the field name, the repeated staleness sentence); the internal document
+    references and `unit_basis` stay because activity.test.ts lists them as
+    substance, and the Python constant is published data (not edited).
+
     QA M2-8 M6: three divergent texts shipped, two of them on the SAME page. This
     list had silently dropped three substantive qualifiers present in the Python
     constant ("so managers below that threshold are absent entirely", "with
@@ -260,10 +266,11 @@ export const INSTITUTIONAL_DATA_NOTE_CLAUSES: readonly { id: string; text: strin
   },
   {
     id: "snapshot-lag",
+    /* launch copy item signals-14 (adapted): one sentence; "since the quarter
+       ended" carries both the filing lag and the time since */
     text:
-      "Positions are quarter-end snapshots filed up to 45 days late — not current holdings. A" +
-      " position may have been changed or closed before you ever see it, and is older still by" +
-      " however long ago that quarter ended.",
+      "Positions are quarter-end snapshots filed up to 45 days late — not current holdings: a" +
+      " position may have changed or closed since the quarter ended.",
   },
   {
     id: "era-units",
@@ -274,9 +281,10 @@ export const INSTITUTIONAL_DATA_NOTE_CLAUSES: readonly { id: string; text: strin
   },
   {
     id: "affiliates",
+    /* launch copy item signals-14: the field name (otherManager) left the reader's copy */
     text:
-      "Affiliated managers may report the same position (otherManager), so one position can appear" +
-      " under more than one filer.",
+      "Affiliated managers may report the same position, so one position can appear under more" +
+      " than one filer.",
   },
   {
     id: "confidential",
@@ -1135,46 +1143,6 @@ export function coveragePctText(bps: number | null): string {
   return bps == null ? "n/a" : `${(bps / 100).toFixed(2)}%`;
 }
 
-/* ---------- the unqualified-"all" ban ---------- */
-
-/** Identity coverage is high and NOT 100%, so "all holders" is a false claim on
-    every surface built from it. This is the mechanism, not a style note: the
-    word may appear only inside an explicitly qualified phrase.
-
-    Returns each offending occurrence with context so a failure names the copy
-    that broke the rule. Tags are stripped first — a class name containing "all"
-    is not a claim to a reader. */
-const ALL_QUALIFIERS = ["as-of-resolved", "resolved", "disclosed", "reported"];
-
-export function unqualifiedAllClaims(html: string): string[] {
-  // Attribute channels are read too — `title` / `aria-label` / `alt` are spoken
-  // to a screen reader and shown on hover, so an unqualified "all" inside one is
-  // exactly as much of a claim as one in the body. The sibling scanner in
-  // `activity.ts` already did this; stripping tags first (as this did) deleted
-  // those channels along with the markup. Zero live hits today — the asymmetry
-  // was the defect, not a current violation.
-  const attrs = [...html.matchAll(/(?:title|aria-label|alt)="([^"]*)"/g)]
-    .map((m) => m[1]!)
-    .join(" ");
-  const text = (html + " " + attrs)
-    .replace(/<[^>]*>/g, " ")
-    .replace(/&[a-z]+;/gi, " ")
-    .replace(/\s+/g, " ");
-  const out: string[] = [];
-  const re = /\ball\b/gi;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    const rest = text.slice(m.index + m[0].length);
-    // "all-in", "all-time": a hyphenated compound is a different word, not a
-    // claim about coverage.
-    if (rest.startsWith("-")) continue;
-    const after = rest.slice(0, 40).trimStart().toLowerCase();
-    if (ALL_QUALIFIERS.some((q) => after.startsWith(q))) continue;
-    out.push(text.slice(Math.max(0, m.index - 30), m.index + 50).trim());
-  }
-  return out;
-}
-
 /* ================================================================ renderers */
 
 export const HOLDINGS_FOOTNOTES: FootnoteEntry[] = [
@@ -1620,20 +1588,21 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
         })
       : "";
 
-  // A sum over zero disclosed values is not "$0 of holdings" — that reads as a
-  // number the filer reported. It is the absence of any disclosed value.
-  const valueNote =
-    totals.disclosedRows === 0
-      ? "no disclosed value in these rows"
-      : `${fmtUsd(totals.disclosedUsd)} disclosed value over ${fmtInt(totals.disclosedRows)} ${
-          totals.disclosedRows === 1 ? "row" : "rows"
-        }`;
+  /* Launch copy audit filer-08: the head counts the list — issuers (or
+     positions) and rows — and names undisclosed-value rows only when there are
+     any. The reported value is the page ledger's first figure (whose note says
+     NULL values are excluded from the sum), so it is not repeated here; the
+     pager states the page range. */
+  const rowCount = matched;
+  const plural = (n: number, one: string, many: string): string => `${fmtInt(n)} ${n === 1 ? one : many}`;
+  const headNote =
+    (folded ? `${plural(unitCount, "issuer", "issuers")} · ${plural(rowCount, "row", "rows")}` : plural(unitCount, "position", "positions")) +
+    (totals.undisclosedRows > 0 ? ` · ${plural(totals.undisclosedRows, "undisclosed-value row", "undisclosed-value rows")}` : "") +
+    (totals.disclosedRows === 0 && rowCount > 0 ? " · no disclosed value in these rows" : "");
   return (
     `<div class="panel-head">` +
     `<h2 class="section-h">Reported positions — ${esc(opts.period)}</h2>` +
-    `<span class="panel-note">${esc(rangeText)} · ${esc(valueNote)} · ${fmtInt(
-      totals.undisclosedRows,
-    )} undisclosed-value ${totals.undisclosedRows === 1 ? "row" : "rows"}</span></div>` +
+    `<span class="panel-note">${esc(headNote)}</span></div>` +
     emptyNote +
     universalFlagNote(statedHoldings) +
     /* `data-paged` means "this HTML shows only PART of the
@@ -1680,7 +1649,10 @@ export function holdingsTableHtml(opts: HoldingsTableOpts): string {
               : {}),
         })
       : "") +
-    (refCols ? tableFootReasonHtml(refCols, ["Change kind and share change are in Position changes above; Congress overlap is planned."]) : "") +
+    /* launch copy audit filer-06: the static pointer to Position changes and
+       the "Congress overlap is planned" roadmap note are gone; the data-dependent
+       reasons (Weight) still print */
+    (refCols ? tableFootReasonHtml(refCols) : "") +
     truncation +
     pagerHtml({ page: opts.page, pageCount, rangeText, idPrefix: "holdings" }) +
     holdingsCaveatHtml(groups != null, total, matched)
@@ -1707,20 +1679,15 @@ export function presentedHoldingFlags(row: Pick<FilerHoldingRow, "flags" | "tick
     size-capped page (`total > matched`) prints none, because its terminus
     already says how many rows are not embedded and why. The de-duplication
     detail lives on /methodology/#filer-positions. */
-export function holdingsCaveatHtml(grouped: boolean, total: number, matched: number): string {
-  const what = grouped
-    ? "One line per issuer, largest first; a row with no issuer key stands on its own line. Open a line for its rows as this filer reported them."
-    : "Each row as this filer reported it.";
-  /* The plan's "These are all the rows …" is written with "every" (M3-D in
-     DEV-NOTES): the unqualified-"all" ban (`unqualifiedAllClaims`) admits
-     "all" only before a qualifier, and this is the old caveat's own word for
-     the same fact ("every row this filer reported for the quarter"). */
-  const all = total === matched ? " The list holds every row this filer reported for the quarter." : "";
-  return (
-    `<div class="caveat-line">${what}${all} Issuer totals on the holders pages count each ` +
-    `manager's own report once; that never removes a row here. ` +
-    `<a href="/methodology/#filer-positions">how positions are grouped ↗</a></div>`
-  );
+export function holdingsCaveatHtml(grouped: boolean, _total: number, _matched: number): string {
+  /* Launch copy audit filer-09: what the table IS, in one line; the
+     holders-page de-duplication detail lives on /methodology/#filer-positions,
+     one link away. The caveat makes no completeness claim of its own: a
+     size-capped list's terminus states how many rows it leaves out, and the
+     head counts the rows (the count arguments stay in the signature its
+     callers share). */
+  const what = grouped ? "One line per issuer, largest first — open a line for its reported rows." : "Each row as this filer reported it.";
+  return `<div class="caveat-line">${what} <a href="/methodology/#filer-positions">Grouping ↗</a></div>`;
 }
 
 /* DESIGN-POLISH M3 (R19): caps words in the change-kind style. This view is
@@ -1894,7 +1861,7 @@ export function holdersFullTableHtml(opts: HoldersTableOpts): string {
           : "";
       return (
         `<tr>` +
-        `<td class="c-filer c-flex">${filerLinkHtml(row.filer_key, row.filer_name, row.filer_tier ?? "tail")} ${affiliate}</td>` +
+        `<td class="c-filer c-flex">${rowLink(filerLinkHtml(row.filer_key, row.filer_name, row.filer_tier ?? "tail"))} ${affiliate}</td>` +
         `<td class="c-num c-strong has-marks">${valueCell(
           row.value_usd,
           row.value_undisclosed_component
@@ -2146,9 +2113,10 @@ function viewChips(payload: SurfacePayload, state: SurfaceState): string {
     ` data-holdings-view="${view}" aria-pressed="${state.view === view}">${esc(label)}</button>`;
   const { selected, prior } = selectedPair(payload, state);
   const hasPrior = prior != null && payload.rowsByPeriod[prior] != null;
+  /* launch copy audit filer-08: with a prior quarter the chips speak for
+     themselves; the missing-prior case keeps its stated reason */
   const note = hasPrior
-    ? `<span class="period-note">this build publishes the selected quarter and the one ` +
-      `before it, so a displayed change can be inspected on both sides</span>`
+    ? ""
     : `<span class="period-note">${noteFromHtml(
         esc(`This build carries one quarter for this manager: ${payload.current}. Notable managers carry four published quarters, others two.`),
         { scope: "filer-period" },

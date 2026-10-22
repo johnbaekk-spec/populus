@@ -35,17 +35,21 @@ const references = [
    summary cards live. Property: §7's cards are on every design page except
    /institutional/ (its one method line), and where L13 collapses them they are
    in a CLOSED disclosure, so the default view carries no card band:
-   - /congress/: inside the "Notes on this data" disclosure that directly
-     follows the provenance strip (D2), closed by default;
-   - member and filer pages: inside a collapsed context disclosure;
+   - /congress/: none since launch M3b (R22) — the briefing cards and their
+     "Notes on this data" drawer are retired; their facts live in the ledger,
+     the feed and the provenance line;
+   - member and filer pages: none since the launch redesign — the member
+     page's context disclosure keeps its recent disclosures and committee
+     context but no summary cards (M4b, R23/R26), and the filer's "Notes on
+     this data" cards are retired (M6, copy item filer-11);
    - /signals/: none since signals-v3 M2 — its three summary cards became the
      lead cards (record SV3-M2), asserted in the route block below;
    - /institutional/: none. */
 const CARDS: Record<(typeof references)[number][1], { count: number; where: "notes" | "context" | "visible" | "none" }> = {
-  "/congress/": { count: 3, where: "notes" },
+  "/congress/": { count: 0, where: "none" },
   "/institutional/": { count: 0, where: "none" },
-  "/congress/members/M001193/": { count: 3, where: "context" },
-  "/institutional/filers/1067983/": { count: 3, where: "context" },
+  "/congress/members/M001193/": { count: 0, where: "none" },
+  "/institutional/filers/1067983/": { count: 0, where: "none" },
   "/signals/": { count: 0, where: "none" },
 };
 
@@ -130,8 +134,11 @@ for (const [file, route] of references) {
         await expect(page.locator('p.inst-moved a[href="/signals/#institutional"]')).toBeVisible();
       }
       if (route.includes('/members/')) {
-        // R16: the empty annual/overlap frames are one planned line.
-        for (const title of ['Disclosed flow by quarter', 'Net disclosed flow by ticker', 'Trading profile', 'Filing history']) {
+        /* R16: the empty annual/overlap frames are one planned line. launch
+           M4b (R23, LD24): the active layout names its sections Quarterly flow
+           and Trades (main), Top tickers and Profile (side), then the filing
+           history — the same four facts, retitled with the approved board */
+        for (const title of ['Quarterly flow', 'Trades', 'Top tickers', 'Profile', 'Filing history']) {
           await expect(page.getByRole('heading', {name:title, exact:true})).toBeVisible();
         }
         /* T2.10 (:52), R12: the transactions head follows the table's column
@@ -225,7 +232,8 @@ for (const [file, route] of references) {
         expect(['auto', 'scroll']).not.toContain(scroll.overflowY);
         expect(scroll.maxHeight).toBe('none');
         expect(scroll.contents - scroll.height, 'no rows hidden inside a box').toBeLessThanOrEqual(1);
-        await expect(page.locator('.reference-feed .reference-row')).toHaveCount(50);
+        // launch M3a (LD20): twenty rows a page, in the default "With ticker" view
+        await expect(page.locator('.reference-feed .reference-row')).toHaveCount(20);
         if (width === 1440) {
           // DESIGN-POLISH M1: the ledger's 30px feed row (±1) — EVERY row on
           // the page, the rows carrying visible flag chips (and their
@@ -234,7 +242,16 @@ for (const [file, route] of references) {
             i, height: Math.round(el.getBoundingClientRect().height * 10) / 10, chips: el.querySelectorAll('.cell-range .flag').length,
           })));
           expect(rows.filter(r => Math.abs(r.height - 30) > 1), 'every feed row is 30±1px').toEqual([]);
-          expect(rows.some(r => r.chips >= 1), 'the page carries flagged rows, so the pin measures chip rows too').toBe(true);
+          /* launch M3a (R20): the default "With ticker" page may carry no flag
+             (20261019.2: none), so the chip rows are pinned on the "All rows"
+             page, whose rows a flag marks most ("no ticker") */
+          await page.locator('#feed-section button[data-group="view"][data-value="all"]').click();
+          await expect(page.locator('.reference-feed .reference-row .cell-range .flag').first()).toBeVisible();
+          const allRows = await page.locator('.reference-feed .reference-row').evaluateAll(els => els.map((el, i) => ({
+            i, height: Math.round(el.getBoundingClientRect().height * 10) / 10, chips: el.querySelectorAll('.cell-range .flag').length,
+          })));
+          expect(allRows.filter(r => Math.abs(r.height - 30) > 1), 'every All rows feed row, the chip rows included, is 30±1px').toEqual([]);
+          expect(allRows.some(r => r.chips >= 1), 'the page carries flagged rows, so the pin measures chip rows too').toBe(true);
           const bars = await page.locator('.reference-feed .band-fill').evaluateAll(els => els.map(el => ({height:el.getBoundingClientRect().height,width:el.getBoundingClientRect().width})));
           expect(bars.every(bar => bar.height >= 3 && bar.width > 0), 'interval fills must actually paint inside their tracks').toBe(true);
           await expect(page.locator('#momentum-section thead th')).toHaveCount(6);
@@ -337,7 +354,7 @@ function expectVisualOrder(tops: number[], what: string): void {
   for (let i = 1; i < tops.length; i++) expect(tops[i]!, `${what}: part ${i + 1} sits below part ${i}`).toBeGreaterThan(tops[i - 1]!);
 }
 
-test('Congress composition at 1440 (T2.2): the D2 ledger, the closed notes line, band C1', async ({ page }) => {
+test('Congress composition at 1440 (T2.2 → launch M3b): the R18 ledger, band C1 after the provenance, the feed, Monthly flow last', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   expect((await page.goto('/congress/'))?.status()).toBe(200);
   /* D2 (L15): the four ledger labels, in order, uppercased by CSS — the
@@ -347,83 +364,101 @@ test('Congress composition at 1440 (T2.2): the D2 ledger, the closed notes line,
     const own = Array.from(trigger.childNodes).filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => n.textContent).join('').trim();
     return { rendered: (dt as HTMLElement).innerText.replace(/\s+/g, ' ').trim(), source: own, transform: getComputedStyle(trigger).textTransform };
   }));
-  expect(labels.map((l) => l.rendered)).toEqual(['TRANSACTIONS', 'HOUSE PARSE', 'SENATE PARSE', 'PAPER']);
+  // launch M3b (R18): Trades, Last 30 days, Median lag, E-filings read
+  expect(labels.map((l) => l.rendered)).toEqual(['TRADES', 'LAST 30 DAYS', 'MEDIAN LAG', 'E-FILINGS READ']);
   for (const l of labels) {
     expect(l.transform, `${l.rendered}: the caps are CSS caps`).toBe('uppercase');
     expect(l.source, `${l.rendered}: the source label is not typed in caps`).not.toBe(l.source.toUpperCase());
   }
-  /* D2: "Notes on this data" is ONE closed line directly after the provenance strip */
-  const notes = await page.evaluate(() => {
-    const p = document.querySelector('main .design-provenance');
-    const n = p?.nextElementSibling ?? null;
-    return { tag: n?.tagName ?? '', id: n?.id ?? '', open: n instanceof HTMLDetailsElement ? n.open : null, summary: n?.querySelector(':scope > summary')?.textContent?.replace(/\s+/g, ' ').trim() ?? '' };
-  });
-  expect(notes).toEqual({ tag: 'DETAILS', id: 'congress-notes', open: false, summary: 'Notes on this data' });
-  /* the line holds the three cards, hidden until it is opened */
-  await expect(page.locator('#congress-notes .design-briefing .design-story')).toHaveCount(3);
-  expect(await page.locator('#congress-notes .design-story').first().isVisible(), 'closed: the cards are not shown').toBe(false);
-  await page.locator('#congress-notes > summary').click();
-  await expect(page.locator('#congress-notes .design-story').first(), 'opened: the cards show').toBeVisible();
-  /* band C1 (D1): Leaders │ Tickers, one band, heads on one line, before the feed */
-  const c1 = await partsInOrder(page, ['#congress-leaders-band', '#feed-section']);
+  /* launch M3b (R19, R22): the boards band directly follows the provenance
+     strip — the notes drawer and its briefing cards are retired */
+  const after = await page.evaluate(() => document.querySelector('main .design-provenance')?.nextElementSibling?.id ?? '');
+  expect(after).toBe('congress-leaders-band');
+  await expect(page.locator('#congress-notes')).toHaveCount(0);
+  await expect(page.locator('main .design-briefing')).toHaveCount(0);
+  /* band C1: Members │ Tickers, one band, before the feed; Monthly flow last (R21) */
+  const c1 = await partsInOrder(page, ['#congress-leaders-band', '#feed-section', '#monthly-flow-section']);
   expect(c1.missing).toEqual([]);
-  expect(c1.domOrder, 'C1 precedes the feed (Leaders first, data first)').toBe(true);
-  expectVisualOrder(c1.tops, 'C1 then the feed');
+  expect(c1.domOrder, 'C1, then the feed, then Monthly flow').toBe(true);
+  expectVisualOrder(c1.tops, 'C1, the feed, Monthly flow');
   await expect(page.locator('#congress-leaders-band.design-rankings > #members-section + #momentum-section')).toHaveCount(1);
 });
 
-test('Member composition at 1440 (T2.3): chart, M1, transactions, M2, Planned line, context', async ({ page }) => {
+/* launch M4b (R23, LD24, D-decision record "member layout pins"): the member
+   page's bands M1 (Net flow │ Profile) and M2 (Filing history │ Signals) and
+   its PLANNED strip are retired. Properties kept, mechanisms replaced: the
+   parts' DOM order is their visual order; the page reads as two columns at
+   1440 — main (Quarterly flow, then Trades) beside the side column (Top
+   tickers, Profile at 10+ trades, Sectors, Signals, in that order) — with the
+   filing history standing alone after them and the context disclosures
+   collapsed at the foot; a member with three or fewer trades reads the
+   compact layout (cards, then the three computed facts) and no chart. The
+   empty-window chart rule (R13) is unchanged. */
+test('Member composition at 1440 (T2.3 → launch M4b R23/LD24): main (chart → trades) │ side (Top tickers → Profile → Sectors → Signals), then filing history, then the collapsed context', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   expect((await page.goto('/congress/members/M001193/'))?.status()).toBe(200);
-  const order = await partsInOrder(page, [
-    'main .design-member-chart',
-    'main .design-flow-band',
-    'main section:has([data-entity-table])',
-    'main .design-member-history-band',
-    'main > p.planned-line',
-    'main > p.planned-line ~ details.design-supplement',
-  ]);
-  expect(order.missing).toEqual([]);
-  expect(order.domOrder, 'chart → M1 → transactions → M2 → Planned line → context disclosures, in the DOM').toBe(true);
-  expectVisualOrder(order.tops, 'the member page');
-  /* the context disclosures are the page's foot: collapsed, after the Planned line */
-  const context = await page.locator('main > p.planned-line ~ details.design-supplement').evaluateAll((ds) => ds.map((d) => (d as HTMLDetailsElement).open));
-  expect(context.length).toBeGreaterThan(0);
-  expect(context.every((open) => !open), 'the context disclosures are collapsed').toBe(true);
-  /* M1: Net flow (left) │ Trading profile + sector (right), side by side */
-  const m1 = await page.evaluate(() => {
-    const band = document.querySelector('.design-flow-band')!;
-    const cells = Array.from(band.children).filter((c) => c.checkVisibility());
-    return cells.map((c) => ({ top: Math.round(c.getBoundingClientRect().top), left: c.getBoundingClientRect().left, right: c.getBoundingClientRect().right, heads: Array.from(c.querySelectorAll('h2')).map((h) => h.textContent!.trim()), text: c.textContent!.replace(/\s+/g, ' ') }));
-  });
-  expect(m1.length, 'band M1 is a pair').toBe(2);
-  expect(m1[0]!.heads).toContain('Net disclosed flow by ticker');
-  expect(m1[1]!.heads).toContain('Trading profile');
-  expect(m1[1]!.text, 'the sector mix (or its one unavailable line) sits under the profile').toMatch(/sector/i);
-  expect(Math.abs(m1[0]!.top - m1[1]!.top)).toBeLessThanOrEqual(2);
-  expect(m1[0]!.right).toBeLessThanOrEqual(m1[1]!.left + 1);
-  /* M2: Filing history │ Signals — a two-column .design-pair, or collapsed
-     under the empty-state rule with the Signals line under the history (D-8) */
-  const m2 = await page.evaluate(() => {
-    const band = document.querySelector('.design-member-history-band')!;
-    const cells = Array.from(band.children).filter((c) => c.checkVisibility());
-    return { pair: band.classList.contains('design-pair'), collapsed: band.getAttribute('data-collapsed'), cells: cells.map((c) => ({ label: c.getAttribute('aria-label'), top: c.getBoundingClientRect().top, bottom: c.getBoundingClientRect().bottom, left: c.getBoundingClientRect().left, right: c.getBoundingClientRect().right, width: c.getBoundingClientRect().width, empty: c.hasAttribute('data-empty-state') })) };
-  });
-  expect(m2.pair, 'band M2 is a .design-pair').toBe(true);
-  expect(m2.cells.map((c) => c.label)).toEqual(['Filing history', 'Signals']);
-  const [history, signals] = m2.cells as [(typeof m2.cells)[number], (typeof m2.cells)[number]];
-  if (m2.collapsed === 'empty-state') {
-    expect(signals.empty, 'the pair collapses only because Signals holds only its empty-state line').toBe(true);
-    expect(signals.top, 'the Signals line sits under the history').toBeGreaterThanOrEqual(history.bottom - 1);
-    /* CD-2: the lone three-column history keeps the design's cell width — half
-       the band — and the Signals line runs the band's full width under it */
-    expect(Math.abs(history.width - signals.width / 2), 'the history at half the band (CD-2)').toBeLessThanOrEqual(1);
-    expect(Math.abs(history.left - signals.left), 'both start on the band edge').toBeLessThanOrEqual(1);
-  } else {
-    expect(m2.collapsed).toBeNull();
-    expect(Math.abs(history.top - signals.top), 'history and signals side by side').toBeLessThanOrEqual(2);
-    expect(history.right).toBeLessThanOrEqual(signals.left + 1);
+  const layout = await page.evaluate(() => document.querySelector('[data-member-layout]')?.getAttribute('data-member-layout') ?? null);
+  expect(['active', 'compact'], 'the page states its layout').toContain(layout);
+  test.info().annotations.push({ type: 'layout', description: String(layout) });
+  if (layout === 'compact') {
+    /* LD24: three or fewer trades — the cards (or the paper-only line), then
+       the three computed facts; no chart and no side column */
+    const order = await partsInOrder(page, ['main header.member-head', 'main .member-compact', 'main .member-compact dl.member-facts']);
+    expect(order.missing).toEqual([]);
+    expect(order.domOrder, 'head → cards → facts, in the DOM').toBe(true);
+    expectVisualOrder(order.tops, 'the compact member page');
+    await expect(page.locator('main .member-grid, main .design-member-chart')).toHaveCount(0);
+    return;
   }
+  /* the main column, in order */
+  const mainOrder = await partsInOrder(page, ['main header.member-head', 'main .member-main > .design-member-chart', 'main .member-main > section.member-trades']);
+  expect(mainOrder.missing).toEqual([]);
+  expect(mainOrder.domOrder, 'head → Quarterly flow → Trades, in the DOM').toBe(true);
+  expectVisualOrder(mainOrder.tops, 'the main column');
+  /* main │ side, side by side at 1440 (LD24: the active layout's two columns) */
+  const cols = await page.evaluate(() => {
+    const box = (sel: string) => {
+      const r = document.querySelector(sel)!.getBoundingClientRect();
+      return { top: Math.round(r.top + scrollY), left: r.left, right: r.right, width: r.width };
+    };
+    return { main: box('main .member-grid > .member-main'), side: box('main .member-grid > .member-side') };
+  });
+  expect(Math.abs(cols.main.top - cols.side.top), 'the two columns start together').toBeLessThanOrEqual(2);
+  expect(cols.main.right, 'the side column sits to the right of main').toBeLessThanOrEqual(cols.side.left + 1);
+  expect(cols.main.width, 'main is the wider column').toBeGreaterThan(cols.side.width);
+  /* the side column: Top tickers, Profile (10+ trades), Sectors (2+ sectors, or its one unavailable line), Signals — DOM order = visual order */
+  const side = await page.locator('main .member-side > section').evaluateAll((ss) =>
+    ss.filter((s) => s.checkVisibility()).map((s) => ({ label: s.getAttribute('aria-label') ?? '', top: Math.round(s.getBoundingClientRect().top + scrollY) })),
+  );
+  const labels = side.map((s) => s.label);
+  expect(labels[0], 'Top tickers leads the side column').toBe('Top tickers');
+  expect(labels[labels.length - 1], 'Signals closes it').toBe('Signals');
+  const known = ['Top tickers', 'Profile', 'Sectors', 'Signals'];
+  expect(labels.filter((l) => known.includes(l)), 'in the layout order').toEqual(known.filter((k) => labels.includes(k)));
+  expectVisualOrder(side.map((s) => s.top), 'the side column');
+  /* the filing history stands alone after the two columns (R23: no longer
+     paired with Signals), and the context disclosures close the page, collapsed */
+  const foot = await page.evaluate(() => {
+    const grid = document.querySelector('main .member-grid')!;
+    const g = grid.getBoundingClientRect();
+    const hist = document.querySelector('main section.design-member-history');
+    const h = hist?.getBoundingClientRect() ?? null;
+    const ctx = Array.from(document.querySelectorAll<HTMLDetailsElement>('main > details.design-supplement'));
+    return {
+      history: hist ? { after: !!(grid.compareDocumentPosition(hist) & Node.DOCUMENT_POSITION_FOLLOWING), inGrid: grid.contains(hist), top: h!.top, gridBottom: g.bottom, left: h!.left, gridLeft: g.left } : null,
+      context: ctx.map((d) => ({ open: d.open, after: !!(grid.compareDocumentPosition(d) & Node.DOCUMENT_POSITION_FOLLOWING) })),
+    };
+  });
+  if (foot.history) {
+    expect(foot.history.inGrid, 'the history is not inside the two columns').toBe(false);
+    expect(foot.history.after, 'it follows them in the DOM').toBe(true);
+    expect(foot.history.top, 'and below them on screen').toBeGreaterThanOrEqual(foot.history.gridBottom - 1);
+    expect(Math.abs(foot.history.left - foot.history.gridLeft), 'on the page edge, unpaired').toBeLessThanOrEqual(1);
+  }
+  test.info().annotations.push({ type: 'history', description: foot.history ? 'filing history present' : 'one filing: no history table (LD24, 2+ filings)' });
+  expect(foot.context.length, 'the context disclosures are present').toBeGreaterThan(0);
+  expect(foot.context.every((c) => c.after && !c.open), 'after the columns, collapsed').toBe(true);
+  await expect(page.locator('main p.planned-line'), 'the PLANNED strip is retired (member-18)').toHaveCount(0);
   /* R13: a quarterly chart whose window holds no trade is ONE line — the
      window and the last trade date — and no empty plot (.rb-track) */
   const chart = await page.evaluate(() => {
@@ -545,8 +580,10 @@ test('signals-v4 T2.4 / T2.6: /signals/#institutional at 1440 — the tab select
 test('Filer composition at 1440 (T2.5): parts in DOM order = visual order; the period roots', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   expect((await page.goto('/institutional/filers/1067983/'))?.status()).toBe(200);
-  /* head → changes → band F1 → Planned line → EDGAR / notes → the §5 note */
-  const parts = ['main header.entity-head', 'main [data-filer-root]', 'main .design-filer-band', 'main > p.planned-line', 'main details.edgar-block', 'main #filer-notes', 'main .filer-data-note'];
+  /* head → changes → band F1 → EDGAR → the §5 note (launch copy audit
+     filer-06 / filer-11: the Planned line and the "Notes on this data" cards
+     left the foot) */
+  const parts = ['main header.entity-head', 'main [data-filer-root]', 'main .design-filer-band', 'main details.edgar-block', 'main .filer-data-note'];
   const order = await partsInOrder(page, parts);
   expect(order.missing).toEqual([]);
   expect(order.domOrder, 'the parts are emitted in the Decision-log order').toBe(true);
@@ -605,8 +642,11 @@ test('Signals composition at 1440 (signals-v3 M2, LD7): head → lead cards → 
   // the moved sections are on Methodology, the rule book still expanded with its seven rules
   expect((await page.goto('/methodology/'))?.status()).toBe(200);
   for (const id of ['signal-rules', 'signal-lag', 'signals-ranking', 'committee-direct']) await expect(page.locator(`#${id}`)).toBeVisible();
-  const rb = await page.locator('#signal-rules').evaluate((s) => ({ details: !!s.closest('details'), multiline: s.querySelector('table')!.hasAttribute('data-multiline'), rows: s.querySelectorAll('tbody tr').length }));
-  expect(rb).toEqual({ details: false, multiline: true, rows: 7 });
+  /* launch M7b (R34, LD30): every Methodology section ships <details open>
+     (closed by script at ≤720px only), so the rule book sits in an OPEN fold
+     at 1440 — expanded, as before, and still never a closed disclosure */
+  const rb = await page.locator('#signal-rules').evaluate((s) => { const d = s.closest('details'); return { details: !!d, open: !d || d.open, fold: !!d?.hasAttribute('data-metho-fold'), multiline: s.querySelector('table')!.hasAttribute('data-multiline'), rows: s.querySelectorAll('tbody tr').length }; });
+  expect(rb).toEqual({ details: true, open: true, fold: true, multiline: true, rows: 7 });
 });
 
 /* signals-v3 M2 (R11, LD6): the ranking control works with JavaScript OFF —
@@ -724,26 +764,14 @@ const WHY = {
   paper: "a paper filing's kind word: the canvas draws no paper row (M1: the feed keeps its paper rows, D1)",
   netbar: "the member ranking's NET FLOW cell is its interval bar with the range as screen-reader text (M1 C-4): no visible text run has a role",
 } as const;
+/* Launch M3b (LD33, T3.8): the September Congress board leaves this
+   comparison — the approved launch Congress board supersedes it (recorded in
+   docs/design/reference/README.md); its structural comparison joins with the
+   launch-board opener. Launch M4b (LD33; integration): so does the September
+   Congress Member board — the active and compact member layouts (R23, LD24)
+   supersede its paired bands, recorded in the same README. The cases are
+   looked up by file below, never by position. */
 const CANVAS_CASES: CanvasCase[] = [
-  {
-    file: "Congress.dc.html", route: "/congress/", open: "#congress-notes",
-    tables: [
-      { label: "Disclosure feed", selector: "#feed-section table.reference-feed" },
-      { label: "Leaders", selector: "#members-section > .table-scroll table.etable" },
-      { label: "Tickers", selector: "#momentum-section > .table-scroll table.etable" },
-    ],
-    map: {
-      ledger: true, cards: true,
-      tables: [
-        { canvas: "Disclosure feed", route: "Disclosure feed", columns: { "AMOUNT RANGE": "INTERVAL LOG $1K→$50M+", SOURCE: "RCPT" }, unmatched: { "kind:PAPER": WHY.paper, "AMOUNT RANGE (canvas cell unmeasured)": WHY.bar } },
-        { canvas: "Leaders · net disclosed flow", route: "Leaders", columns: { TRADES: "TXNS", "GROSS BOUGHT": "GROSS PURCH" }, unmatched: { "NET FLOW (route cell unmeasured)": WHY.netbar } },
-        { canvas: "Tickers · most disclosed", route: "Tickers", columns: { TRADES: "TXNS", "NET FLOW": "NET LOWER BOUND" }, unmatched: { "BUY SELL COUNT (canvas cell unmeasured)": WHY.bar }, roleDeviation: { "NET FLOW": "table.role.number" } },
-      ],
-      heads: [{ canvas: "Disclosure feed", route: "Disclosure feed" }, { canvas: "Leaders · net disclosed flow", route: "Leaders · net disclosed flow" }, { canvas: "Tickers · most disclosed", route: "Tickers · most disclosed" }],
-      pairs: [{ canvas: ["Leaders · net disclosed flow", "Tickers · most disclosed"], route: ["Leaders · net disclosed flow", "Tickers · most disclosed"] }],
-      segs: [{ canvas: "All|House|Senate|D|R|Late", route: "All|House|Senate" }, { canvas: "All|House|Senate|D|R|Late", route: "All|D|R|I" }],
-    },
-  },
   {
     file: "Institutional.dc.html", route: "/institutional/", release: '#mgr-chips [data-mgr-type][aria-pressed="true"]',
     tables: [
@@ -770,33 +798,18 @@ const CANVAS_CASES: CanvasCase[] = [
     },
   },
   {
-    file: "Congress Member.dc.html", route: "/congress/members/M001193/", open: "main > details.design-supplement",
-    tables: [
-      { label: "Net flow", selector: ".design-flow-band table.etable" },
-      { label: "Transactions", selector: "[data-entity-table]" },
-      { label: "Filing history", selector: ".design-member-history table.etable" },
-    ],
-    map: {
-      ledger: true, cards: true,
-      tables: [
-        { canvas: "Flows by ticker", route: "Net flow", columns: { "BUY SELL": "BUY SELL LOWER BOUNDS", "NET RANGE": "NET ≥" }, unmatched: { "BUY SELL (canvas cell unmeasured)": WHY.bar }, roleDeviation: { "NET RANGE": "table.role.number" } },
-        { canvas: "All disclosed transactions", route: "Transactions", columns: { "AMOUNT RANGE": "INTERVAL LOG $1K→$50M+", SOURCE: "RCPT" }, unmatched: { "AMOUNT RANGE (canvas cell unmeasured)": WHY.bar } },
-        { canvas: "Filing history", route: "Filing history", minCompared: 0, unmatched: { FILED: WHY.headerless, ROWS: WHY.headerless, RECEIPT: WHY.headerless } },
-      ],
-      heads: [{ canvas: "Flows by ticker", route: "Net disclosed flow by ticker" }, { canvas: "Trading profile", route: "Trading profile" }, { canvas: "All disclosed transactions", route: "All disclosed transactions" }, { canvas: "Filing history", route: "Filing history" }, { canvas: "Signals on this member", route: "Signals" }],
-      pairs: [{ canvas: ["Flows by ticker", "Trading profile"], route: ["Net disclosed flow by ticker", "Trading profile"] }, { canvas: ["Filing history", "Signals on this member"], route: ["Filing history", "Signals"] }],
-      segs: [],
-    },
-  },
-  {
-    file: "Institutional Filer.dc.html", route: "/institutional/filers/1067983/", open: "#filer-notes",
+    /* launch copy audit filer-11: the route's "Notes on this data" cards are
+       retired (generic restatements of the provenance line and the §5 box), so
+       the canvas's three summary cards have no route twin and are not compared
+       (never faked); the ledger, heads, tables and segments still are. */
+    file: "Institutional Filer.dc.html", route: "/institutional/filers/1067983/",
     tables: [
       { label: "Position changes", selector: ".design-changes table.etable" },
       { label: "Reported positions", selector: '[data-holdings-surface="filer"] table.etable' },
       { label: "Filing history", selector: ".design-filer-history table.etable" },
     ],
     map: {
-      ledger: true, cards: true,
+      ledger: true, cards: false,
       /* review Q2-8: the measured Filing history is mapped to its canvas band */
       tables: [
         {
@@ -808,7 +821,7 @@ const CANVAS_CASES: CanvasCase[] = [
         { canvas: "Holdings", route: "Reported positions", unmatched: { "WEIGHT (canvas cell unmeasured)": WHY.bar } },
         { canvas: "Filing history", route: "Filing history", minCompared: 0, unmatched: { PERIOD: WHY.headerless, SOURCE: WHY.headerless }, gutterDeviation: "table.gutter.d11" },
       ],
-      heads: [{ canvas: "Holdings", route: "Position changes — …" }, { canvas: "Holdings", route: "Reported positions — …" }, { canvas: "Book shape", route: "Book shape" }, { canvas: "Filing history", route: "Filing history" }],
+      heads: [{ canvas: "Holdings", route: "Changes · …" }, { canvas: "Holdings", route: "Reported positions — …" }, { canvas: "Book shape", route: "Book shape" }, { canvas: "Filing history", route: "Filing history" }],
       pairs: [{ canvas: ["Holdings", "Book shape"], route: ["Reported positions — …", "Book shape"] }],
       segs: [{ canvas: "All|Changed|New|Congress overlap", route: "All|New stakes|…" }],
     },
@@ -930,66 +943,79 @@ for (const c of CANVAS_CASES) {
 
 /* The T2.9 controls: each injects ONE defect and requires the comparison to
    report exactly that property — a check that cannot fail is not a check. */
-const CONGRESS = CANVAS_CASES[0]!;
+/* launch M3b/M4b (LD33): the controls ran on the September Congress board,
+   which left the comparison; each now runs on a route whose canvas still
+   governs it — the filer's ledger, segmented control and tables — looked up
+   by file, so removing a case can never shift a control onto another route. */
+const canvasCase = (file: string): CanvasCase => {
+  const c = CANVAS_CASES.find((x) => x.file === file);
+  if (!c) throw new Error(`no canvas case for ${file}`);
+  return c;
+};
+const FILER = canvasCase("Institutional Filer.dc.html");
 const hasFinding = (fs: Finding[], band: RegExp, check: RegExp): boolean => fs.some((f) => f.record === null && band.test(f.band) && check.test(f.check));
 
 test('T2.9 control: the header ledger — tone, value letter-spacing, label-to-value gap', async ({ page, browser }) => {
-  await openRoute(page, CONGRESS);
-  const clean = unrecorded((await compareRoute(page, browser, CONGRESS)).findings).filter((f) => f.band.startsWith("ledger"));
+  await openRoute(page, FILER);
+  const clean = unrecorded((await compareRoute(page, browser, FILER)).findings).filter((f) => f.band.startsWith("ledger"));
   expect(clean, `the ledger matches the canvas before any defect is planted:\n${formatFindings(clean)}`).toEqual([]);
-  /* SENATE PARSE in --tone-ink (the renderer picks the wrong tone) */
-  await page.evaluate(() => { document.querySelectorAll("dl.design-ledger > .ledger-fig").forEach((f) => { if (/senate parse/i.test(f.querySelector("dt")!.textContent!)) f.setAttribute("data-tone", "ink"); }); });
-  let fs = (await compareRoute(page, browser, CONGRESS)).findings;
-  expect(hasFinding(fs, /^ledger SENATE PARSE$/, /^tone \(the canvas's figure\)$/), "control: SENATE PARSE in --tone-ink fails").toBe(true);
-  await openRoute(page, CONGRESS);
+  /* a figure in the wrong tone (the renderer picks the wrong tone) */
+  const fig = await page.evaluate(() => {
+    const f = document.querySelector<HTMLElement>("dl.design-ledger > .ledger-fig[data-tone]");
+    if (!f) return null;
+    const tone = f.getAttribute("data-tone")!;
+    f.setAttribute("data-tone", tone === "ink" ? "blue" : "ink");
+    return { tone, other: tone === "ink" ? "blue" : "ink" };
+  });
+  expect(fig, "a toned ledger figure to plant on").not.toBeNull();
+  let fs = (await compareRoute(page, browser, FILER)).findings;
+  expect(hasFinding(fs, /^ledger /, /^tone \(the canvas's figure\)$/), "control: a figure in the wrong tone fails").toBe(true);
+  await openRoute(page, FILER);
   /* the same defect by CSS: the value leaves its figure's own token */
-  await page.addStyleTag({ content: '.ledger-fig[data-tone="blue"] > .ledger-value { color: var(--tone-ink) !important; }' });
-  fs = (await compareRoute(page, browser, CONGRESS)).findings;
-  expect(hasFinding(fs, /^ledger SENATE PARSE$/, /^value colour is --tone-blue$/), "control: a value painted off its tone token fails").toBe(true);
-  await openRoute(page, CONGRESS);
+  await page.addStyleTag({ content: `.ledger-fig[data-tone="${fig!.tone}"] > .ledger-value { color: var(--tone-${fig!.other}) !important; }` });
+  fs = (await compareRoute(page, browser, FILER)).findings;
+  expect(hasFinding(fs, /^ledger /, new RegExp(`^value colour is --tone-${fig!.tone}$`)), "control: a value painted off its tone token fails").toBe(true);
+  await openRoute(page, FILER);
   await page.addStyleTag({ content: ".ledger-value { letter-spacing: 0 !important; }" });
-  fs = (await compareRoute(page, browser, CONGRESS)).findings;
+  fs = (await compareRoute(page, browser, FILER)).findings;
   expect(hasFinding(fs, /^ledger /, /^value role \(letter-spacing\)$/), "control: letter-spacing:0 fails").toBe(true);
-  await openRoute(page, CONGRESS);
+  await openRoute(page, FILER);
   await page.addStyleTag({ content: ".ledger-fig > dt { margin-bottom: 8px !important; }" });
-  fs = (await compareRoute(page, browser, CONGRESS)).findings;
+  fs = (await compareRoute(page, browser, FILER)).findings;
   expect(hasFinding(fs, /^ledger /, /^label-to-value gap$/), "control: an 8px label-to-value gap fails").toBe(true);
 });
 
 test('T2.9 control: the segmented control — outline, dividers, active state', async ({ page, browser }) => {
-  await openRoute(page, CONGRESS);
-  const clean = (await compareRoute(page, browser, CONGRESS)).seg;
+  await openRoute(page, FILER);
+  const clean = (await compareRoute(page, browser, FILER)).seg;
   expect(clean, `the groups meet the tokens before any defect is planted:\n${formatFindings(clean)}`).toEqual([]);
   await page.addStyleTag({ content: ":is(.seg, .chips, .mgr-chips) > * { border-left-width: 0 !important; }" });
-  let seg = (await compareRoute(page, browser, CONGRESS)).seg;
+  let seg = (await compareRoute(page, browser, FILER)).seg;
   expect(hasFinding(seg, /^control /, /^divider width$/), "control: dividers removed fails").toBe(true);
-  await openRoute(page, CONGRESS);
+  await openRoute(page, FILER);
   await page.addStyleTag({ content: ':is(.seg, .chips, .mgr-chips) > [aria-pressed="true"] { color: var(--seg-text) !important; }' });
-  seg = (await compareRoute(page, browser, CONGRESS)).seg;
+  seg = (await compareRoute(page, browser, FILER)).seg;
   expect(hasFinding(seg, /^control /, /^active text --seg-text-active$/), "control: an active item in --seg-text fails").toBe(true);
 });
 
-/* signals-v3 M2: /signals/ shows no summary cards any more (its lead cards
-   are SV3-M2's), so the card control runs on /congress/'s, opened from the
-   "Notes on this data" disclosure as its canvas case does. */
-test('T2.9 control: the summary card — body colour', async ({ page, browser }) => {
-  await openRoute(page, CONGRESS);
-  const bodyFindings = (fs: Finding[]): Finding[] => unrecorded(fs).filter((f) => /^cards$/.test(f.band) && /^body (colour|role)/.test(f.check));
-  const clean = bodyFindings((await compareRoute(page, browser, CONGRESS)).findings);
-  expect(clean, `the card bodies match before any defect is planted:\n${formatFindings(clean)}`).toEqual([]);
-  await page.addStyleTag({ content: ".design-story p { color: var(--ink2) !important; }" });
-  const fs = (await compareRoute(page, browser, CONGRESS)).findings;
-  expect(hasFinding(fs, /^cards$/, /^body colour is --ink3$/), "control: a card body in --ink2 fails").toBe(true);
+/* signals-v3 M2 moved the card control to /congress/'s "Notes on this data"
+   cards. The launch redesign retired the summary cards on every compared
+   route — /congress/ (M3b, R22), the member page (M4b, R23) and the filer
+   (M6, filer-11) — so no canvas case maps cards and a planted card body has
+   nothing to be compared against. The control becomes a tripwire: a case
+   that maps cards again must bring its card control back. */
+test('T2.9 control: the summary card — retired with the cards on every compared route (launch M3b R22, M4b R23, M6 filer-11)', () => {
+  expect(CANVAS_CASES.filter((c) => c.map.cards).map((c) => c.file), "no compared route maps summary cards").toEqual([]);
 });
 
 test('T2.9 control: an unrecorded difference fails', async ({ page, browser }) => {
-  await openRoute(page, CONGRESS);
-  const leaders = (fs: Finding[]): Finding[] => unrecorded(fs).filter((f) => /^table Leaders/.test(f.band) && /^header /.test(f.check));
-  expect(leaders((await compareRoute(page, browser, CONGRESS)).findings), "the Leaders header matches the canvas before the plant").toEqual([]);
+  await openRoute(page, FILER);
+  const changes = (fs: Finding[]): Finding[] => unrecorded(fs).filter((f) => /^table Holdings → Position changes/.test(f.band) && /^header /.test(f.check));
+  expect(changes((await compareRoute(page, browser, FILER)).findings), "the Position changes header matches the canvas before the plant").toEqual([]);
   /* a 13px header on ONE band, in no record */
-  await page.addStyleTag({ content: "#members-section th { font-size: 13px !important; }" });
-  const planted = leaders((await compareRoute(page, browser, CONGRESS)).findings);
-  expect(planted.some((f) => /role \(size\)/.test(f.check)), "control: a planted 13px header size fails T2.9").toBe(true);
+  await page.addStyleTag({ content: ".design-changes th { font-size: 13px !important; }" });
+  const planted = changes((await compareRoute(page, browser, FILER)).findings);
+  expect(planted.some((f) => /role \([^)]*size/.test(f.check)), "control: a planted 13px header size fails T2.9").toBe(true);
 });
 
 /* The M3 kind-vocabulary allowances were milestone-scoped: they held while the
@@ -998,11 +1024,15 @@ test('T2.9 control: an unrecorded difference fails', async ({ page, browser }) =
    change line its mono role (M2F-D4). This tree is m3, so they answer nothing:
    the per-route canvas tests above pass WITHOUT them. The entries stay in the
    list only as the record of what M2 allowed (the comparison refuses an id it
-   does not know). Controls: the retired words, planted back on the page, are
-   caught as UNRECORDED — PURCHASE on a member transaction, BUY / SELL on the
-   member's net flow, and the LATE word on a late feed row. Each plant is
-   asserted to have HAPPENED (P-9, M3 review): a control that found nothing to
-   plant on used to skip its assertion and pass on nothing. */
+   does not know). Controls: a retired word, planted back on the page, is
+   caught as UNRECORDED. Each plant is asserted to have HAPPENED (P-9, M3
+   review): a control that found nothing to plant on used to skip its
+   assertion and pass on nothing.
+   Launch M3b/M4b (LD33): the member transaction, member net-flow and Congress
+   late-row plants ran against the September Congress and Member boards,
+   which left the comparison; the control now plants on the filer's Position
+   changes, whose canvas still governs its kind words (the expired
+   kind.qoq.chip.m3 allowance covered them). */
 test('T2.9 (M3): the M3-scoped allowances have expired, and the routes pass without them', async ({ page, browser }) => {
   const scoped = ALLOWED_DEVIATIONS.filter((d) => d.until);
   expect(scoped.map((d) => d.id).sort()).toEqual(["kind.late.word.m3", "kind.netflow.word.m3", "kind.qoq.chip.m3", "kind.side.word.m3", "table.role.notable.m3"]);
@@ -1010,35 +1040,20 @@ test('T2.9 (M3): the M3-scoped allowances have expired, and the routes pass with
   expect(CURRENT_MILESTONE, "this tree is m3").toBe("m3");
   for (const d of scoped) expect(allowedAt(CURRENT_MILESTONE).some((x) => x.id === d.id), `${d.id} has expired`).toBe(false);
 
-  const MEMBER = CANVAS_CASES[2]!;
-  await openRoute(page, MEMBER);
-  const words = (fs: Finding[]): Finding[] => unrecorded(fs).filter((f) => / kind word$/.test(f.check));
-  const now = words((await compareRoute(page, browser, MEMBER)).findings);
-  expect(now, `the member's kind words match the canvas with no allowance:\n${formatFindings(now)}`).toEqual([]);
-  /* control: the retired side word and net-flow word, planted back */
+  await openRoute(page, FILER);
+  const words = (fs: Finding[]): Finding[] => unrecorded(fs).filter((f) => /^table Holdings → Position changes/.test(f.band) && /kind word/.test(f.check));
+  const now = words((await compareRoute(page, browser, FILER)).findings);
+  expect(now, `the filer's change words match the canvas with no allowance:\n${formatFindings(now)}`).toEqual([]);
+  /* control: a retired side word planted on a change row's kind cell */
   const planted = await page.evaluate(() => {
-    const side = document.querySelector<HTMLElement>('[data-entity-table] tr[data-edge="buy"] td.c-kind, [data-entity-table] tr[data-edge="sell"] td.c-kind');
-    const net = document.querySelector<HTMLElement>('.design-flow-band tr[data-edge="netbuy"] td.c-kind, .design-flow-band tr[data-edge="netsell"] td.c-kind');
-    if (side) side.textContent = side.closest("tr")!.getAttribute("data-edge") === "buy" ? "PURCHASE" : "SALE";
-    if (net) net.textContent = net.closest("tr")!.getAttribute("data-edge") === "netbuy" ? "BUY" : "SELL";
-    return { side: !!side, net: !!net };
+    const cell = document.querySelector<HTMLElement>(".design-changes tbody tr[data-edge] td.c-kind");
+    if (!cell) return false;
+    const chip = cell.querySelector<HTMLElement>(".qoq-chip") ?? cell;
+    chip.textContent = "PURCHASE";
+    return true;
   });
-  expect(planted.side, "a buy or sell transaction row was found to plant on").toBe(true);
-  expect(planted.net, "a NET BUY or NET SELL flow row was found to plant on").toBe(true);
-  const after = unrecorded((await compareRoute(page, browser, MEMBER)).findings);
-  expect(hasFinding(after, /^table All disclosed transactions/, /^(buy|sell) kind word$/), "control: PURCHASE/SALE is unrecorded at m3").toBe(true);
-  expect(hasFinding(after, /^table Flows by ticker/, /^net(buy|sell) kind word$/), "control: BUY/SELL on the net flow is unrecorded at m3").toBe(true);
-
-  await openRoute(page, CONGRESS);
-  const feedLate = (fs: Finding[]): Finding[] => unrecorded(fs).filter((f) => /^table Disclosure feed/.test(f.band) && /^late row kind word/.test(f.check));
-  expect(feedLate((await compareRoute(page, browser, CONGRESS)).findings), "a late feed row reads its side word (L4)").toEqual([]);
-  const late = await page.evaluate(() => {
-    const td = document.querySelector<HTMLElement>('#feed-section tr.reference-row[data-edge="late"] td.c-kind');
-    if (td) td.firstChild!.textContent = "LATE";
-    return !!td;
-  });
-  expect(late, "a late feed row was found to plant on").toBe(true);
-  expect(feedLate((await compareRoute(page, browser, CONGRESS)).findings).length, "control: the LATE word is unrecorded at m3").toBeGreaterThan(0);
+  expect(planted, "a change row was found to plant on").toBe(true);
+  expect(words((await compareRoute(page, browser, FILER)).findings).length, "control: PURCHASE on a change row is unrecorded at m3").toBeGreaterThan(0);
 });
 
 // Compare against the independent export's rendered row, not an app-generated golden.
@@ -1076,11 +1091,16 @@ test('compact feed paging and row flags remain usable', async ({page}) => {
   const first = await page.locator('.reference-row').first().textContent();
   await expect(page.locator('#pager-older')).toHaveAttribute('aria-disabled','false');
   await page.locator('#pager-older').click();
-  await expect(page.locator('#filter-count-line')).toContainText('51–100');
-  await expect(page.locator('.reference-row')).toHaveCount(50);
+  // launch M3a (LD20): twenty rows a page in the default "With ticker" view
+  await expect(page.locator('#filter-count-line')).toContainText('21–40');
+  await expect(page.locator('.reference-row')).toHaveCount(20);
   expect(await page.locator('.reference-row').first().textContent()).not.toBe(first);
   await page.locator('#pager-newer').click();
-  await expect(page.locator('#filter-count-line')).toContainText('1–50');
+  await expect(page.locator('#filter-count-line')).toContainText('1–20');
+  await expect(page.locator('#filter-count-line')).toContainText('without a ticker');
+  /* launch M3a (R20): the default "With ticker" page may carry no flag
+     (20261019.2: none); the "All rows" page carries the rows a flag marks most */
+  await page.locator('#feed-section button[data-group="view"][data-value="all"]').click();
   /* DESIGN-POLISH M1 (H-17): a row's flags are VISIBLE chips in the range
      cell, never inside a note panel — and each chip OPENS ITS OWN definition,
      one interaction away, as the row's single flag note did before (M1 review,
@@ -1120,8 +1140,47 @@ for (const width of [375, 1440]) {
   test(`Monthly flow panel at ${width}px (SIGNALS-CLARITY M3)`, async ({ page }, info) => {
     await page.setViewportSize({ width, height: 1000 });
     expect((await page.goto('/congress/'))?.status()).toBe(200);
-    await expect(page.locator('#monthly-flow-section + #congress-leaders-band'), 'the panel directly precedes band C1').toHaveCount(1);
+    // launch M3b (R21): the panel closes the page, after the feed
+    expect(await page.evaluate(() => {
+      const kids = Array.from(document.querySelector('main')!.children).filter((el) => el.tagName !== 'SCRIPT');
+      return kids[kids.length - 1]?.id ?? '';
+    }), 'Monthly flow is the last section of the page').toBe('monthly-flow-section');
     await expect(page.locator('#monthly-flow-section h2')).toHaveText('Monthly flow');
+    /* R11/R21: the default Members view — a labelled y-axis, x labels, the
+       zone labelled an estimate and a readout, all on screen at this width */
+    const members = await page.evaluate(() => {
+      const v = Array.from(document.querySelectorAll<HTMLElement>('#monthly-flow-section .mf-variant')).find((x) => !x.hidden)!;
+      const m = v.querySelector<HTMLElement>('.mf-measure[data-flow-measure="members"]')!;
+      const on = (el: Element | null) => !!el && el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) && el.getBoundingClientRect().width > 0;
+      const labels = (sel: string) => Array.from(m.querySelectorAll(sel)).map((t) => ({ on: on(t), r: t.getBoundingClientRect() }));
+      return {
+        shown: !m.hidden,
+        y: labels('.mf-ytick'),
+        x: labels('.mf-x'),
+        zone: on(m.querySelector('.mf-fill span')),
+        readout: (m.querySelector('.mf-readout')?.textContent ?? '').trim(),
+        readoutOn: on(m.querySelector('.mf-readout')),
+        tips: Array.from(v.querySelectorAll('.mf-notes .note-label')).map((b) => on(b)),
+      };
+    });
+    expect(members.shown, 'Members is the default measure').toBe(true);
+    expect(members.y.length).toBeGreaterThanOrEqual(2);
+    expect(members.y.every((t) => t.on), 'every y tick is labelled and on screen').toBe(true);
+    expect(members.x.length).toBeGreaterThanOrEqual(6);
+    expect(members.x.every((t) => t.on && t.r.right <= width + 1), 'every x label is on screen').toBe(true);
+    expect(members.zone, 'the Filling in zone is labelled').toBe(true);
+    expect(members.readoutOn && /with a purchase/.test(members.readout), 'the readout states the month').toBe(true);
+    expect(members.tips, 'the three method tips are on screen').toEqual([true, true, true]);
+    // the readout follows a tap on the plot (one control, LD13)
+    const plot = page.locator('#monthly-flow-section .mf-variant:not([hidden]) .mf-measure[data-flow-measure="members"] .mf-plot');
+    /* launch M3b (R21): the panel closes the page, below the fold — a pointer
+       reaches the plot once it is scrolled to (a raw click off screen lands nowhere) */
+    await plot.scrollIntoViewIfNeeded();
+    const box = (await plot.boundingBox())!;
+    await page.mouse.click(box.x + 4, box.y + box.height / 2);
+    await expect(page.locator('#monthly-flow-section .mf-variant:not([hidden]) .mf-measure[data-flow-measure="members"] .mf-readout')).not.toHaveText(members.readout);
+    // the Dollars view keeps the bar grammar measured below
+    await page.locator('#monthly-flow-section [data-flow-measure-toggle="dollars"]').click();
     const g = await page.evaluate(() => {
       const panel = document.querySelector('#monthly-flow-section')!;
       const shown = Array.from(panel.querySelectorAll<HTMLElement>('.mf-variant')).filter((v) => !v.hidden);
@@ -1145,11 +1204,12 @@ for (const width of [375, 1440]) {
         cols: cols.length,
         colsInside: cols.every((c) => c.left >= tr.left - 0.5 && c.right <= tr.right + 0.5 && c.width > 0),
         minColWidth: Math.min(...cols.map((c) => c.width)),
-        caption: vis('.rb-caption'),
-        exclusions: vis('.mf-exclusions'),
-        shade: vis('.mf-shade-labels'),
-        completeness: vis('.mf-completeness'),
-        breadth: vis('.mf-breadth'),
+        // R21: these lines are tips now; their labels are measured above and
+        // their bodies are opened below
+        caption: { present: !!v.querySelector('.rb-caption'), visible: true, h: 0, right: 0 },
+        exclusions: { present: !!v.querySelector('.mf-exclusions'), visible: true, h: 0, right: 0 },
+        shade: { present: !!v.querySelector('.mf-shade-labels'), visible: true, h: 0, right: 0 },
+        completeness: { present: !!v.querySelector('.mf-completeness'), visible: true, h: 0, right: 0 },
         /* the open-bound caps and all-unparsed stubs of BOTH variants' markup
            are fixed-height marks; here, the visible variant's */
         marks: Array.from(v.querySelectorAll('.mf-cap, .mf-stub')).map((m) => {
@@ -1170,16 +1230,23 @@ for (const width of [375, 1440]) {
         table: { display: getComputedStyle(table).display, wrapDisplay: cs.display, clipped: /rect\(0(px)?,? 0(px)?,? 0(px)?,? 0(px)?\)/.test(cs.clip) || cs.clipPath === 'inset(50%)', rows: table.querySelectorAll('tbody tr').length, box: table.getBoundingClientRect().width },
       };
     });
-    expect(g.shown, 'exactly one variant is visible: Listed stocks, the default').toEqual(['stocks']);
+    expect(g.shown, 'exactly one variant is visible: Stocks, the default').toEqual(['stocks']);
     expect(g.page.scroll, 'no horizontal page scroll').toBeLessThanOrEqual(g.page.viewport + 1);
     expect(g.panelRight).toBeLessThanOrEqual(g.page.viewport + 1);
     expect(g.cols, '36 trade months').toBe(36);
     expect(g.track.scroll, 'the 36 months fit their track').toBeLessThanOrEqual(g.track.client + 1);
     expect(g.colsInside, 'every month column lies inside the track').toBe(true);
     expect(g.minColWidth, 'every month column has room for a bar').toBeGreaterThanOrEqual(4);
-    for (const [name, v] of Object.entries({ caption: g.caption, exclusions: g.exclusions, 'shading labels': g.shade, completeness: g.completeness, breadth: g.breadth })) {
-      expect(v.present && v.visible, `the ${name} line is on screen at ${width}px`).toBe(true);
-      expect(v.right, `the ${name} line stays inside the viewport`).toBeLessThanOrEqual(g.page.viewport + 1);
+    for (const [name, v] of Object.entries({ caption: g.caption, exclusions: g.exclusions, 'shading labels': g.shade, completeness: g.completeness })) {
+      expect(v.present, `the ${name} line is emitted (in its tip) at ${width}px`).toBe(true);
+    }
+    // each tip opens to its honesty line, inside the viewport
+    for (const [label, sel] of [['Excluded rows', '.mf-exclusions'], ['Shaded months are still filling in (est.)', '.mf-completeness'], ['How it’s drawn', '.rb-caption']] as const) {
+      await page.locator('#monthly-flow-section .mf-variant:not([hidden]) .mf-notes .note-label', { hasText: label }).click();
+      const body = page.locator(`#monthly-flow-section .mf-variant:not([hidden]) ${sel}`);
+      await expect(body, `${label}: its line shows`).toBeVisible();
+      expect(((await body.boundingBox())?.x ?? 0) + ((await body.boundingBox())?.width ?? 0), `${label}: inside the viewport`).toBeLessThanOrEqual(width + 1);
+      await page.keyboard.press('Escape');
     }
     /* readability change: an open sum's hatch is a fixed cap (and an all-unparsed
        sum a fixed stub), never a pillar to the axis top */

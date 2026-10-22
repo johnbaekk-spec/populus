@@ -20,7 +20,6 @@ import {
   s7Banner,
   specimenCard,
   pickSpecimen,
-  moduleCard,
   holdersTableHtml,
   changesTableHtml,
   qoqChipHtml,
@@ -28,7 +27,7 @@ import {
   breadcrumb,
   QOQ_FOOTNOTES,
   type BuildStamps } from "../src/lib/ui/index.ts";
-import { filerTiles, holdersBody, instFiledNote } from "../src/lib/ui/institutional.ts";
+import { filerPeriodSectionHtml, filerTiles, holdersBody, instFiledNote } from "../src/lib/ui/institutional.ts";
 import { quarterlyFlow, sumRanges } from "../src/lib/derive.ts";
 import type { MemberEntity } from "../src/lib/derive.ts";
 import type { QoqDeltaRow, TopHolderRow } from "../src/lib/inst.ts";
@@ -153,11 +152,13 @@ test("entityTxnTable: real table semantics — caption, th scope, honesty cells"
   const ths = [...html.matchAll(/<th\b[^>]*>/g)].map((m) => m[0]);
   assert.ok(ths.length > 0, "headers rendered");
   assert.ok(ths.every((t) => /\sscope="col"/.test(t)), "th scope present on every header");
-  assert.ok(html.includes("Traded → Filed"));
+  // launch M4b (R25): the member columns are Side · Ticker · Asset · owner · Range · Traded → filed · Src
+  assert.ok(html.includes("Traded → filed"));
   assert.ok(html.includes("LATE·55d"), "LATE chip past 45d");
   assert.ok(html.includes("visually-hidden"), "dual dates keep the a11y-tree text");
   assert.ok(html.includes("design-dates"), "complete dual dates present at every viewport");
-  assert.ok(html.includes("Amended filings show the latest version") && html.includes("/methodology/#defaults"), "the amendment rule is stated; the exclusions are one click away");
+  // member-13: the same fact in half the words; the exclusions one click away
+  assert.ok(html.includes("Amended filings: latest version shown") && html.includes("/methodology/#defaults"), "the amendment rule is stated; the exclusions are one click away");
   assert.ok(html.includes("aria-live"), "count changes announce");
 });
 
@@ -215,7 +216,8 @@ test("memberPaperBlock (S5): retained-and-counted copy + table semantics; absent
       ],
     }),
   );
-  assert.ok(withPaper.includes("retained and counted"));
+  // member-17: counted in totals, not machine-readable until OCR, each linked
+  assert.ok(withPaper.includes("Counted in totals, but not machine-readable until OCR. Each links to the original."));
   assert.ok(withPaper.includes("needs OCR"));
   assert.ok(withPaper.includes("<caption"));
   assert.equal(memberPaperBlock(member()), "", "no block when the member has no paper filings");
@@ -349,7 +351,14 @@ test("changesTableHtml: NULL renders em-dash never 0; undisclosed side renders h
   assert.ok(html.includes(">0</td>"), "a disclosed zero prints 0");
   assert.ok(html.includes("value undisclosed one side"), "producer flag renders as a tag");
   assert.ok(html.includes("<caption"));
-  assert.ok(html.includes("Per-row filing dates are on each receipt."), "the stamp's ⓘ (SRC §5)");
+  /* Launch copy audit filer-06: the "Quarter ended …" stamp left the table's
+     foot for the band head's quarter label (this table's only caller), with
+     the same ⓘ — the quarter end and the build's newest-filing date. */
+  assert.ok(!html.includes("Per-row filing dates are on each receipt."), "the table alone carries no stamp now");
+  const band = filerPeriodSectionHtml(null, rows, "2026-03-31", "2026-05-15", 25, { total: rows.length });
+  assert.match(band, /<h2 class="section-h">Changes · <span class="note"><button[^>]*>Q1 2026<\/button>/, "the quarter heads the band");
+  assert.ok(band.includes("Quarter ended 2026-03-31. Newest filing in this build: 2026-05-15. Per-row filing dates are on each receipt."), "the stamp's ⓘ (SRC §5) travels with it");
+  assert.ok(band.indexOf("Q1 2026") < band.indexOf("<table"), "…above the table it qualifies");
 });
 
 test("qoqChipHtml: markers link to the footnote block; every marker has a printed line", () => {
@@ -425,14 +434,19 @@ test("S4 skeleton names its endpoint; every error kind has its own honest headin
   }
 });
 
-test("S7 banner: calendar facts + provisional-by-construction wording", () => {
+test("S7 banner: calendar facts + the open quarter's incompleteness, in plain words", () => {
+  /* Launch copy audit filer-03: "provisional by construction" was jargon. The
+     property kept: the quarter and the deadline are stated, the open quarter's
+     figures are said to change, and a missing filer is never a zero. */
   const html = s7Banner({ open: true, quarterEnd: "2026-06-30", deadline: "2026-08-14" });
   assert.ok(html.includes("FILING WINDOW OPEN"));
-  assert.ok(html.includes("2026-06-30"));
-  assert.ok(html.includes("2026-08-14"));
-  assert.ok(html.includes("provisional by construction"));
-  assert.ok(html.includes("not zeros"));
+  assert.ok(html.includes("<strong>Q2 2026</strong> filings are due by <strong>2026-08-14</strong>"), "the quarter (2026-06-30) and the deadline");
+  assert.ok(html.includes("figures for that quarter will change"));
+  assert.ok(html.includes("missing filers are not zeros"));
+  assert.ok(!html.includes("provisional by construction"), "control: the jargon is gone");
   assert.ok(!html.includes("%"), "no expected-filer coverage % — it has no published source");
+  // a quarter end the label cannot read is stated as given, never dropped
+  assert.ok(s7Banner({ open: true, quarterEnd: "2026-06-29", deadline: "2026-08-14" }).includes("<strong>2026-06-29</strong> filings are due by"));
 });
 
 /* ---------- Home pieces ---------- */
@@ -454,21 +468,11 @@ test("pickSpecimen + specimenCard: a real closed-range row, both dates, receipt"
   assert.equal(pickSpecimen([txn({ low: null, high: null, traded: null })]), null);
 });
 
-test("moduleCard: live cards link, planned cards do not; stats are caller-derived", () => {
-  const live = moduleCard("Congress", "/congress/", "desc", {
-    live: true,
-    statLines: ["3,911 rows · updated 2026-07-24"],
-  });
-  assert.ok(live.startsWith("<a"));
-  assert.ok(live.includes("LIVE"));
-  assert.ok(live.includes("3,911 rows"));
-  const planned = moduleCard("Financials", null, "desc", {
-    live: false,
-    statLines: ["gates published before data"],
-  });
-  assert.ok(planned.startsWith("<div"));
-  assert.ok(planned.includes("PLANNED"));
-});
+/* launch M2 (Home A, D1): `moduleCard` left with the home's Modules grid
+   (R14), and its test with it. The property it pinned — every home figure is
+   caller-derived from the build, never a literal — is pinned more sharply by
+   test/launch-home.test.ts, which recomputes each ledger figure independently
+   from fixture build data (R15). */
 
 /* ---------- XSS ---------- */
 

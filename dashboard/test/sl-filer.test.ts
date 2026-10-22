@@ -134,9 +134,10 @@ test("SL-R22 (M2): exactly ONE §5 box per filer page — at its foot, through f
   const foot = filerFootHtml(FILER.cik, FILER.name);
   assert.equal(s5Boxes(foot), 1, "the foot part owns the box");
   assert.ok(html.endsWith(foot), "…and the foot is the body's last part");
-  // the header still POINTS at the canonical box, with its methodology deep link
+  // the header still POINTS at the canonical box; the methodology deep link now
+  // sits on the comparability line (launch copy audit filer-02: one link)
   assert.ok(html.indexOf('href="#inst-data-note"') >= 0 && html.indexOf('href="#inst-data-note"') < html.indexOf('id="inst-data-note"'), "the head's pointer leads to the box below it");
-  assert.match(html, /href="\/methodology\/#m2"/, "and its methodology deep link");
+  assert.match(html, /href="\/methodology\/#m2"/, "and the page keeps its methodology deep link");
   assert.match(html, /not current holdings/, "and the one claim the header itself must carry");
 
   // the pre-rendered page: the component renders NO box there, and the foot renders once
@@ -175,16 +176,16 @@ test("SL-R22: the truncation terminus and the pager both survive", () => {
      a terminus is exactly the kind of line that disappears in a refactor. */
   const html = body([delta()], CONC, { total: 5000, page: 0 });
   assert.match(html, /class="terminus" data-terminus-author="populus"/, "the changes terminus stands");
-  /* DESIGN-POLISH M3 (Architecture H, H-3; T3.10): the terminus now states
-     what is TRUE of the rows — QoQ compares every position with a security
-     identifier (new and exited included) and counts the keyless ones; the old
-     "top-25 slices" sentence was false (changes are not drawn from the top-N). */
-  assert.match(
-    html,
-    /Changes compare every position with a security identifier, new and exited included; holdings without one are counted, not compared\./,
-    "…stating what is true of the rows",
-  );
-  assert.doesNotMatch(html, /top-25 slices|keyable|differenced/, "control: the false sentence and its pipeline words are gone");
+  /* DESIGN-POLISH M3 (Architecture H, H-3; T3.10): the band states what is
+     TRUE of the rows — QoQ compares every position with a security identifier
+     and counts the keyless ones; the old "top-25 slices" sentence was false.
+     Launch copy audit filer-07: nothing is truncated there, so that sentence
+     is a caveat line (not a terminus) and keeps the comparability gap. */
+  const caveat = /<div class="caveat-line">Holdings without a security ID are counted, not compared\. <a href="\/methodology\/#m2">Method ↗<\/a><\/div>/;
+  assert.match(html, caveat, "…stating what is true of the rows");
+  assert.match(body([delta()]), caveat, "…on an uncapped period too, where no terminus renders");
+  assert.doesNotMatch(body([delta()]), /data-terminus-author/, "control: an uncapped period renders no terminus at all");
+  assert.doesNotMatch(html, /top-25 slices|keyable|differenced|Changes compare every position/, "control: the false sentence, its pipeline words and the retired wording are gone");
   assert.match(html, /methodology\/#m2/, "with its methodology link intact");
 });
 
@@ -212,6 +213,7 @@ import {
 import { installDom, MiniElement as MiniEl } from "./lib/mini-dom.ts";
 import { initFilerPeriods } from "../src/scripts/entity-client.ts";
 import { serializeInlineJson } from "../src/lib/inline-json.ts";
+import { stripTableRoles } from "./lib/table-roles.ts";
 
 const Q = { a: "2025-12-31", b: "2026-03-31" };
 const CONC_BY: Record<string, ConcentrationRow> = {
@@ -255,7 +257,9 @@ function periodRootProblems(got: Record<string, string>, period: string): string
   const holder = new MiniEl("body");
   holder.innerHTML = filerPageAt(period);
   const want = rootsOf(holder);
-  return ROOTS.filter((r) => got[r] !== want[r]).map((r) => `${r} does not hold the server's ${period} markup`);
+  /* launch M1a (R40): the repaint carries the explicit table roles the layout
+     adds to the server page; the markup compared is otherwise unchanged */
+  return ROOTS.filter((r) => stripTableRoles(got[r] ?? "") !== stripTableRoles(want[r] ?? "")).map((r) => `${r} does not hold the server's ${period} markup`);
 }
 
 test("Q2-6: a period switch repaints the ledger, the changes root and the book shape, each equal to the server's page for that period", () => {
@@ -287,4 +291,129 @@ test("Q2-6 control: a root the switch does not repaint is caught", () => {
   } finally {
     restore();
   }
+});
+
+/* ------------------------------ launch redesign M6: the filer copy sweep */
+
+/* Launch copy audit filer-01 … filer-11 (PLAN R29, R30, R2; LD3 gives M6 the
+   filer page). Each applied item is pinned three ways: the shipped text is
+   present, the text it replaced is gone, and every caveat the item touched is
+   still on the page. The word budget per element is the audit's own
+   `words_after` for that item, counted by the audit's rule: visible text only
+   (a note's popover and screen-reader-only text excluded), a word being a
+   whitespace token holding a letter or digit once the audit's symbols are
+   spaced out. The page-level gate (filer ≤ 251 on the served HTML) is the
+   post-build word predicate's, judged on the integrated build. */
+import { BANNED_PATTERNS, redactFiledNames } from "./lib/banned-scan.ts";
+import { domOf, visibleText } from "./lib/ledger-dom.ts";
+import type { MiniElement } from "./lib/mini-dom.ts";
+import { holdingsTableHtml, type FilerHoldingRow } from "../src/lib/holdings.ts";
+import { FILINGS } from "./fixtures/institutional.ts";
+
+function auditWords(el: MiniElement | null): number {
+  if (!el) return 0;
+  const text = (n: MiniElement): string =>
+    n.nodes.map((c) => (typeof c === "string" ? c : c.classList.contains("visually-hidden") ? " " : c.classList.contains("note-pop") ? " " : text(c))).join("");
+  return visibleText(domOf(el.outerHTML)) === "" ? 0 : text(el).replace(/&[a-z#0-9]+;/g, " ").replace(/[⏎↗↓→←▲▼◂▸ⓘ§†‡·|/⌕☰]/g, " ").split(/\s+/).filter((w) => /[A-Za-z0-9]/.test(w)).length;
+}
+
+function m6FilerPage(): string {
+  const typing = { cik: "0001067983", display_name: "Fixture Capital", person: "Pat Example", manager_type: "insurer", notable: true } as never;
+  const rows: FilerHoldingRow[] = Array.from({ length: 6 }, (_, i) => ({
+    cik: "0001067983", period: "2026-03-31", filing_key: "1", security_id: null, cusip: `${String((i % 3) + 1).repeat(6)}10${i}`, issuer_name: `ISSUER ${i % 3}`, title_of_class: "COM",
+    value_usd: 100 + i, shares: 10, ssh_type: "SH", put_call: null, position_key: `cusip:${String((i % 3) + 1).repeat(6)}10${i}`, put_call_bucket: "LONG", unit_key: "SH", flags: [],
+  }) as unknown as FilerHoldingRow);
+  const holdingsHtml = holdingsTableHtml({ reference: true, cik: "0001067983", filerName: "FIXTURE HOLDINGS LLC", period: "2026-03-31", rows, filings: FILINGS, page: 0 });
+  const deltas = [delta(), delta({ position_key: "sid:held", change_kind: "held", delta_shares: 0, prev_shares: 40, curr_shares: 40 })];
+  return filerBody(FILER, PERIODS, "2026-03-31", { ...CONC, null_value_positions: 0 }, deltas, "2026-07-31", 25, { open: true, quarterEnd: "2026-09-30", deadline: "2026-11-16" }, {
+    total: 2,
+    typing,
+    benchmark: { period: "2026-03-31", population: 8748, topnShareBps: { median: 8000 }, hhi: { median: 446, n: 8662 }, positions: { median: 97.5 } } as never,
+    holdingsHtml: `<section class="panel panel-wide" aria-label="Reported holdings" data-holdings-surface="filer">${holdingsHtml}</section>`,
+  });
+}
+
+test("launch M6 (filer-01…11): the shipped copy, the replaced copy gone, every touched caveat kept", () => {
+  const html = m6FilerPage();
+  const dom = domOf(html);
+  const one = (sel: string): MiniElement => {
+    const el = dom.querySelector(sel);
+    assert.ok(el, `${sel} renders`);
+    return el!;
+  };
+  // filer-01: identity only; the filed name is the H1's tip, still marked as filed text
+  assert.equal(visibleText(one(".entity-subline")), "Pat Example · Insurers · CIK 1067983 · EDGAR ↗");
+  assert.match(one("h1.entity-title").outerHTML, /<span class="note-pop" popover id="n-filer-head-filed-as" role="note">Filed as <span class="filed-name">FIXTURE HOLDINGS LLC<\/span>\.<\/span>/);
+  assert.ok(one(".entity-subline").querySelector(".mgr-person"), "the person behind the curated name stays (an honesty selector)");
+  // filer-02: the same caveat in half the words, one link into the §5 box
+  assert.equal(visibleText(one(".filer-provenance")), "Quarter-end snapshot, filed up to 45 days later — not current holdings. What a 13F covers ↓");
+  // filer-03: calendar facts and incompleteness, in plain words
+  assert.equal(visibleText(one(".s7-copy")), "Q3 2026 filings are due by 2026-11-16 — figures for that quarter will change; missing filers are not zeros.");
+  // filer-04 + filer-06 (stamp): the quarter heads the band; its ⓘ keeps the quarter end and the filings-through date
+  assert.equal(visibleText(one(".design-changes .panel-head h2")), "Changes · Q1 2026");
+  assert.match(html, /role="note">Quarter ended 2026-03-31\. Newest filing in this build: 2026-07-31\. Per-row filing dates are on each receipt\.<\/span>/);
+  assert.equal(visibleText(one(".design-changes .panel-head .panel-note")), "by shares · How classified ↗");
+  // filer-05: the Change tip keeps every marker's meaning, without producer slugs
+  const changeTip = visibleText(one("#n-filer-changes-change"));
+  for (const clause of ["NEW / ADD / TRIM / EXIT by share count", "NO CHANGE = same shares", "EXIT = absent this quarter", "NO PRIOR = no comparable prior quarter", "n/c = not classifiable", "†v: the reported share count is unchanged"]) {
+    assert.ok(changeTip.includes(clause), `the Change tip keeps "${clause}"`);
+  }
+  assert.doesNotMatch(html, /<code>(classified_by_value|shares_unit_mismatch|identity_reconciled_by_cusip)<\/code>/, "no producer slug in a reader tip");
+  // filer-06: the absence statements kept where they are honesty (the Flags reason), the rest cut
+  assert.match(html, /<p class="table-foot-reason">Flags: no row carries a flag\.<\/p>/, "not applied: the removed honesty column still states why (m1-layout.test.ts)");
+  // filer-07: a caveat, not a terminus, and it keeps the comparability gap
+  assert.equal(visibleText(dom.querySelectorAll(".design-changes .caveat-line").at(-1)!), "Holdings without a security ID are counted, not compared. Method ↗");
+  // filer-08: the list's head counts issuers and rows; zero undisclosed rows print nothing
+  assert.equal(visibleText(one('[data-holdings-surface="filer"] .panel-head .panel-note')), "3 issuers · 6 rows");
+  // filer-09: one line, the grouping detail a link away
+  assert.equal(visibleText(dom.querySelectorAll('[data-holdings-surface="filer"] .caveat-line').at(-1)!), "One line per issuer, largest first — open a line for its reported rows. Grouping ↗");
+  // filer-10: the median and the method as the head's tip; the summary in its own unit
+  assert.equal(visibleText(one(".design-book-shape .panel-head .panel-note")), "vs median");
+  assert.match(visibleText(one("#n-filer-bookshape-median")), /^Tick = median of the 8,748 tracked filers with a 2026-03-31 book \(the index median: the 8,662 with a complete book\)\. Concentration uses reported 13F long value, not total assets; the index is withheld when any position lacks a value\.$/);
+  assert.equal(visibleText(one(".book-source")), "2 quarter-over-quarter rows");
+  // filer-11: the receipt stays; the decision log and the generic cards go
+  assert.equal(visibleText(one("details.edgar-block p")), "The filing on EDGAR is the record, including any filed after this build.");
+
+  // replaced copy: gone
+  for (const gone of [
+    "reported 13(f) long value", "latest quarter", "mgr-chip-notable", "A quarter-end snapshot.", "never a complete portfolio", "what a 13F is — and is not",
+    "provisional by construction", "Position changes — into", "Δ value · filing link", "how changes are classified", "AVAILABLE QUARTERS", "planned-line",
+    "Truncated by Public Filings. Changes compare", "disclosed value over", "undisclosed-value rows", "this build publishes the selected quarter",
+    "Change kind and share change are in Position changes above", "a row with no issuer key stands on its own line", "Issuer totals on the holders pages",
+    "vs tracked median", "tick = median", "null-value positions: ", "QoQ moves", "id=\"filer-notes\"", "Notes on this data", "provenance, not a substitute",
+    "decided on 2026-08-01", "The complete filing on EDGAR.",
+  ]) {
+    assert.ok(!html.includes(gone), `replaced copy is gone: "${gone}"`);
+  }
+  // every caveat the items touched, still on the page (R2)
+  for (const kept of ["not current holdings", "filed up to 45 days later", "missing filers are not zeros", "will change", "counted, not compared", "not total assets", "the index is withheld", "Newest filing in this build: 2026-07-31", 'id="inst-data-note"']) {
+    assert.ok(html.includes(kept), `the caveat stays: "${kept}"`);
+  }
+  // R30: no banned wording in the copy (filed names redacted, as the gate does)
+  const scanned = redactFiledNames(html);
+  assert.deepEqual(BANNED_PATTERNS.filter((p) => p.re.test(scanned)).map((p) => p.name), []);
+});
+
+test("launch M6 (filer-01…10): each element within the audit's words_after, counted by the audit's rule", () => {
+  const dom = domOf(m6FilerPage());
+  const budget: [string, string, number][] = [
+    ["filer-01", ".entity-subline", 6],
+    ["filer-02", ".filer-provenance", 15],
+    ["filer-03", ".s7-banner", 21],
+    ["filer-04", ".design-changes .panel-head h2", 3],
+    ["filer-04 meta", ".design-changes .panel-head .panel-note", 4],
+    ["filer-08", '[data-holdings-surface="filer"] .panel-head .panel-note', 4],
+    ["filer-10", ".design-book-shape .panel-head .panel-note", 6],
+  ];
+  for (const [id, sel, max] of budget) {
+    const n = auditWords(dom.querySelector(sel));
+    assert.ok(n > 0 && n <= max, `${id}: ${n} visible words (audit words_after ${max})`);
+  }
+  const comparability = dom.querySelectorAll(".design-changes .caveat-line").at(-1)!;
+  assert.ok(auditWords(comparability) <= 10, `filer-07: ${auditWords(comparability)} visible words (audit words_after 10)`);
+  const grouping = dom.querySelectorAll('[data-holdings-surface="filer"] .caveat-line').at(-1)!;
+  assert.ok(auditWords(grouping) <= 14, `filer-09: ${auditWords(grouping)} visible words (audit words_after 14)`);
+  // the counter's controls: a tip's words and screen-reader text are not counted; a visible word is
+  assert.equal(auditWords(domOf('<p>Two words <span class="note"><button>ⓘ</button><span class="note-pop">ten hidden words in a tip are never counted here ok</span></span><span class="visually-hidden">sr only</span></p>').querySelector("p")), 2);
+  assert.equal(auditWords(domOf("<p>45 days · 13F ↗ —</p>").querySelector("p")), 3, "figures count; symbols do not");
 });

@@ -141,10 +141,54 @@ test("SL-R4 / H-5: print hides only the glyph trigger, prints marks and labels, 
    trigger never inflates the row it sits in. The property — every note is
    comfortably tappable on touch — is kept; Chromium hit-tests it (G12,
    sl-notes.spec.ts). This pins the cascade the hit-test relies on. */
+/** Every style rule with the at-rule preludes it sits in (outermost first). */
+function rulesInContext(src: string): { sel: string; decls: string; media: string[] }[] {
+  const text = src.replace(/\/\*[\s\S]*?\*\//g, "");
+  const out: { sel: string; decls: string; media: string[] }[] = [];
+  const stack: string[] = [];
+  let buf = "";
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === "{") {
+      const head = buf.trim();
+      buf = "";
+      if (head.startsWith("@")) {
+        stack.push(head);
+        continue;
+      }
+      const end = text.indexOf("}", i);
+      out.push({ sel: head, decls: text.slice(i + 1, end), media: [...stack] });
+      i = end;
+    } else if (ch === "}") {
+      stack.pop();
+      buf = "";
+    } else buf += ch;
+  }
+  return out;
+}
+/** the launch fold block (R7 at ≤720px, late-additions.css "launch gate") */
+const IN_FOLD = (media: readonly string[]): boolean => media.some((m) => /^@media \(max-width: 720px\)$/.test(m));
+
 test("SL-R24 / L9: the note trigger reaches --hit-min through its ::before, never min-width/min-height; .note-pop is never suppressed outside the fallback", () => {
   const rules = [...css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sel: m[1]!.trim(), decls: m[2]! }));
-  const onButton = rules.filter((r) => r.sel.split(",").some((p) => /\.note-(btn|label|mark)\b(?![\w-])(?!.*::)/.test(p.trim()) && !/::/.test(p)));
-  assert.deepEqual(onButton.filter((r) => /min-(width|height)\s*:/.test(r.decls)).map((r) => r.sel), [], "no min-size on the trigger itself");
+  /* launch gate (R7 over D4's phone cards, 75e9920 on 20261019.2): at
+     ≤720px a tip whose neighbours sit closer than a square cannot reach 44px
+     by a layout-neutral square — the midpoint split cuts it (a receipt and
+     its ⓘ 2px apart) — so INSIDE the ≤720px fold the trigger is a 44px box of
+     its own (the card grows; no row of a column layout exists to inflate).
+     L9's property stands everywhere else: no min-size on the trigger outside
+     that fold, and inside it the box is 2 × --hit-half, never --hit-min
+     (hit-areas.ts writes a wider --hit-min on a shifted control, so a box
+     sized by it would grow on every run). */
+  const isTrigger = (sel: string): boolean => sel.split(",").some((p) => /\.note-(btn|label|mark)\b(?![\w-])(?!.*::)/.test(p.trim()) && !/::/.test(p));
+  const sized = rulesInContext(css).filter((r) => isTrigger(r.sel) && /min-(width|height)\s*:/.test(r.decls));
+  assert.deepEqual(sized.filter((r) => !IN_FOLD(r.media)).map((r) => r.sel), [], "no min-size on the trigger itself outside the ≤720px fold");
+  const foldSized = sized.filter((r) => IN_FOLD(r.media));
+  assert.ok(foldSized.length > 0, "the fold's 44px trigger box exists");
+  for (const r of foldSized) assert.doesNotMatch(r.decls, /min-(width|height)\s*:[^;]*--hit-min/, `${r.sel}: the box never reads --hit-min`);
+  // controls: a min-size outside the fold, and a fold box read from --hit-min, each fail
+  assert.equal(rulesInContext(".note-btn { min-height: 44px; }").filter((r) => isTrigger(r.sel) && /min-height/.test(r.decls) && !IN_FOLD(r.media)).length, 1);
+  assert.match(rulesInContext("@media (max-width: 720px) { .note-btn { min-height: var(--hit-min); } }")[0]!.decls, /--hit-min/);
   const before = rules.filter((r) => r.sel.split(",").some((p) => /^\.note-btn::before$/.test(p.trim())));
   assert.equal(before.length, 1, "one base hit-area rule");
   assert.match(before[0]!.decls, /content:\s*""/);
@@ -560,7 +604,6 @@ test("SL-R8d F5: the Class-C survivors are the exact 17 NAMED sites — by path 
   const expected: Record<string, { fn: string; text: string }[]> = {
     "src/lib/format.ts": [
       { fn: "srcLinkInner", text: "source URL not usable" },
-      { fn: "memberCellHtml", text: "filer not yet joined to a member record — name as printed on the filing" },
       { fn: "lagHtml", text: "filed before the stated trade date" },
       { fn: "lagHtml", text: "days to file unknown" },
     ],
@@ -636,5 +679,8 @@ test("SL-R8d F5: the Class-C survivors are the exact 17 NAMED sites — by path 
     "an undeclared title= site exists in a src/lib module outside the Class-C table — " +
       "convert it, or declare it with its path, function and text in the same commit",
   );
-  assert.equal(total, 18, "the Class-C survivor count is exactly 17 (32 measured - 5 deleted - 10 converted), plus the one signals-v3 M2 site R13 requires");
+  /* launch M3a (copy item congress-27): memberCellHtml's title= on an unjoined
+     filer was CONVERTED to the dagger's own note (keyed on the row's txnId or
+     paper doc), so its entry is deleted here and the count drops by one. */
+  assert.equal(total, 17, "the Class-C survivor count is exactly 16 (32 measured - 5 deleted - 11 converted), plus the one signals-v3 M2 site R13 requires");
 });

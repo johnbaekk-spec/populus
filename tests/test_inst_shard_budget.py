@@ -32,6 +32,7 @@ from populus.inst_budget import (
     FILER_TAIL_SHARDS_RESERVED,
     FILER_V1_TRANSITION_FILES,
     GLOBAL_FILE_CAP,
+    INST_DIRECTORY_SHARDS_MAX,
     M1_MEASURED_PAGES,
     M2_FILER_PAGES,
     M3_RESERVED,
@@ -355,7 +356,7 @@ def test_the_m2_11_measured_projection_fits_with_recorded_headroom():
         measured_files + SITE_CHROME_FILES + M2_FILER_PAGES
         + ACTIVITY_SHARDS_MAX + M3_RESERVED
         + FILER_TAIL_SHARDS_RESERVED + FILER_ROUTING_INDEX_FILES
-        + FILER_V1_TRANSITION_FILES
+        + FILER_V1_TRANSITION_FILES + INST_DIRECTORY_SHARDS_MAX
     )
     # Pre-M2-11 subtotal is restated with all three new file classes zeroed.
     pre_m2_11 = worst_case_file_count(
@@ -363,6 +364,7 @@ def test_the_m2_11_measured_projection_fits_with_recorded_headroom():
         filer_tail_shards=0,
         routing_index_files=0,
         filer_v1_transition_files=0,
+        inst_directory_shards=0,
     )
     assert (pre_m2_11, GLOBAL_FILE_CAP - pre_m2_11) == (11_841, 6_159)
     # M2-12 (Codex F3) added the v2 index tombstone: one more file, so the
@@ -370,8 +372,11 @@ def test_the_m2_11_measured_projection_fits_with_recorded_headroom():
     # together with FILER_V1_TRANSITION_FILES, exactly as this message demands.
     # The refinement review's F3 added the v3 tombstone: 15,940 -> 15,941 and
     # headroom 2,060 -> 2,059, restated here together with the constant.
-    assert (projected, GLOBAL_FILE_CAP - projected) == (15_941, 2_059), (
-        f"headroom is {GLOBAL_FILE_CAP - projected:,}, not the 2,059 this suite"
+    # Launch redesign M7b (LD29) added the /institutional/ directory shard
+    # family, at most INST_DIRECTORY_SHARDS_MAX = 8 files: 15,941 -> 15,949 and
+    # headroom 2,059 -> 2,051, restated here together with the constant.
+    assert (projected, GLOBAL_FILE_CAP - projected) == (15_949, 2_051), (
+        f"headroom is {GLOBAL_FILE_CAP - projected:,}, not the 2,051 this suite"
         " records. Restate the constants and this test together or they will"
         " disagree again"
     )
@@ -467,6 +472,7 @@ def test_every_prior_term_survives_the_new_formula():
         ("filer_tail_shards", FILER_TAIL_SHARDS_RESERVED),
         ("routing_index_files", FILER_ROUTING_INDEX_FILES),
         ("filer_v1_transition_files", FILER_V1_TRANSITION_FILES),
+        ("inst_directory_shards", INST_DIRECTORY_SHARDS_MAX),
     ]:
         without = worst_case_file_count(
             measured_files=M1_MEASURED_PAGES, **{kwarg: 0}
@@ -483,3 +489,41 @@ def test_the_ld10_ceiling_sits_under_the_provider_limit():
     the dashboard mirrors cannot drift from a second source."""
     assert FILER_SHARD_BYTE_CEILING == 1024 * 1024
     assert FILER_SHARD_BYTE_CEILING < MAX_SHARD_BYTES
+
+
+# --- launch redesign M7b (LD29): the /institutional/ directory shard family ---
+
+
+def test_the_directory_shard_term_is_a_load_bearing_parameter():
+    """The directory family is the one dist class the launch redesign adds, so
+    it is summed in the projection by its own size. Mutation guard: a mutant
+    defaulting `inst_directory_shards` to 0, or dropping it from the sum,
+    fails here by exactly the maximum."""
+    with_term = worst_case_file_count(measured_files=M1_MEASURED_PAGES)
+    without = worst_case_file_count(
+        measured_files=M1_MEASURED_PAGES, inst_directory_shards=0
+    )
+    assert with_term - without == INST_DIRECTORY_SHARDS_MAX == 8
+
+
+def test_the_directory_shard_term_is_in_the_reservation_total():
+    """`institutional/` draws against `reserved_file_total()`, and the new
+    family lives under `institutional/data/directory/`, so the reservation
+    must carry it. Mutation guard: dropping the term from the sum fails here."""
+    assert reserved_file_total() == (
+        M2_FILER_PAGES
+        + ACTIVITY_SHARDS_MAX
+        + FILER_TAIL_SHARDS_RESERVED
+        + FILER_ROUTING_INDEX_FILES
+        + FILER_V1_TRANSITION_FILES
+        + INST_DIRECTORY_SHARDS_MAX
+    )
+    assert reserved_file_total() == 5_672
+
+
+def test_the_directory_family_fits_the_measured_production_headroom():
+    """Data build 20261019.2 deployed 17,818 files (182 under the cap). The
+    family's hard maximum must fit inside that measured headroom, or the
+    first build that fills it breaches the self-cap."""
+    measured_20261019 = 17_818
+    assert measured_20261019 + INST_DIRECTORY_SHARDS_MAX <= GLOBAL_FILE_CAP

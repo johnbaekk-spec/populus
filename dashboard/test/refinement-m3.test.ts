@@ -8,7 +8,7 @@ import path from "node:path";
 import { cardFoot, thLabelHtml, thHtml, HEADER_ABBREVIATIONS, identityChipHtml } from "../src/lib/format.ts";
 import { baseStylesheet } from "./lib/styles.ts";
 import { DESIGN_INST_INDEX_HEADS } from "../src/lib/inst-index.ts";
-import { unavailableDesignPanel, plannedLine } from "../src/lib/ui/shared.ts";
+import { unavailableDesignPanel } from "../src/lib/ui/shared.ts";
 import { instStamp, instFiledNote, INST_STAMP_CAVEAT } from "../src/lib/ui/institutional.ts";
 import { RULE3_PATTERNS, visibleText } from "./lib/banned-scan.ts";
 
@@ -38,10 +38,19 @@ test("R21: cardFoot — more than two clauses become a 'How this is computed' di
 });
 
 test("R21: the six footers are converted — no raw card-foot literal is left in their renderers", () => {
+  /* launch M4b (member-16): the member Signals panel's foot and its drawer
+     became ONE header note, so lib/ui/signals.ts no longer renders a foot at
+     all; the property — no raw card-foot literal anywhere — still covers it. */
+  /* Launch copy audit ticker-08: the ticker page's one card foot (the Congress
+     preview's "Traded → filed dates on every row") is retired — both dates
+     show on every row and its "all N rows" link moved into the panel head — so
+     ticker.ts renders no card foot at all, raw or converted. The property kept:
+     no renderer prints a raw card-foot literal. */
+  const footRetired = new Set(["lib/ui/ticker.ts", "lib/ui/signals.ts"]);
   for (const f of ["lib/ui/congress.ts", "lib/ui/ticker.ts", "lib/ui/signals.ts"]) {
     const src = readFileSync(path.join(SRC, f), "utf-8");
     assert.ok(!src.includes('`<div class="card-foot">'), `${f} still renders a raw card-foot`);
-    assert.ok(src.includes("cardFoot({"), `${f} uses cardFoot`);
+    if (!footRetired.has(f)) assert.ok(src.includes("cardFoot({"), `${f} uses cardFoot`);
   }
   const inst = readFileSync(path.join(SRC, "lib/ui/institutional.ts"), "utf-8");
   assert.ok(!inst.includes("caveat-inline\">${esc(INST_STAMP_CAVEAT)}"), "the INST_STAMP_CAVEAT lines go through cardFoot");
@@ -59,7 +68,8 @@ test("R22: abbreviated headers read in full words; the abbreviation is narrow-on
   assert.ok(Object.keys(HEADER_ABBREVIATIONS).every((k) => !/[§†‡¶≈]/.test(k) && !/[§†‡¶≈]/.test(HEADER_ABBREVIATIONS[k]!)), "no mark in the map");
   assert.equal(
     thHtml({ label: "Gross bought ·§", cls: "c-num" }),
-    '<th scope="col" class="c-num has-marks"><span class="th-full">Gross bought</span><span class="th-abbr" aria-hidden="true">Gross purch</span><span class="hang">·§</span></th>',
+    /* launch M1b (LD6): `data-label` carries the mark-free label to the column's card cells */
+    '<th scope="col" class="c-num has-marks" data-label="Gross bought"><span class="th-full">Gross bought</span><span class="th-abbr" aria-hidden="true">Gross purch</span><span class="hang">·§</span></th>',
     "the mark hangs after both halves of the swap",
   );
   const html = thLabelHtml("Source");
@@ -101,7 +111,11 @@ test("R24: an unavailable surface is one line — no frame, no empty table — a
   const html = unavailableDesignPanel("Crowding", "PCT-RANK", ["Measure", "Percentile"], "No holder rows for the selected period.");
   assert.ok(!html.includes("<table") && !html.includes("<section"), "no frame");
   assert.ok(html.includes("No holder rows for the selected period."), "the reason is kept");
-  assert.match(plannedLine(["a", "b"]), /PLANNED<\/span> a · b/);
+  /* launch integration: the "Planned:" line this test also pinned is retired —
+     M4b (member-18) and M6 (filer-06) removed its only two callers. The pages'
+     own pins say no strip renders (design-layout member-18, refinement-m2
+     filer-06), and css-fold RETIRED_CLASSES keeps `.planned-line` from being
+     styled or emitted again. */
 });
 
 test("R24: the filer directory drops the Turnover and Congress overlap columns", () => {

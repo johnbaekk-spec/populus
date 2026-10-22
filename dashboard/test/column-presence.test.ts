@@ -58,41 +58,45 @@ function tableShape(html: string): { cols: string[]; heads: string[]; cells: num
   };
 }
 
-/* ---------- a column empty on page 1 and filled on page 2 is KEPT on both ---------- */
+/* ---------- a column empty on page 1 and filled on a later page is KEPT on both ----------
 
-test("T2.1: a column empty on page 1 and filled on page 2 is kept on both pages, listed in data-columns, with no reason printed", () => {
-  // 60 rows, 50 per page, newest filed first: only the OLDEST row (page 2) carries an owner code.
-  const rows = Array.from({ length: 60 }, (_, i) => txn(i, i === 59 ? { owner: "spouse" } : {}));
+   launch M4b (R25): the member table pages 25 rows and its owner and partial
+   qualifiers moved onto the asset line ("Asset · owner"), so the column this
+   pinned through Owner is pinned through Ticker — the member table's one
+   column that can still be empty. The property (decided over the FULL
+   collection, carried in data-columns, the pager reads it back) is unchanged. */
+
+test("T2.1: a column empty on page 1 and filled on page 3 is kept on both pages, listed in data-columns, with no reason printed", () => {
+  // 60 rows, 25 per page, newest filed first: only the OLDEST row (page 3) names a ticker.
+  const rows = Array.from({ length: 60 }, (_, i) => txn(i, i === 59 ? {} : { ticker: null }));
   const p1 = tableShape(entityTxnTable(rows, { kind: "member", caption: "c", page: 0, ctx: CTX }));
-  const p2 = tableShape(entityTxnTable(rows, { kind: "member", caption: "c", page: 1, ctx: CTX }));
-  for (const [name, p] of [["page 1", p1], ["page 2", p2]] as const) {
-    assert.ok(p.cols.includes("owner"), `${name}: Owner is listed — a row of the collection carries a value`);
+  const p3 = tableShape(entityTxnTable(rows, { kind: "member", caption: "c", page: 2, ctx: CTX }));
+  for (const [name, p] of [["page 1", p1], ["page 3", p3]] as const) {
+    assert.ok(p.cols.includes("ticker"), `${name}: Ticker is listed — a row of the collection carries a value`);
     assert.deepEqual(p.heads, p.cols, `${name}: every listed column has its header, in order`);
     assert.ok(p.cells.every((n) => n === p.cols.length), `${name}: every row has one cell per listed column`);
     assert.equal(p.reason, null, `${name}: a kept column prints no reason`);
   }
-  assert.equal(p1.cells.length, 50);
-  assert.ok(p1.ownerCells.every((t) => t === "—"), "page 1's Owner cells are all empty…");
-  assert.ok(p2.ownerCells.some((t) => /SP/.test(t)), "…and page 2 shows the owner code");
+  assert.equal(p1.cells.length, 25, "the member table pages 25 rows (R25)");
+  assert.equal(p3.cells.length, 10);
 
-  // the client pager renders page 2 through the SAME column set it reads back from data-columns
+  // the client pager renders page 3 through the SAME column set it reads back from data-columns
   const clientRows = entityTxnRowsHtml(rows.slice(50), "member", CTX, [], p1.cols);
   const clientCells = domOf(`<table><tbody>${clientRows}</tbody></table>`).querySelectorAll("tbody tr").map((tr) => tr.children.length);
   assert.ok(clientCells.every((n) => n === p1.cols.length), "the pager's rows match the server's header");
 
-  // control: deciding columns over the VISIBLE page (the defect) would drop Owner on page 1
-  assert.ok(!memberTxnColumns(rows.slice(0, 50)).columns.includes("owner"), "control: a page-scoped decision loses the column");
+  // control: deciding columns over the VISIBLE page (the defect) would drop Ticker on page 1
+  assert.ok(!memberTxnColumns(rows.slice(0, 25)).columns.includes("ticker"), "control: a page-scoped decision loses the column");
 });
 
-/* ---------- an honesty column empty over the full collection is REMOVED, with its reason ---------- */
+/* ---------- a column empty over the full collection is REMOVED, with its reason ---------- */
 
-test("T2.1: an honesty column empty over the full collection is removed and prints its reason", () => {
-  const rows = Array.from({ length: 3 }, (_, i) => txn(i));
+test("T2.1: a column empty over the full collection is removed and prints its reason; an honesty spec cannot drop its reason", () => {
+  const rows = Array.from({ length: 3 }, (_, i) => txn(i, { ticker: null }));
   const t = tableShape(entityTxnTable(rows, { kind: "member", caption: "c", page: 0, ctx: CTX }));
-  assert.ok(!t.cols.includes("owner"), "Owner is not listed");
-  assert.ok(!t.heads.includes("owner"), "…not rendered");
-  assert.equal(t.ownerCells.length, 0, "…and no row carries an Owner cell");
-  assert.equal(t.reason, "Owner: no row carries a partial-sale qualifier or a spouse (SP), dependent (DC) or joint (JT) owner code.");
+  assert.ok(!t.cols.includes("ticker"), "Ticker is not listed");
+  assert.ok(!t.heads.includes("ticker"), "…not rendered");
+  assert.equal(t.reason, "Ticker: no row names a ticker; each filed asset is in the Asset column.");
 
   // control: an honesty spec cannot be declared without its reason — the renderer refuses it
   const noReason: ColumnSpec<TxnRow> = { key: "owner", honesty: true, hasValue: (r) => r.owner === "spouse" };
@@ -102,22 +106,21 @@ test("T2.1: an honesty column empty over the full collection is removed and prin
   assert.deepEqual(p.emptied, [{ key: "owner", reason: "Owner: none." }]);
 });
 
-/* ---------- "partial" alone keeps the Owner column ---------- */
+/* ---------- the owner and partial qualifiers ride on the asset line, so no column can drop them ---------- */
 
-test("T2.1: a table whose only owner-cell content is the partial-sale qualifier keeps the Owner column", () => {
-  // no owner code anywhere; one partial sale — ownerNote prints "partial" in the Owner cell (H-18)
-  const rows = [txn(0), txn(1, { side: "sale_partial" }), txn(2)];
-  const t = tableShape(entityTxnTable(rows, { kind: "member", caption: "c", page: 0, ctx: CTX }));
-  assert.ok(t.cols.includes("owner"), "the partial qualifier is Owner content");
-  assert.ok(t.ownerCells.some((c) => /partial/.test(c)), "and the cell shows it");
-  assert.equal(t.reason, null);
-
-  // control: a hasValue that checks owner codes only drops the column — and with it the qualifier
-  const codesOnly: ColumnSpec<TxnRow> = {
-    key: "owner", honesty: true, emptyReason: "x",
-    hasValue: (r) => r.owner === "spouse" || r.owner === "child" || r.owner === "joint",
-  };
-  assert.ok(!presentColumns(rows, [codesOnly]).columns.includes("owner"), "control: owner codes only would lose it");
+test("T2.1 → launch M4b (R25): the partial-sale qualifier and each owner code print on their own row's asset line", () => {
+  const rows = [txn(0), txn(1, { side: "sale_partial" }), txn(2, { owner: "joint" })];
+  const root = domOf(entityTxnTable(rows, { kind: "member", caption: "c", page: 0, ctx: CTX, notes: { scope: "member-txns" } }));
+  const assets = root.querySelectorAll("tbody td.c-asset").map((td) => visibleText(td).trim());
+  assert.equal(assets.length, 3, "every row has its Asset · owner cell");
+  assert.match(assets[1]!, /partial/, "the partial sale says so on its row");
+  assert.match(assets[2]!, /JT/, "the joint owner code is on its row");
+  assert.doesNotMatch(assets[0]!, /partial|SP|DC|JT/, "a self-owned purchase carries no qualifier");
+  const head = root.querySelectorAll("thead th").find((th) => th.getAttribute("data-col") === "asset")!;
+  assert.match(visibleText(head), /Asset · owner/);
+  assert.match(head.querySelector(".note-pop")!.textContent, /spouse \(SP\), dependent children \(DC\), and joint accounts \(JT\)/, "the header names the codes");
+  // control: no Owner column exists to be emptied — the presence rule cannot remove a qualifier
+  assert.ok(!memberTxnColumns(rows).columns.includes("owner"));
 });
 
 /* ---------- a flags column emptied by hoisting names the hoisted flags ---------- */

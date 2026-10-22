@@ -178,7 +178,9 @@ test("D-2 body: rules, receipts, lag caveat, and withheld kinds all render", asy
   assert.match(html, /eFD&nbsp;↗/);
   assert.ok(html.includes("WITHHELD"), "withheld kinds render as withheld");
   assert.ok(html.includes(LAG_CAVEAT.slice(0, 40)));
-  assert.match(html, /coverage window/);
+  /* launch copy item signals-02: the window is stated by its dates ("the last
+     N days by filed date (from → to)"), no longer under the words "coverage window" */
+  assert.ok(html.includes(`the last ${art.retentionDays} days by filed date (${art.coverageFrom} → ${art.coverageTo})`), "the coverage window, by its dates");
   const { ruleBookHtml } = await import("../src/lib/ui/index.ts");
   const book = ruleBookHtml(art);
   assert.match(book, /Signal rule book/);
@@ -296,7 +298,8 @@ test("review r2-F3: tombstones never render as active — separate section, sepa
   // build", to the artifact.
   assert.doesNotMatch(html, /Superseded — no longer in the current view/);
   assert.match(html, /1 signal from an earlier build left the window/);
-  assert.match(html, /<a href="\/signals\/data\/signals\.v1\.json" id="signal-changes-foot">changes since last build ↗<\/a>/);
+  /* copy item signals-09: the link label is one word */
+  assert.match(html, /<a href="\/signals\/data\/signals\.v1\.json" id="signal-changes-foot">Changes ↗<\/a>/);
   // The active S-1 count excludes the tombstone: actives in window minus one.
   const activeS1 = b.signals.filter((s) => s.kind === "s1-large" && s.status === "active").length;
   // The rule book's HITS cell (Methodology, signals-v3 M2) counts actives only…

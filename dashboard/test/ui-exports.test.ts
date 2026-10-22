@@ -60,7 +60,6 @@ const VALUE_EXPORTS = [
   "memberSignalsPanel",
   "memberStatTiles",
   "memberV2Sections",
-  "moduleCard",
   "notableRailHtml",
   "pickSpecimen",
   "qoqChipHtml",
@@ -79,7 +78,20 @@ const VALUE_EXPORTS = [
   "HOME_TILE_ROWS",
   "congressTileHtml",
   "movesTileHtml",
-  "signalsTileHtml",
+  /* launch M2 (Home A, D1): the hero's kicker, its "Try" chips and their
+     filer, the hero's copy, the figure functions and the four-figure ledger,
+     the lead cards, the trust strip and the body's order. Nine runtime
+     symbols in; `moduleCard` and `signalsTileHtml` out with the Modules grid
+     and the Signals tile. */
+  "HOME_KICKER",
+  "homeTryChips",
+  "largestNotableFiler",
+  "homeHeroCopyHtml",
+  "homeFigures",
+  "homeLedgerHtml",
+  "homeLeadHtml",
+  "homeTrustHtml",
+  "homeSectionsHtml",
   "SIGNAL_HITS_PAGE_SIZE",
   "hitRowHtml",
   "hitsRangeText",
@@ -149,6 +161,20 @@ const VALUE_EXPORTS = [
   "signalsOverlapMethodHtml",
   "signalsPlaybooksHtml",
   "signalsPlaybooksMethodHtml",
+  /* launch M4a (LD26, pagination-and-counts.md rule 8): the member page's two
+     held-row functions — the ONE row function per table that the server and
+     the client binder both render through — and the names the page registers
+     them under. Four runtime symbols in, none out. */
+  "memberNetRowHtml",
+  "memberHistoryRowHtml",
+  "MEMBER_NET_ROWS",
+  "MEMBER_HISTORY_ROWS",
+  /* launch M4b (R25): the member trades page size (25), its side filter and
+     its count, shared by the server table, the pager and the /e/ driver.
+     Three runtime symbols in, two types. */
+  "MEMBER_PAGE_SIZE",
+  "memberSideRows",
+  "memberTradesCountText",
 ] as const;
 
 const TYPE_EXPORTS = [
@@ -157,7 +183,7 @@ const TYPE_EXPORTS = [
   "BuildStamps",
   "EntityTableOpts",
   "MemberV2Deps",
-  "ModuleCardStats",
+  // launch M2: `ModuleCardStats` left with `moduleCard`
   "RankingAlternatives",
   // refinement 20260910 fix, D5
   "ChangesKindFilter",
@@ -169,18 +195,21 @@ const TYPE_EXPORTS = [
   // SIGNALS-CLARITY M2: one hits-table line, and the hits filter
   "HitLine",
   "HitFilter",
+  // launch M4b: the member side filter and the compact layout's signals fact
+  "MemberSide",
+  "MemberSignalsSummary",
 ] as const;
 
-test("ui entry exports exactly the 101 reconciled runtime symbols", async () => {
+test("ui entry exports exactly the 115 reconciled runtime symbols", async () => {
   const ui = await loadUi();
   const actual = Object.keys(ui)
     .filter((k) => k !== "default" && k !== "module.exports")
     .sort();
   assert.deepEqual(actual, [...VALUE_EXPORTS].sort());
-  assert.equal(VALUE_EXPORTS.length, 101, "70 through M1, the twelve M2 exports, the two M3 exports, SIGNALS-CLARITY M2's five in, one out, SIGNALS-CLARITY M3's monthlyFlowPanel, signals-v3 M2's five, signals-v3 M3's one, signals-v4 M2's four in, two out, and signals-v4 M3's four in");
+  assert.equal(VALUE_EXPORTS.length, 115, "70 through M1, the twelve M2 exports, the two M3 exports, SIGNALS-CLARITY M2's five in, one out, SIGNALS-CLARITY M3's monthlyFlowPanel, signals-v3 M2's five, signals-v3 M3's one, signals-v4 M2's four in, two out, signals-v4 M3's four in, launch M4a's four in, launch M4b's three in, and launch M2's nine in, two out");
 });
 
-test("ui entry exports the 15 reconciled type-only symbols (116 total)", () => {
+test("ui entry exports the 16 reconciled type-only symbols (131 total)", () => {
   const lib = path.resolve(import.meta.dirname, "..", "src", "lib");
   const entry = existsSync(path.join(lib, "ui", "index.ts"))
     ? path.join(lib, "ui", "index.ts")
@@ -192,5 +221,5 @@ test("ui entry exports the 15 reconciled type-only symbols (116 total)", () => {
     const declared = new RegExp(`export interface ${t}\\b|\\btype ${t}\\b`);
     assert.ok(declared.test(src), `type export ${t} missing from ${path.basename(entry)}`);
   }
-  assert.equal(VALUE_EXPORTS.length + TYPE_EXPORTS.length, 116, "the reconciled surface is 116 (83 through M1 + 12 M2 + 2 M3 runtime exports, then SIGNALS-CLARITY M2: +5 −1 runtime, +2 types, then SIGNALS-CLARITY M3: +1 runtime, monthlyFlowPanel, then signals-v3 M2: +5 runtime, then signals-v3 M3: +1 runtime, tickerOnSignalsHtml, then signals-v4 M2: +4 −2 runtime, then signals-v4 M3: +4 runtime)");
+  assert.equal(VALUE_EXPORTS.length + TYPE_EXPORTS.length, 131, "the reconciled surface is 131 (83 through M1 + 12 M2 + 2 M3 runtime exports, then SIGNALS-CLARITY M2: +5 −1 runtime, +2 types, then SIGNALS-CLARITY M3: +1 runtime, monthlyFlowPanel, then signals-v3 M2: +5 runtime, then signals-v3 M3: +1 runtime, tickerOnSignalsHtml, then signals-v4 M2: +4 −2 runtime, then signals-v4 M3: +4 runtime, then launch M4a: +4 runtime, then launch M4b: +3 runtime, +2 types, then launch M2: +9 −2 runtime, −1 type)");
 });

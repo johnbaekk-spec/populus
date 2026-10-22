@@ -78,6 +78,27 @@ test("default render: value descending, one active aria-sort, both rows present"
   }
 });
 
+/* launch M7b (R33) → launch review (weight item 5): this lane's seed has two
+   holders, so nothing is held and a "print lists every held row" check here
+   could not fail. The held-row print check runs against the real dist in
+   test/geometry/holders-print.spec.ts (with a re-planted control). What this
+   lane can still claim is stated as such: the seed holds no rows, and paper
+   keeps every server row. */
+test("launch M7b (R33): on the two-holder seed nothing is held, and print keeps every server row", async ({ page }) => {
+  await openRoute(page);
+  const ROWS = "[data-holders-body] tr:not(.unranked-sep), #ticker-holders-rows tr";
+  const held = await page.locator('script[type="application/json"][data-held-for]').count();
+  expect(held, "the seed holds no rows: the held-row print check lives in the geometry lane").toBe(0);
+  const inDom = await page.locator(ROWS).count();
+  expect(inDom).toBeGreaterThan(0);
+  await page.evaluate(() => window.dispatchEvent(new Event("beforeprint")));
+  await page.emulateMedia({ media: "print" });
+  const printed = await page.locator(ROWS).evaluateAll((trs) => trs.filter((tr) => tr.getClientRects().length > 0).length);
+  expect(printed, "every server row on paper").toBe(inDom);
+  await page.evaluate(() => window.dispatchEvent(new Event("afterprint")));
+  await page.emulateMedia({ media: "screen" });
+});
+
 test("clicking the active value header reverses the rows — a real browser reorder", async ({ page }) => {
   await openRoute(page);
   await page.locator('th[data-sort="value"] button').click();
@@ -119,6 +140,14 @@ test("L9: the sort button hit-tests to --hit-min in a real layout, without infla
   for (const w of [390, 1440]) {
     await page.setViewportSize({ width: w, height: 900 });
     await openRoute(page);
+    /* launch D4 (phone cards, entities.css "the head: folded, never removed;
+       unfolded while it holds focus"): at 390 the head is folded through the
+       clip pattern until it holds focus, so the sort button is hit-tested the
+       way a phone reader reaches it — focused, its head unfolded. */
+    if (w <= 720) {
+      await page.locator("th[data-sort] .th-sort").first().focus();
+      expect(await page.evaluate(() => document.activeElement?.matches("th[data-sort] .th-sort") ?? false), "the folded head's sort button takes focus").toBe(true);
+    }
     expect(await hitMisses(page, 'th[data-sort] .th-sort'), `at ${w}px`).toEqual([]);
   }
 });
@@ -191,6 +220,17 @@ test("SL-R24/T12 / L9: the holders page's note anchors hit-test to --hit-min at 
    required to measure something and to find nothing — a check still pending
    in the milestone map is left out by `isPending` (M1 left G6 out that way;
    from M2 it runs here too). */
+/* launch D4 (design-principles §5 reversal record): at ≤720px every table is a
+   CARD — its head folded, each row a wrapping line of cells. The checks that
+   measure a table's column layout (G1, G6, G8, G10, headFont) measure the
+   card's FORM of the same property there (geometry.ts, read off the cascade,
+   as ledger.spec.ts runs them at 390 since the launch gate fix round): a
+   numeric cell prints its own column's label (G1), no column is empty in
+   every card (G6), no card sits under the hit square (G8), the card keeps its
+   one gap, its insets and its kind edge (G10), and the printed labels read
+   the label type (headFont). So the holders page is held to them at 390 as
+   well as at 1440 — never skipped at the phone width (launch integration;
+   the phone audit, phone.spec.ts view `holders`, adds R4–R7 and R40). */
 const HOLDERS_CHECKS: { id: CheckId; fn: PredicateName; arg?: unknown; widths?: number[] }[] = [
   { id: "G1", fn: "g1" },
   { id: "G2", fn: "g2", arg: { exempt: [...g2Exemptions()] } },

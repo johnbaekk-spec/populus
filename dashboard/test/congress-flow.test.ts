@@ -22,9 +22,10 @@ import {
   completenessLabel,
 } from "../src/lib/derive.ts";
 import type { TxnRow } from "../src/lib/format.ts";
-import { domOf, visibleText } from "./lib/ledger-dom.ts";
+import { visibleText } from "./lib/ledger-dom.ts";
 import { installDom, type MiniElement } from "./lib/mini-dom.ts";
 import { initMonthlyFlowToggle } from "../src/scripts/congress-sections.ts";
+import { drawnMonthlyFlow } from "./lib/held-views.ts";
 
 const SRC = path.resolve(import.meta.dirname, "..", "src");
 const BUILD = "2026-08-17";
@@ -59,7 +60,12 @@ const ROWS: TxnRow[] = [
 ];
 
 const HTML = monthlyFlowPanel(ROWS, BUILD);
-const ROOT = domOf(HTML);
+/* Launch F2 (R35, LD31): the served panel carries only the default view; the
+   three others are island data the toggle draws on first use. The tests below
+   read the panel as a reader has it once every view has been shown — drawn
+   by the REAL toggle through the binder (`drawnMonthlyFlow`) — and the test
+   "launch F2: the served panel …" pins the served bytes themselves. */
+const ROOT = drawnMonthlyFlow(HTML);
 const variant = (v: "stocks" | "all"): MiniElement => ROOT.querySelector(`.mf-variant[data-flow-variant="${v}"]`)!;
 const text = (el: MiniElement | null): string => (el ? visibleText(el).replace(/\s+/g, " ").trim() : "");
 
@@ -73,8 +79,17 @@ test("T15/R16: the panel is 'Monthly flow', 36 month columns per variant, purcha
     for (const c of cols) {
       assert.ok(c.querySelector(".rb-up") && c.querySelector(".rb-axis") && c.querySelector(".rb-down"), "each column has an up half, the axis and a down half");
     }
-    // one breadth column per month, too
-    assert.equal(variant(v).querySelectorAll(".mf-breadth .mf-bcol").length, 36);
+    /* REVERSED by launch M3b (R21, LD23): the breadth strip is retired; the
+       same per-month member counts are the default Members view — two lines
+       (with a purchase, with a sale) on a labelled member axis. The property
+       kept: every month's breadth is drawn and stated (the table below). */
+    const members = variant(v).querySelector('.mf-measure[data-flow-measure="members"]')!;
+    assert.ok(members && !members.hidden, `${v}: the Members view is the default`);
+    assert.ok(members.querySelector("polyline.mf-line-buy") && members.querySelector("polyline.mf-line-sell"), `${v}: one line per side`);
+    const dollars = variant(v).querySelector('.mf-measure[data-flow-measure="dollars"]')!;
+    assert.ok(dollars && dollars.hidden, `${v}: the Dollars view is built and hidden`);
+    assert.ok(dollars.querySelector(".rb-track"), `${v}: the Dollars view is the bar ribbon`);
+    assert.equal(variant(v).querySelectorAll(".mf-table tbody tr").length, 36, `${v}: every month's breadth is stated`);
   }
   const jul = variant("stocks").querySelectorAll(".rb-track .rb-col")[34]!;
   assert.ok(jul.querySelector(".rb-up .rb-buy"), "July's purchases sit above the axis");
@@ -119,7 +134,7 @@ test("review F1: under an outlier scale a small closed range is drawn to its TRU
     txn({ txnId: "aug-buy", traded: "2026-08-05", low: 1001, high: 15000 }),
     txn({ txnId: "mid", traded: "2026-05-05", low: 1000001, high: 5000000 }),
   ];
-  const root = domOf(monthlyFlowPanel(rows, BUILD));
+  const root = drawnMonthlyFlow(monthlyFlowPanel(rows, BUILD));
   const EPS = 1e-6;
   for (const [v, axisMax] of [["stocks", 50_000_000], ["all", 100_000_000]] as const) {
     const el = root.querySelector(`.mf-variant[data-flow-variant="${v}"]`)!;
@@ -166,7 +181,7 @@ test("review F1: under an outlier scale a small closed range is drawn to its TRU
   assert.match(css, /\.ribbon-monthly \.mf-tick \{ height: [12]px;/, "a fixed 1–2px mark");
   assert.match(css, /\.ribbon-monthly \.rb-bar \{[^}]*border: 0; \}/, "no border inflates a monthly bar");
   // a window whose ranges are all visible draws no tick and explains none
-  const plain = domOf(monthlyFlowPanel([txn({ traded: "2026-07-10" })], BUILD));
+  const plain = drawnMonthlyFlow(monthlyFlowPanel([txn({ traded: "2026-07-10" })], BUILD));
   assert.equal(plain.querySelectorAll(".mf-tick").length, 0);
   assert.ok(!/thin tick/.test(text(plain.querySelector(".rb-caption"))));
 });
@@ -192,7 +207,7 @@ test("T15/R16: an open sum is solid to its provable minimum, then a FIXED-height
     ],
     BUILD,
   );
-  const cols = domOf(html).querySelector('.mf-variant[data-flow-variant="stocks"]')!.querySelectorAll(".rb-track .rb-col");
+  const cols = drawnMonthlyFlow(html).querySelector('.mf-variant[data-flow-variant="stocks"]')!.querySelectorAll(".rb-track .rb-col");
   const styles = (col: MiniElement, half: string) => col.querySelectorAll(`${half} .rb-bar`).map((b) => `${b.getAttribute("class")} | ${b.getAttribute("style") ?? ""}`);
   // axis max = the closed high, $15,000; an open minimum of $1,000 is 6.66% of it (floored, never past the bound)
   assert.deepEqual(styles(cols[33]!, ".rb-up"), ["rb-bar rb-buy | bottom:0;height:6.66%", "rb-bar rb-buy rb-hatch mf-cap | bottom:6.66%"]);
@@ -203,7 +218,7 @@ test("T15/R16: an open sum is solid to its provable minimum, then a FIXED-height
   // a closed sum has neither mark, and no hatch at all
   assert.deepEqual(styles(cols[34]!, ".rb-up"), ["rb-bar rb-buy | bottom:6.66%;height:93.34%"]);
   // no bar in the monthly ribbon is hatched by a percentage of the axis
-  for (const b of domOf(html).querySelectorAll(".rb-hatch")) assert.ok(!/height/.test(b.getAttribute("style") ?? ""), "a hatch never has a dollar height");
+  for (const b of drawnMonthlyFlow(html).querySelectorAll(".rb-hatch")) assert.ok(!/height/.test(b.getAttribute("style") ?? ""), "a hatch never has a dollar height");
   for (const b of ROOT.querySelectorAll(".rb-hatch")) assert.ok(!/height/.test(b.getAttribute("style") ?? ""));
 
   // the cap and the stub are ONE fixed CSS height, with no closing edge on the far side
@@ -213,18 +228,18 @@ test("T15/R16: an open sum is solid to its provable minimum, then a FIXED-height
   assert.match(css, /\.ribbon-monthly \.rb-down \{ flex: 1; \}/, "purchases and sales share one scale");
 
   // the caption says what each mark means, in plain words, only where the mark is drawn
-  const cap = text(domOf(html).querySelector('.mf-variant[data-flow-variant="stocks"] .rb-caption'));
+  const cap = text(drawnMonthlyFlow(html).querySelector('.mf-variant[data-flow-variant="stocks"] .rb-caption'));
   assert.match(cap, /a hatched cap means no upper bound is disclosed \(an open-ended or unparsed amount\) — the bar shows the provable minimum only, and the cap's height is not a dollar amount/);
   assert.match(cap, /a hatched stub at the axis means amounts were filed but none parsed — never counted as \$0/);
   assert.ok(!/then hatched/.test(cap), "the hatch-to-the-top wording is gone");
   const fixtureCap = text(variant("stocks").querySelector(".rb-caption"));
   assert.match(fixtureCap, /a hatched cap means/);
   assert.ok(!/hatched stub/.test(fixtureCap), "no stub is drawn in this fixture, so none is explained");
-  const closedOnly = text(domOf(monthlyFlowPanel([txn({ traded: "2026-07-10" })], BUILD)).querySelector(".rb-caption"));
+  const closedOnly = text(drawnMonthlyFlow(monthlyFlowPanel([txn({ traded: "2026-07-10" })], BUILD)).querySelector(".rb-caption"));
   assert.ok(!/hatched/.test(closedOnly), "a window with only closed sums explains no hatch");
 
   // the assistive-technology table says the state in words
-  const rows = domOf(html).querySelector('.mf-variant[data-flow-variant="stocks"] table.mf-table')!.querySelectorAll("tbody tr");
+  const rows = drawnMonthlyFlow(html).querySelector('.mf-variant[data-flow-variant="stocks"] table.mf-table')!.querySelectorAll("tbody tr");
   const cells = (i: number) => rows[i]!.querySelectorAll("td").map((c) => text(c));
   assert.equal(cells(33)[0], "Over $1K (open — no upper bound disclosed)");
   assert.equal(cells(32)[1], "Over $1K (open — no upper bound disclosed)");
@@ -301,7 +316,7 @@ test("T16/R17: the caption prints the method, the measured CDF points, the sampl
   assert.match(line, /Shaded: under 90% filed \(est\.\); darker: the month ended fewer than 45 days before the build/);
   assert.ok(variant("stocks").querySelector('.mf-completeness a[href="/methodology/#monthly-flow"]'), "links the method");
   // with no mature sample the panel says so and labels nothing as an estimate
-  const bare = domOf(monthlyFlowPanel(ROWS.filter((r) => !r.txnId.startsWith("lag")), BUILD));
+  const bare = drawnMonthlyFlow(monthlyFlowPanel(ROWS.filter((r) => !r.txnId.startsWith("lag")), BUILD));
   assert.match(text(bare.querySelector(".mf-completeness")), /Completeness is not estimated: no row traded 2022-08-17 to 2025-07-17 carries a filing lag/);
   assert.ok(!/≈\d+% filed/.test(text(bare.querySelector(".mf-shade-labels"))), "no estimate is printed from nothing");
   assert.match(text(bare.querySelector(".mf-shade-labels")), /2026-08 completeness not estimated · inside the 45-day window/);
@@ -334,6 +349,62 @@ test("T17/R18: both variants render at build time; exactly one is visible by def
   } finally {
     bare.restore();
   }
+});
+
+/* ---------- launch F2 (R35, LD31): the hidden views are island data ---------- */
+
+test("launch F2 (R35, LD31): the served panel carries the default view alone; Dollars and All assets ride in the one island and the toggle draws each once, byte for byte the server's renderer", async () => {
+  const { monthlyFlowView, monthlyDollarsViewHtml, monthlyVariantViewHtml, MONTHLY_FLOW_HELD } = await import("../src/lib/ui/congress.ts");
+  const { parseHeldIsland } = await import("../src/lib/held-rows.ts");
+  const { withTableRoles } = await import("../src/lib/format.ts");
+  // the served bytes: no bar, no All-assets body — two empty, hidden shells and two islands
+  assert.doesNotMatch(HTML, /class="rb-col/, "no Dollars bar is in the served page");
+  assert.match(HTML, /<div class="mf-measure" data-flow-measure="dollars" id="mf-stocks-dollars" hidden><\/div>/);
+  assert.match(HTML, /<div class="mf-variant" data-flow-variant="all" id="mf-all" hidden><\/div>/);
+  const island = (root: string, render: string) => {
+    const m = new RegExp(`<script type="application/json" data-held-for="${root}" data-held-render="${render}">([\\s\\S]*?)</script>`).exec(HTML);
+    assert.ok(m, `the ${render} island for #${root}`);
+    const body = parseHeldIsland(m![1]!)!;
+    assert.equal(body.offset, 0);
+    assert.equal(body.rows.length, 1, "one view per island");
+    return body.rows[0] as ReturnType<typeof monthlyFlowView>;
+  };
+  const cdf = lagCdf(ROWS, BUILD);
+  const stocks = monthlyFlowView("stocks", monthlyFlow(ROWS, BUILD, 36, { listedStockOnly: true }), cdf, BUILD);
+  const all = monthlyFlowView("all", monthlyFlow(ROWS, BUILD, 36), cdf, BUILD);
+  const heldStocks = island("mf-stocks-dollars", MONTHLY_FLOW_HELD.dollars);
+  const heldAll = island("mf-all", MONTHLY_FLOW_HELD.variant);
+  // the island carries every input the renderer reads: the JSON round trip renders the same bytes
+  assert.equal(monthlyDollarsViewHtml(heldStocks), monthlyDollarsViewHtml(stocks));
+  assert.equal(monthlyVariantViewHtml(heldAll), monthlyVariantViewHtml(all));
+  // drawn on first use, through the binder's one render path, once
+  const { doc, restore } = installDom(`<main id="congress-page">${HTML}</main>`);
+  try {
+    assert.equal(initMonthlyFlowToggle(), true);
+    const shell = doc.getElementById("mf-stocks-dollars")!;
+    assert.equal(shell.innerHTML, "", "nothing is drawn before the reader asks");
+    doc.querySelector('[data-flow-measure-toggle="dollars"]')!.click();
+    assert.equal(shell.innerHTML, "\n" + monthlyDollarsViewHtml(stocks), "the Dollars view: the server's bytes — its bars, readout and axis");
+    assert.equal(shell.hidden, false);
+    doc.querySelector('[data-flow-measure-toggle="members"]')!.click();
+    doc.querySelector('[data-flow-measure-toggle="dollars"]')!.click();
+    assert.equal(doc.querySelectorAll("#mf-stocks-dollars .rb-track").length, 1, "a second press draws nothing again");
+    doc.querySelector('[data-flow-measure-toggle="members"]')!.click();
+    doc.querySelector('[data-flow-toggle="all"]')!.click();
+    assert.equal(doc.getElementById("mf-all")!.innerHTML, "\n" + withTableRoles(monthlyVariantViewHtml(all)), "All assets: the server's variant, with the page's table roles");
+    doc.querySelector('[data-flow-measure-toggle="dollars"]')!.click();
+    assert.deepEqual(
+      doc.querySelectorAll(".mf-measure").filter((m) => !m.hidden && !m.closest(".mf-variant")!.hidden).map((m) => m.closest(".mf-variant")!.getAttribute("data-flow-variant") + ":" + m.getAttribute("data-flow-measure")),
+      ["all:dollars"],
+      "exactly the view the toggles name is showing",
+    );
+  } finally {
+    restore();
+  }
+  // control: an island whose data drifted from the server's renders other bytes, so the comparison above can fail
+  const drifted = JSON.parse(JSON.stringify(stocks)) as typeof stocks;
+  drifted.flow.months[34]!.buy = { kind: "closed", low: 1001, high: 50000, rows: 1, undisclosed: 0 };
+  assert.notEqual(monthlyDollarsViewHtml(drifted), monthlyDollarsViewHtml(stocks));
 });
 
 test("T17/R18: the toggle reads no rows and fetches nothing — the section module stays fetch-free", () => {
@@ -373,12 +444,110 @@ test("T18/R19: a visually-hidden (not display:none, not [hidden]) table lists ev
   assert.match(css, /\.visually-hidden\s*\{[^}]*clip/, "the visually-hidden class is the clip pattern");
 });
 
-test("T15/R16: the panel sits immediately before 'Leaders · net disclosed flow' on /congress, rendered from build.txns", () => {
+/* REVERSED by launch M3b (R21): Monthly flow moved from before the rankings
+   band to the END of /congress/, after the feed (record: the launch decision
+   record, "Monthly flow placement"). The property kept: one panel, rendered
+   from build.txns at the build date. */
+test("T15/R16 → launch M3b: the panel closes /congress, after the feed, rendered from build.txns", () => {
   const page = readFileSync(path.join(SRC, "pages", "congress", "index.astro"), "utf-8");
   assert.match(page, /const monthlyFlowHtml = monthlyFlowPanel\(build\.txns, build\.generatedAtDate\);/);
-  assert.match(page, /<Fragment set:html=\{monthlyFlowHtml\} \/>\s*<div class="design-rankings" id="congress-leaders-band">/, "directly before band C1, whose first cell is Leaders");
-  const leaders = page.indexOf('heading: "Leaders · net disclosed flow"');
-  assert.ok(leaders > 0);
+  const flowAt = page.indexOf("<Fragment set:html={monthlyFlowHtml} />");
+  const feedEnd = page.indexOf("</section>", page.indexOf('id="feed-section"'));
+  assert.ok(flowAt > feedEnd && feedEnd > 0, "after the feed section");
+  assert.ok(flowAt > page.indexOf('id="congress-leaders-band"'), "after the boards");
+  assert.equal((page.match(/set:html=\{monthlyFlowHtml\}/g) ?? []).length, 1, "rendered once");
+  assert.ok(page.indexOf("</main>") > flowAt && !/<(?:section|div)\b/.test(page.slice(flowAt, page.indexOf("</main>")).replace(/<script[\s\S]*?\/>/g, " ").replace("<Fragment set:html={monthlyFlowHtml} />", "")), "nothing renders after it");
+});
+
+/* ---------- launch M3b: the Members chart, its axis, the readouts ---------- */
+
+test("R11/R21: the Members chart has a labelled y-axis over a nice ceiling, years and Apr/Jul/Oct on the x-axis", async () => {
+  const { memberAxisTicks } = await import("../src/lib/ui/congress.ts");
+  assert.deepEqual(memberAxisTicks(35), { top: 40, ticks: [0, 10, 20, 30, 40] });
+  assert.deepEqual(memberAxisTicks(3), { top: 3, ticks: [0, 1, 2, 3] });
+  assert.deepEqual(memberAxisTicks(0), { top: 1, ticks: [0, 1] }, "an empty window still draws an axis");
+  assert.deepEqual(memberAxisTicks(101), { top: 150, ticks: [0, 50, 100, 150] });
+  const members = variant("stocks").querySelector('.mf-measure[data-flow-measure="members"]')!;
+  const flow = monthlyFlow(ROWS, BUILD, 36, { listedStockOnly: true });
+  const max = Math.max(...flow.months.flatMap((m) => [m.buyers, m.sellers]));
+  const { ticks } = memberAxisTicks(max);
+  assert.deepEqual(members.querySelectorAll(".mf-ytick").map((t) => text(t)), ticks.map(String), "every tick is labelled");
+  assert.equal(text(members.querySelector(".mf-yt")), "members", "the axis names its unit");
+  const x = members.querySelectorAll(".mf-x").map((t) => text(t));
+  assert.ok(x.includes("2024") && x.includes("2025") && x.includes("2026"), "years at January");
+  assert.ok(["Apr", "Jul", "Oct"].every((m) => x.includes(m)), "Apr/Jul/Oct between");
+  assert.ok(!x.includes("Feb") && !x.includes("Mar"), "no other month labels");
+  // the dollar view labels its axis too: $0 at the axis, the top both ways
+  const dollarAxis = variant("stocks").querySelectorAll(".mf-dollar-axis span").map((t) => text(t));
+  assert.deepEqual(dollarAxis, ["$1M", "$0", "$1M"]);
+});
+
+test("R21/LD23: the 'Filling in' zone covers the months still filling in, labelled an estimate, and dashes both lines there", () => {
+  const cdf = lagCdf(ROWS, BUILD);
+  const flow = monthlyFlow(ROWS, BUILD, 36, { listedStockOnly: true });
+  const first = flow.months.findIndex((m) => estimatedCompleteness(cdf, m, BUILD).tone !== null);
+  const members = variant("stocks").querySelector('.mf-measure[data-flow-measure="members"]')!;
+  const zone = members.querySelector(".mf-fill")!;
+  assert.ok(zone, "the zone renders");
+  assert.equal(text(zone), "Filling in (est.)");
+  assert.equal(zone.getAttribute("style"), `left:${((first / 36) * 100).toFixed(2)}%;width:${(((36 - first) / 36) * 100).toFixed(2)}%`);
+  const dashed = members.querySelectorAll("polyline.mf-line-est");
+  assert.equal(dashed.length, 2, "both lines dash inside the zone");
+  // the solid line ends at the last complete month; the dash joins it there
+  const points = (el: MiniElement) => (el.getAttribute("points") ?? "").split(" ").length;
+  const solidBuy = members.querySelectorAll("polyline.mf-line-buy").find((l) => !l.classList.contains("mf-line-est"))!;
+  assert.equal(points(solidBuy), first, "solid through the month before the zone");
+  assert.equal(points(dashed[0]!), 36 - first + 1, "dashed from that month to the newest");
+});
+
+test("R21/LD13: every month carries its readout in both measures; the readout repeats the table's numbers", () => {
+  const rows = variant("stocks").querySelectorAll(".mf-table tbody tr");
+  const jul = rows[34]!;
+  assert.equal(jul.getAttribute("data-ro-members"), "2026-07 · 1 member with a purchase · 2 with a sale · ≈33% filed (est.)");
+  assert.match(jul.getAttribute("data-ro-dollars")!, /^2026-07 · purchases \$1K–\$15K · sales \$16K–\$65K · net −\$64\.0K to −\$1\.0K · ≈33% filed \(est\.\)$/);
+  // a complete month states no estimate
+  assert.doesNotMatch(rows[10]!.getAttribute("data-ro-members")!, /filed \(est\.\)/);
+  // the server prints the newest month's readout, so a reader without JavaScript sees one
+  const ro = variant("stocks").querySelector('.mf-measure[data-flow-measure="members"] .mf-readout')!;
+  assert.equal(text(ro), rows[35]!.getAttribute("data-ro-members"));
+  assert.equal(ro.getAttribute("role"), "status");
+  // the plot is ONE control: one Tab stop per measure, never a button per month
+  for (const m of variant("stocks").querySelectorAll(".mf-measure")) {
+    assert.equal(m.querySelectorAll(".mf-hit").length, 1);
+    assert.equal(m.querySelector(".mf-hit")!.getAttribute("tabindex"), "0");
+    assert.equal(m.querySelectorAll("button").length, 0);
+  }
+});
+
+test("R21/LD13: arrow keys step the readout through the months; the measure toggle flips Members and Dollars with no fetch", () => {
+  const { doc, restore } = installDom(`<main id="congress-page">${HTML}</main>`);
+  try {
+    assert.equal(initMonthlyFlowToggle(), true);
+    const v = doc.querySelector('.mf-variant[data-flow-variant="stocks"]')!;
+    const plot = v.querySelector('.mf-measure[data-flow-measure="members"] .mf-hit')!;
+    const ro = v.querySelector('.mf-measure[data-flow-measure="members"] .mf-readout')!;
+    const rows = v.querySelectorAll(".mf-table tbody tr");
+    const key = (k: string) => plot.dispatch("keydown", { key: k, preventDefault() {} });
+    key("ArrowLeft");
+    assert.equal(ro.textContent, rows[34]!.getAttribute("data-ro-members"), "one month back");
+    key("Home");
+    assert.equal(ro.textContent, rows[0]!.getAttribute("data-ro-members"));
+    key("ArrowLeft");
+    assert.equal(ro.textContent, rows[0]!.getAttribute("data-ro-members"), "clamped at the first month");
+    key("End");
+    assert.equal(ro.textContent, rows[35]!.getAttribute("data-ro-members"));
+    const measure = (m: string) => doc.querySelector(`[data-flow-measure-toggle="${m}"]`)!;
+    const shownMeasures = () => v.querySelectorAll(".mf-measure").filter((el) => !el.hidden).map((el) => el.getAttribute("data-flow-measure"));
+    assert.deepEqual(shownMeasures(), ["members"]);
+    measure("dollars").click();
+    assert.deepEqual(shownMeasures(), ["dollars"]);
+    assert.equal(measure("dollars").getAttribute("aria-pressed"), "true");
+    assert.equal(measure("members").getAttribute("aria-pressed"), "false");
+    measure("members").click();
+    assert.deepEqual(shownMeasures(), ["members"]);
+  } finally {
+    restore();
+  }
 });
 
 test("T16/R17: /methodology prints the method and this build's CDF points from the same rows and date", () => {
@@ -399,7 +568,7 @@ test("§0: the panel's own copy carries no banned trading verb (the post-build g
 
 test("review F3: the panel never prints an impossible sample date", () => {
   for (const build of ["2026-03-29", "2026-03-30", "2026-03-31"]) {
-    const line = text(domOf(monthlyFlowPanel(ROWS, build)).querySelector(".mf-completeness"));
+    const line = text(drawnMonthlyFlow(monthlyFlowPanel(ROWS, build)).querySelector(".mf-completeness"));
     assert.ok(line.includes("2025-02-28"), `${build}: the sample ends on February's last day`);
     assert.ok(!/-02-(29|30|31)\b/.test(line), `${build}: no 2025-02-29/30/31 — ${line.slice(0, 200)}`);
   }
@@ -411,4 +580,22 @@ test("R17 (amended): the caption and /methodology state the midpoint rule in pla
   const src = readFileSync(path.join(SRC, "pages", "methodology", "index.astro"), "utf-8").replace(/\s+/g, " ");
   assert.match(src, /a month that has ended is aged from the middle of the calendar month/);
   assert.match(src, /The build's own month is still in progress, so it is aged from the middle of the days elapsed so far — the 1st through the build date/);
+});
+
+/* Launch review H3: Members counts an unjoined filer by its printed name — the caption says so, with the count. */
+test("H3: the Members breadth states how many filers no member record joins (counted by the name as filed); a fully joined window states nothing", () => {
+  const rows = [
+    txn({ txnId: "j", traded: "2026-07-10" }),
+    txn({ txnId: "u1", traded: "2026-07-11", bioguide: null, name: "Unmatched Filer" }),
+    txn({ txnId: "u2", traded: "2026-06-11", bioguide: null, name: "Unmatched Filer", side: "sale" }),
+    txn({ txnId: "u3", traded: "2026-06-12", bioguide: null, name: "Another Filer" }),
+  ];
+  const f = monthlyFlow(rows, BUILD, 36);
+  assert.equal(f.unjoined, 2, "two distinct printed names");
+  const html = monthlyFlowPanel(rows, BUILD);
+  assert.match(html, /2 filers with no matched member record are counted in Members by the name as filed/);
+  // re-planted control: every row joined → no clause
+  const joined = monthlyFlowPanel(rows.map((r) => ({ ...r, bioguide: "A000001" })), BUILD);
+  assert.doesNotMatch(joined, /no matched member record/);
+  assert.equal(monthlyFlow(rows.map((r) => ({ ...r, bioguide: "A000001" })), BUILD, 36).unjoined, 0);
 });

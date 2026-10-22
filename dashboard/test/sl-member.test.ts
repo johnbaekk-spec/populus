@@ -191,7 +191,8 @@ test("SL-R19: the member `.entity-lede` is gone and BOTH its claims are anchored
 
   // Claim two — owner codes — on the column that renders the SP/DC/JT badge,
   // not on a stamp line three panels above it.
-  const owner = panelTextOf(html, noteId("member-txns", "side-owner"));
+  // launch M4b (R25): the owner codes anchor on "Asset · owner", the column that prints them
+  const owner = panelTextOf(html, noteId("member-txns", "asset"));
   assert.match(owner, /spouse \(SP\), dependent children \(DC\), and joint accounts \(JT\)/);
   assert.match(owner, /the STOCK Act does not distinguish who directed a trade/);
   assert.match(owner, /methodology\/#owner-codes/, "T1 moved the sentence there; the note links it");
@@ -206,53 +207,57 @@ test("SL-R19: the member `.entity-lede` is gone and BOTH its claims are anchored
    through its label trigger; when no row carries one, the column is removed
    and the table foot says so. The header never disappears while a row still
    needs it. */
-function ownerHeader(txns: TxnRow[]): { head: MiniElement | undefined; note: string | null; reason: string | null } {
+/* launch M4b (R25) — replaces the DESIGN-POLISH M2 Owner-column pin. The
+   owner and partial qualifiers moved onto the asset line ("Asset · owner"),
+   which every row has, so no presence rule can remove the column that names
+   the codes. The property kept, sharper: whatever the collection holds, the
+   "Asset · owner" header names what SP, DC and JT mean, and every qualifier
+   prints on its own row — on page 1 or on a later page alike. */
+function assetOwner(txns: TxnRow[], page = 0): { head: MiniElement | undefined; note: string | null; quals: string[] } {
   const root = new MiniElement("body");
-  root.innerHTML = entityTxnTable(txns, { kind: "member", caption: "c", page: 0, ctx: CTX, notes: { scope: "member-txns" } });
-  const head = root.querySelectorAll("thead th").find((th) => th.getAttribute("data-col") === "owner");
+  root.innerHTML = entityTxnTable(txns, { kind: "member", caption: "c", page, ctx: CTX, notes: { scope: "member-txns" } });
+  const head = root.querySelectorAll("thead th").find((th) => th.getAttribute("data-col") === "asset");
   const pop = head?.querySelector(".note-pop");
-  const reason = root.querySelector("p.table-foot-reason");
-  return { head, note: pop ? pop.textContent : null, reason: reason ? reason.textContent : null };
+  const quals = root.querySelectorAll("tbody td.c-asset .owner-note").map((el) => el.textContent.replace(/\s*\(.*\)$/, "").trim());
+  return { head, note: pop ? pop.textContent : null, quals };
 }
 
-test("SL-R19 → M2: the Owner header renders and names the owner codes whenever any row carries a qualifier; absent, the foot says why", () => {
+test("SL-R19 → launch M4b: the Asset · owner header always names the owner codes; each qualifier prints on its own row", () => {
   const plain = { owner: "self" as const, side: "purchase" as const };
-  for (const [label, rows] of [
-    ["an owner code on one row", [txn({ ...plain, txnId: "p1" }), txn({ txnId: "sp", owner: "joint" })]],
-    ["only the partial-sale qualifier", [txn({ ...plain, txnId: "p1" }), txn({ ...plain, txnId: "pp", side: "sale_partial" })]],
+  for (const [label, rows, want] of [
+    ["an owner code on one row", [txn({ ...plain, txnId: "p1" }), txn({ txnId: "sp", owner: "joint" })], ["JT"]],
+    ["only the partial-sale qualifier", [txn({ ...plain, txnId: "p1" }), txn({ ...plain, txnId: "pp", side: "sale_partial" })], ["partial"]],
+    ["no qualifier anywhere", [txn({ ...plain, txnId: "p1" }), txn({ ...plain, txnId: "p2" })], []],
   ] as const) {
-    const h = ownerHeader([...rows]);
-    assert.ok(h.head, `${label}: the Owner header renders`);
-    assert.equal(h.head!.querySelector(".note-btn.note-label")?.textContent, "Owner", `${label}: the header is its note's label trigger`);
+    const h = assetOwner([...rows]);
+    assert.ok(h.head, `${label}: the Asset · owner header renders`);
+    assert.equal(h.head!.querySelector(".note-btn.note-label")?.textContent, "Asset · owner", `${label}: the header is its note's label trigger`);
     assert.match(h.note!, /spouse \(SP\), dependent children \(DC\), and joint accounts \(JT\)/, `${label}: the note names the codes`);
-    assert.equal(h.reason, null);
+    assert.deepEqual(h.quals, [...want], `${label}: the qualifiers print on their rows, and only there`);
   }
-  const none = ownerHeader([txn({ ...plain, txnId: "p1" }), txn({ ...plain, txnId: "p2" })]);
-  assert.equal(none.head, undefined, "no qualifier anywhere: no Owner column");
-  assert.match(none.reason!, /^Owner: no row carries a partial-sale qualifier or a spouse \(SP\), dependent \(DC\) or joint \(JT\) owner code\.$/);
-  // the qualifier on the OLDEST row of a 60-row collection (page 2) still keeps the header on page 1
+  // a qualifier on the OLDEST row of a 60-row collection (page 3 at 25 a page) prints there; the header names it on every page
   const many = Array.from({ length: 60 }, (_, i) => txn({ ...plain, txnId: `r${i}`, filed: `2026-0${i < 30 ? 7 : 6}-${String((i % 28) + 1).padStart(2, "0")}` }));
   many[59] = { ...many[59]!, filed: "2026-01-01", owner: "child" };
-  assert.ok(ownerHeader(many).head, "a qualifier outside the visible page keeps the header");
-  // control: remove that one qualifier and the header goes — the page-2 row alone was holding it
-  many[59] = { ...many[59]!, owner: "self" };
-  assert.equal(ownerHeader(many).head, undefined, "control: without it the column is removed");
+  assert.ok(assetOwner(many, 0).head && assetOwner(many, 0).note, "page 1 names the codes");
+  assert.deepEqual(assetOwner(many, 2).quals, ["DC"], "page 3 prints the dependent-child code on its row");
+  // control: the retired Owner column is not back — nothing can empty it away
+  assert.equal(new MiniElement("body").querySelector("th[data-col=\"owner\"]"), null);
 });
 
-test("SL-R19: the member tiles carry their breakdown as a note keyed on the tile LABEL, and only once", () => {
-  const html = memberBody(MEMBER, STAMPS, CTX, 0);
-  const withTitles = memberStatTiles(MEMBER, STAMPS).filter((t) => t.title);
-  assert.ok(withTitles.length > 0, "the fixture exercises tiles that HAVE a breakdown");
-  for (const t of withTitles) {
-    const id = noteId("member-tiles", t.label);
-    assert.equal(panelTextOf(html, id), esc(t.title!), `"${t.label}" carries its breakdown verbatim`);
-    // …and NOT also in a `.visually-hidden` sibling, which would read it to a
-    // screen reader twice now that the panel is real DOM.
-    assert.ok(
-      !html.includes(`<span class="visually-hidden">${esc(t.title!)}</span>`),
-      `"${t.label}" publishes its breakdown once, not twice`,
-    );
-  }
+/* launch M4b (member-09): the Profile's summary line keeps only the figure
+   no other part of the page states — gross flow over 12 months — and the
+   Profile renders at ten or more trades (LD24). The property is unchanged
+   for the tile that remains: its breakdown is a note keyed on its LABEL, and
+   it is published once, never also in a visually-hidden sibling. */
+test("SL-R19: the member's remaining tile carries its breakdown as a note keyed on the tile LABEL, and only once", () => {
+  const ten: MemberEntity = { ...MEMBER, txns: Array.from({ length: 10 }, (_, i) => txn({ txnId: `x${i}`, ticker: i % 2 ? "AAA" : "BBB" })) };
+  const html = memberBody(ten, STAMPS, CTX, 0);
+  const gross = memberStatTiles(ten, STAMPS).find((t) => t.label === "disclosed flow · trailing 12m")!;
+  assert.ok(gross.title, "the fixture exercises a tile that HAS a breakdown");
+  assert.equal(panelTextOf(html, noteId("member-tiles", gross.label)), esc(gross.title!), "the gross-flow tile carries its breakdown verbatim");
+  assert.ok(!html.includes(`<span class="visually-hidden">${esc(gross.title!)}</span>`), "…published once, not twice");
+  // control: a member under ten trades has no Profile, so the tile is not on its page
+  assert.ok(!memberBody(MEMBER, STAMPS, CTX, 0).includes(noteId("member-tiles", gross.label)));
 });
 
 /* --------------------------------------------- SL-R20: chart and card feet */

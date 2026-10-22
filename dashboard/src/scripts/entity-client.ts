@@ -1,4 +1,5 @@
 import { initSortableTable } from "./table-sort.ts";
+import { rolesFor } from "./table-roles.ts";
 import { initTabs } from "./tabs.ts";
 import { holderDefaultDir, holderSortNote, orderRankedHolders, type HolderSortKey } from "../lib/holders-sort.ts";
 /* Entity client: the generic-route driver (qoq-presentation.md §3), and the
@@ -30,6 +31,10 @@ import {
 } from "../lib/derive.ts";
 import {
   memberBody,
+  MEMBER_PAGE_SIZE,
+  memberSideRows,
+  memberTradesCountText,
+  type MemberSide,
   tickerUnifiedBody,
   filerBody,
   entityTxnRowsHtml,
@@ -104,6 +109,8 @@ export interface DriverHandle {
   /** entity-table pagination over the loaded payload */
   older: () => void;
   newer: () => void;
+  /** R25: the member trades side filter (no-op for a ticker) */
+  side: (side: MemberSide) => void;
   /** filer surface controls — no-ops unless an in-extract filer is loaded */
   holdingsPage: (dir: "prev" | "next") => void;
   /** changes-table pagination (the tail route previously had none). */
@@ -137,6 +144,8 @@ export const DRIVER_WATCHDOG_MS = 15_000;
 export function runEntityDriver(deps: DriverDeps): DriverHandle {
   let state: DriverStateKind = "loading";
   let page = 0;
+  /* R25: the member trades side filter, over the payload already loaded */
+  let side: MemberSide = "all";
   let loaded: LoadedEntity | null = null;
   const watchdogMs = deps.watchdogMs ?? DRIVER_WATCHDOG_MS;
 
@@ -147,7 +156,7 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
 
   function bodyHtml(): string {
     const e = loaded!;
-    if (e.kind === "m") return memberBody(e.member!, e.stamps, ctx, page);
+    if (e.kind === "m") return memberBody(e.member!, e.stamps, ctx, page, undefined, "", side);
     return tickerUnifiedBody(e.ticker!, e.inst!, e.stamps, ctx, { fullTable: true, page });
   }
 
@@ -641,8 +650,9 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
 
   function maxPage(): number {
     if (!loaded) return 0;
-    const txns = loaded.kind === "m" ? loaded.member!.txns : loaded.ticker!.txns;
-    return Math.max(0, pageCountFor(mergeFeed(txns, [])) - 1);
+    /* R25: a member pages 25 rows of the selected side; a ticker keeps 50 */
+    if (loaded.kind === "m") return Math.max(0, pageCountFor(mergeFeed(memberSideRows(loaded.member!.txns, side), []), MEMBER_PAGE_SIZE) - 1);
+    return Math.max(0, pageCountFor(mergeFeed(loaded.ticker!.txns, [])) - 1);
   }
 
   const done = load();
@@ -657,6 +667,12 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
     newer: () => {
       if (!loaded || page === 0) return;
       page--;
+      renderLoaded();
+    },
+    side: (next) => {
+      if (!loaded || loaded.kind !== "m") return;
+      side = next;
+      page = 0; // a page index under another filter addresses nothing here
       renderLoaded();
     },
     holdingsPage: (dir) => {
@@ -701,8 +717,78 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
 
 /* ---------- browser entries ---------- */
 
-/** Prerendered entity pages: endpoint-backed table pagination. */
+/* ---------- member page controls (launch M4b: R11, R24, R25, R26) ---------- */
+
+/** The quarterly ribbon's ONE plot control (LD13): a Tab stop whose arrow
+    keys (and Home/End) step through the quarters, and a tap or pointer move
+    that selects the nearest column; the readout states that quarter's
+    numbers in the polite live region the plot names. Idempotent per plot. */
+export function initRibbonReadout(root: ParentNode = document): void {
+  root.querySelectorAll<HTMLElement>("[data-rb-plot]").forEach((plot) => {
+    if (plot.getAttribute("data-rb-bound") === "1") return;
+    plot.setAttribute("data-rb-bound", "1");
+    const cols = Array.from(plot.querySelectorAll<HTMLElement>("[data-rb-col]"));
+    const out = document.getElementById(plot.getAttribute("aria-describedby") ?? "");
+    const track = plot.querySelector<HTMLElement>(".rb-track") ?? plot;
+    if (cols.length === 0) return;
+    let at = cols.length - 1;
+    const select = (i: number): void => {
+      at = Math.max(0, Math.min(cols.length - 1, i));
+      cols.forEach((c, j) => c.toggleAttribute("data-selected", j === at));
+      if (out) out.textContent = cols[at]!.dataset.readout ?? "";
+    };
+    const nearest = (clientX: number): number => {
+      const r = track.getBoundingClientRect();
+      return r.width > 0 ? Math.floor(((clientX - r.left) / r.width) * cols.length) : at;
+    };
+    plot.addEventListener("keydown", (ev) => {
+      const k = (ev as KeyboardEvent).key;
+      const next = k === "ArrowRight" || k === "ArrowDown" ? at + 1 : k === "ArrowLeft" || k === "ArrowUp" ? at - 1 : k === "Home" ? 0 : k === "End" ? cols.length - 1 : null;
+      if (next === null) return;
+      ev.preventDefault();
+      select(next);
+    });
+    plot.addEventListener("pointermove", (ev) => select(nearest((ev as PointerEvent).clientX)));
+    plot.addEventListener("click", (ev) => select(nearest((ev as MouseEvent).clientX)));
+  });
+}
+
+/** Top tickers' window switch (R26: 24 months by default, or All): flips
+    `hidden` between the two server-rendered variants; no fetch. */
+function initTopWindow(root: ParentNode): void {
+  root.querySelectorAll<HTMLElement>("[data-top-window]").forEach((seg) => {
+    seg.hidden = false;
+    if (seg.getAttribute("data-top-bound") === "1") return;
+    seg.setAttribute("data-top-bound", "1");
+    const section = seg.closest("section") ?? root;
+    seg.querySelectorAll<HTMLButtonElement>("button[data-window]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const win = btn.dataset.window;
+        seg.querySelectorAll<HTMLButtonElement>("button[data-window]").forEach((b) => b.setAttribute("aria-pressed", String(b === btn)));
+        section.querySelectorAll<HTMLElement>("[data-top-variant]").forEach((v) => {
+          v.hidden = v.dataset.topVariant !== win;
+        });
+      });
+    });
+  });
+}
+
+/** The controls a member body carries that need a script: the ribbon
+    readout, the Top tickers window switch, and the side filter (revealed
+    here; the pager or the /e/ driver acts on it). */
+export function initMemberControls(root: ParentNode = document): void {
+  initRibbonReadout(root);
+  initTopWindow(root);
+  root.querySelectorAll<HTMLElement>("[data-side-filter]").forEach((seg) => {
+    seg.hidden = false;
+  });
+}
+
+/** Prerendered entity pages: endpoint-backed table pagination. The member
+    table pages 25 rows (R25) of the side its filter selects, over the same
+    member JSON; the ticker table keeps the feed's 50. */
 export function initEntityPage(): void {
+  initMemberControls(document);
   const main = document.querySelector<HTMLElement>("main[data-entity-kind]");
   const table = document.querySelector<HTMLElement>("[data-entity-table]");
   const rowsEl = document.querySelector<HTMLElement>("[data-entity-rows]");
@@ -716,9 +802,12 @@ export function initEntityPage(): void {
   const key = main.dataset.entityKey!;
   const tableKind = table.dataset.kind as "member" | "ticker";
   const endpoint = kind === "m" ? memberDataPath(key) : tickerDataPath(key);
+  const member = tableKind === "member";
+  const pageSize = member ? MEMBER_PAGE_SIZE : undefined;
 
   let txns: TxnRow[] | null = null;
   let page = 0;
+  let side: MemberSide = "all";
   let loading: Promise<void> | null = null;
 
   function loadRows(): Promise<void> {
@@ -741,10 +830,11 @@ export function initEntityPage(): void {
 
   function apply(): void {
     if (!txns) return;
-    const merged = mergeFeed(txns, []);
-    const max = Math.max(0, pageCountFor(merged) - 1);
+    const rows = member ? memberSideRows(txns, side) : txns;
+    const merged = mergeFeed(rows, []);
+    const max = Math.max(0, pageCountFor(merged, pageSize) - 1);
     if (page > max) page = max;
-    const items = pageSlice(merged, page).filter((i): i is TxnRow => i.kind === "txn");
+    const items = pageSlice(merged, page, pageSize).filter((i): i is TxnRow => i.kind === "txn");
     const ctx: RenderCtx = {};
     /* The SSR table hoisted any flag carried by every row to a
        table-level note and suppressed it per row. The client must suppress the
@@ -756,13 +846,15 @@ export function initEntityPage(): void {
     /* R12: the column set the server decided over the WHOLE collection rides
        in `data-columns`, so a later page renders exactly the header's columns. */
     const columns = parseDataColumns(table?.getAttribute("data-columns"));
-    rowsEl!.innerHTML = entityTxnRowsHtml(items, tableKind, ctx, stated, columns);
+    rowsEl!.innerHTML = rolesFor(rowsEl, entityTxnRowsHtml(items, tableKind, ctx, stated, columns));
     // R36 (review R2-5): every client re-render announces itself, so a binder
     // or measurement that owns anything under this body re-syncs.
     if (typeof document.dispatchEvent === "function") {
       document.dispatchEvent(new CustomEvent("populus:rerender", { detail: { root: "entity-pager" } }));
     }
-    const count = entityTableCountText(page, items.length, txns.length);
+    const count = member
+      ? memberTradesCountText(page, items.length, rows.length, side)
+      : entityTableCountText(page, items.length, txns.length);
     countEl!.textContent = count;
     if (statusEl) statusEl.textContent = count;
     setPager(newerBtn!, page === 0);
@@ -787,6 +879,18 @@ export function initEntityPage(): void {
     if (!txns) return;
     page--;
     apply();
+  });
+  /* R25: the side filter re-pages the same member JSON from page 1 */
+  document.querySelectorAll<HTMLButtonElement>("[data-side-filter] button[data-side]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await loadRows();
+      if (!txns) return;
+      const v = btn.dataset.side;
+      side = v === "buy" || v === "sell" ? v : "all";
+      document.querySelectorAll<HTMLButtonElement>("[data-side-filter] button[data-side]").forEach((b) => b.setAttribute("aria-pressed", String(b === btn)));
+      page = 0;
+      apply();
+    });
   });
 }
 
@@ -857,14 +961,14 @@ export function initFilerPeriods(): void {
     if (!slice) return;
     // `total` is REQUIRED in the embed (validated above) — never the embedded
     // length, which would claim a completeness the server never claimed.
-    root.innerHTML = filerPeriodSectionHtml(
+    root.innerHTML = rolesFor(root, filerPeriodSectionHtml(
       slice.conc,
       slice.deltas,
       period,
       data.latestFiled,
       topn,
       { periods, total: slice.total!, page, benchmark: data.benchmarks?.[period] ?? null, discontinuity: slice.discontinuity === true, kinds: slice.kinds ?? null, kind },
-    );
+    ));
     if (repaintPeriodParts) {
       if (ledgerRoot) ledgerRoot.innerHTML = filerLedgerHtml(slice.conc, period, slice.total!, slice.kinds ?? null);
       if (bookRoot) bookRoot.innerHTML = filerBookShapeHtml(slice.conc, topn, period, slice.total!, data.benchmarks?.[period] ?? null);
@@ -1016,7 +1120,7 @@ export function initHoldersPeriods(): void {
     const rows = data.periods[next];
     if (!rows) return;
     period = next;
-    root.innerHTML = holdersTableHtml(rows, next, data.latestFiled, data.topn);
+    root.innerHTML = rolesFor(root, holdersTableHtml(rows, next, data.latestFiled, data.topn));
     chips.querySelectorAll<HTMLButtonElement>("[data-period]").forEach((c) => {
       const active = c === btn;
       c.classList.toggle("chip-active", active);
@@ -1074,6 +1178,12 @@ export function dispatchEntityClick(el: Element, handle: DriverHandle): void {
       handle.holdingsPeriod(periodChip.dataset.period);
       return;
     }
+    const sideBtn = el.closest<HTMLElement>("[data-side-filter] [data-side]");
+    if (sideBtn) {
+      const v = sideBtn.dataset.side;
+      handle.side(v === "buy" || v === "sell" ? v : "all");
+      return;
+    }
     const older = el.closest("[data-entity-older]");
     if (older && older.getAttribute("aria-disabled") !== "true") {
       handle.older();
@@ -1092,6 +1202,9 @@ export function runGenericRoute(): void {
      tabs; every render the driver makes announces itself with
      `populus:rerender`, and the binder binds the fresh tab list then. */
   document.addEventListener("populus:rerender", () => initTabs(root));
+  /* launch M4b: a re-rendered member body gets its readout, its window
+     switch and its side filter, the same as a pre-rendered page */
+  document.addEventListener("populus:rerender", () => initMemberControls(root));
   const handle = runEntityDriver({
     search: window.location.search,
     fetchJson: async (url) => {
@@ -1109,7 +1222,7 @@ export function runGenericRoute(): void {
       }
     },
     render: (html) => {
-      root.innerHTML = html;
+      root.innerHTML = rolesFor(root, html);
     },
     setTitle: (t) => {
       document.title = t;

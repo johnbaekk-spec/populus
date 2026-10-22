@@ -28,11 +28,9 @@ import {
   universalFlagNote,
   srcLinkDerived,
   terminusRow,
-  footnoteBlock,
   memberHrefFor,
   congressTickerHref,
   partyClass,
-  cardFoot,
   presentColumns,
   dataColumnsAttr,
   tableFootReasonHtml,
@@ -58,11 +56,12 @@ import type { TickerCrowding } from "../inst-analytics.ts";
 import { unavailableDesignPanel } from "./shared.ts";
 import { filerHref } from "../holdings.ts";
 import type { TickerInstSection } from "../data.ts";
-import { type BuildStamps, asOfNote, disclosureLedger } from "./shared.ts";
-import { fmtCik, note, rangeOfTotal, thHtml } from "../format.ts";
+import { type BuildStamps, disclosureLedger } from "./shared.ts";
+import { fmtCik, note, noteFromHtml, rangeOfTotal, thHtml } from "../format.ts";
+import type { FilerBudgetState } from "../holdings.ts";
 import { onSignalsLines, tickerOnSignalsHtml } from "./signals.ts";
 import { entityTxnRowsHtml, entityTxnTable } from "./congress.ts";
-import { instStamp, instFiledNote } from "./institutional.ts";
+import { HOLDERS_VISIBLE, heldHoldersHtml, instStamp, instFiledNote, type HeldListShared } from "./institutional.ts";
 
 /* ---------- unified ticker page body ---------- */
 
@@ -72,16 +71,29 @@ export interface TickerHeaderInfo {
   mappedName: string | null;
 }
 
+/** G14: what the † beside a mapped issuer name says. Launch copy audit
+    ticker-02: it is the mark's own tip, where it is read, not a footnote at the
+    foot of the page (the SEC's file name stays out of reader copy). */
+const TICKER_MAPPED_NAME_NOTE =
+  "Today's name, from the SEC's present-day ticker list — a present-day mapping, not the name as of each filing.";
+
 function tickerTitleHtml(info: TickerHeaderInfo): string {
   const name = info.mappedName
-    ? ` — ${esc(info.mappedName)}<a class="fn-ref" href="#ticker-footnotes" aria-label="footnote: present-day mapping">†</a>`
+    ? ` — ${esc(info.mappedName)}` +
+      noteFromHtml(esc(TICKER_MAPPED_NAME_NOTE), { scope: "ticker-head" }, "mapped-name", {
+        trigger: "mark",
+        textHtml: "†",
+        name: "Present-day name",
+      })
     : "";
   return `<span class="mono-ticker">${esc(info.ticker)}</span>${name}`;
 }
 
-/** R21: the holders the Institutional tab shows before its "Show all N
-    holders" disclosure; holders 11..N sit inside it, in the same HTML. */
-export const TICKER_HOLDERS_VISIBLE = 10;
+/** R21 → launch M7b (R33, LD30): the holders the Institutional tab shows
+    before its "Show all N holders" disclosure. Holders 26..N are held — an
+    island the binder draws 25 at a time, and a `<noscript>` second table
+    inside the disclosure for readers without JavaScript. */
+export const TICKER_HOLDERS_VISIBLE = HOLDERS_VISIBLE;
 /** R20: the rows the Congress tab's disclosures preview shows in total,
     pinned rows included; the rest are one link away. */
 export const TICKER_PREVIEW_ROWS = 10;
@@ -139,82 +151,116 @@ export function tickerInstSectionHtml(inst: TickerInstSection, ticker: string): 
   /* Universal-flag hoisting applies to EVERY flag-bearing table, not only the entity txn one.
      Measured before wiring these: 1,004 pages carried a table whose every row
      read `security not in mapping`, with no caveat line above it.
-     signals-v3 M3 (LD8): computed over ALL N holders — the ten shown and the
-     rest inside "Show all N holders" alike — so a flag is stated once only
-     when every holder carries it. */
+     signals-v3 M3 (LD8) → launch M7b (R33): computed over ALL N holders — the
+     25 shown and the held rest alike — so a flag is stated once only when
+     every holder carries it. The held rows' renderer receives the same set. */
   const statedHolders = universalFlags(holders.map((h) => h.flags));
-  const rowHtml = (h: (typeof holders)[number]): string =>
-    `<tr><td class="c-num c-muted">${fmtInt(h.rank)}</td>` +
-    // ONE href primitive (filerHref): the payload carries the top/tail target.
-    `<td class="c-filer c-flex"><a href="${esc(filerHref(h.cik, h.tier ?? "tail"))}">${esc(h.name)}</a></td>` +
-    `<td class="c-num c-strong has-marks">${h.value == null ? `—<span class="visually-hidden"> value not disclosed</span>` : esc(fmtUsd(h.value))}</td>` +
-    `<td class="c-num">${fmtInt(h.securities)}</td>` +
-    `<td class="c-flags">${flagTags(h.flags, undefined, { stated: statedHolders })}</td>` +
-    `<td class="c-src">${srcLinkDerived("#ticker-inst-footnotes", edgarFilerUrl(h.cik))}</td></tr>`;
-  const shown = holders.slice(0, TICKER_HOLDERS_VISIBLE);
-  const rest = holders.slice(TICKER_HOLDERS_VISIBLE);
-  /* With holders 11..N in a disclosure, the list spans TWO tables. Each is
-     then a part of the collection the hoist judged — the meaning `data-paged`
+  const rows: TickerHolderRow[] = holders.map((h) => ({ rank: h.rank, cik: h.cik, name: h.name, value: h.value, securities: h.securities, flags: h.flags, tier: h.tier }));
+  const ctx: TickerHolderCtx = { stated: statedHolders };
+  const held = holders.length > TICKER_HOLDERS_VISIBLE;
+  /* With holders 26..N held, the list spans more than one table. Each is a
+     part of the collection the hoist judged — the meaning `data-paged`
      carries ("this HTML shows only PART of the collection"): a flag every row
      of one part shows, but not every holder carries, stays on its rows. */
-  const tableHtml = (rows: typeof holders, caption: string): string =>
-    `<div class="table-scroll"><table class="etable" data-sticky-first${rest.length > 0 ? ' data-paged="1"' : ""} data-stated-flags="${esc(statedHolders.join(","))}">` +
+  /* ticker-11 (launch M7b): the § and n/c footnotes became tips — § on the
+     Src column it explains, the newest-filing note on the quarter stamp —
+     with every clause kept, including the W-3 mapped/entity distinction. */
+  // pre-escaped html: literal copy, no data interpolated
+  const srcNote = inst.mapped
+    ? `derived by Public Filings from this build's reviewed ticker-mapping holders list for this share class; that list carries each holder's share count, share change and filed date${inst.holdersPage ? " (the full holders view shows them)" : ", which this table does not show"}, but no document links — the EDGAR link opens the filer's 13F list`
+    : `derived by Public Filings from this build's published top-holders list; per-filer filed dates, share counts and document links are not in that list — the EDGAR link opens the filer's 13F list`;
+  /* Only the PRIMARY table (the first 25) carries the Src tip: the held
+     table and the no-JS copy repeat the header without it, so no note id is
+     emitted twice. */
+  const tableHtml = (bodyHtml: string, caption: string, tbodyId: string | null, primary = false): string =>
+    `<div class="table-scroll"><table class="etable" role="table" data-card="holders" data-sticky-first${held ? ' data-paged="1"' : ""} data-stated-flags="${esc(statedHolders.join(","))}">` +
     `<caption class="visually-hidden">${esc(caption)}</caption>` +
-    `<thead><tr>${thHtml({ label: "#", cls: "c-num" })}${thHtml({ label: "Filer", cls: "c-filer c-flex" })}${thHtml({ label: "Value", cls: "c-num", order: "descending" })}${thHtml({ label: "Securities", cls: "c-num" })}${thHtml({ label: "Flags", cls: "c-flags" })}${thHtml({ label: "Src", cls: "c-src" })}</tr></thead>` +
-    `<tbody>${rows.map(rowHtml).join("\n")}</tbody></table></div>`;
+    `<thead role="rowgroup"><tr role="row">${thHtml({ label: "#", cls: "c-num" })}${thHtml({ label: "Filer", cls: "c-filer c-flex" })}${thHtml({ label: "Value", cls: "c-num", order: "descending" })}${thHtml({ label: "Securities", cls: "c-num" })}${thHtml({ label: "Flags", cls: "c-flags" })}${thHtml(primary ? { label: "Src", cls: "c-src", mark: "·§", noteHtml: srcNote, notes: { scope: "ticker-inst" }, noteKey: "src" } : { label: "Src", cls: "c-src", mark: "·§" })}</tr></thead>` +
+    `<tbody role="rowgroup"${tbodyId ? ` id="${esc(tbodyId)}"` : ""}>${bodyHtml}</tbody></table></div>`;
   const caption = `Top institutional holders of ${ticker} for quarter ${inst.period!}`;
+  const shown = rows.slice(0, TICKER_HOLDERS_VISIBLE);
   return (
     `<section class="page-section" id="ticker-holders">` +
-    `<div class="section-head"><h2 class="section-h2">Institutional holders <span class="section-note-inline">· 13F · ${instStamp(
+    /* ticker-09 (launch M7b): "13F holders" and "All holders ↗"; the quarter
+       stamp and "longs only" stay — this tab carries no 13F caveat box, so
+       the header is where long-only is said. */
+    `<div class="section-head"><h2 class="section-h2">13F holders <span class="section-note-inline">· ${instStamp(
       inst.period!,
       inst.latestFiled ?? null,
-    )} · longs only</span></h2>` +
+    )}${noteFromHtml(esc(instFiledNote(inst.latestFiled ?? null)), { scope: "ticker-inst" }, "stamp", { trigger: "mark", name: "Newest filing" })} · longs only</span></h2>` +
     // R2: link the holders view only when that page is built — never a dressed 404.
     (inst.holdersPage
-      ? `<a class="section-link" href="/institutional/tickers/${esc(encodeURIComponent(ticker))}/holders/">full holders view ↗</a>`
+      ? `<a class="section-link" href="/institutional/tickers/${esc(encodeURIComponent(ticker))}/holders/">All holders ↗</a>`
       : "") +
     `</div>` +
     universalFlagNote(statedHolders) +
-    tableHtml(shown, rest.length > 0 ? `${caption}, ${rangeOfTotal(1, shown.length, holders.length, "holders")}` : caption) +
-    (rest.length > 0
-      ? `<details class="tk-holders-more"><summary>Show all ${fmtInt(holders.length)} holders</summary>` +
-        tableHtml(rest, `${caption}, ${rangeOfTotal(shown.length + 1, holders.length, holders.length, "holders")}`) +
-        `</details>`
-      : "") +
+    tableHtml(shown.map((r) => tickerHolderRowHtml(r, ctx)).join("\n"), held ? `${caption}, ${rangeOfTotal(1, shown.length, Math.max(holders.length, inst.mapped?.holderCount ?? 0), "holders")}` : caption, held ? "ticker-holders-top" : null, true) +
+    /* launch review H1: a capped reviewed-mapping list is never "all" */
+    heldHoldersHtml({ rootId: "ticker-holders-held", render: TICKER_HOLDER_HELD.render, rows, rowHtml: (r) => tickerHolderRowHtml(r, ctx), ctx, table: tableHtml, caption, ...(inst.mapped ? { of: inst.mapped.holderCount } : {}) }) +
+    /* The anchor `#ticker-inst-footnotes` (linked from older pages and read by
+       the tab binder's hash routing) now marks the table's truncation line. */
+    `<div id="ticker-inst-footnotes">` +
     terminusRow({
       author: "populus",
-      /* W-3 (M3 review): the two sources differ, so the terminus and the §
-         note branch on them. The reviewed-mapping list (share-class grain)
-         keeps the largest holders up to its rank cap and states the true
-         holder count; the entity-keyed top-holders list is cut at the build's
-         top-N parameter. Both count ALL N holders, shown or in the disclosure. */
+      /* W-3 (M3 review): the two sources differ, so the terminus branches on
+         them. The reviewed-mapping list (share-class grain) keeps the largest
+         holders up to its rank cap and states the true holder count; the
+         entity-keyed top-holders list is cut at the build's top-N parameter.
+         Both count ALL N holders, shown or held. ticker-10 (launch M7b): one
+         line, both numbers kept. */
       html: inst.mapped
         ? (holders.length >= inst.mapped.holderCount
-            ? `Every one of the ${fmtInt(inst.mapped.holderCount)} 13F filers reporting this share class for the quarter is listed.`
-            : `The ${fmtInt(holders.length)} largest of the ${fmtInt(inst.mapped.holderCount)} 13F filers reporting this share class for the quarter are listed; the rest are in the individual filings on EDGAR.`) +
-          ` <a href="/methodology/#m2">methodology §13F ↗</a>`
-        : `The published aggregate ranks the top ${fmtInt(inst.topn ?? 25)} holders per issuer — a build parameter of the Public Filings aggregation, not a census. Rows beyond it exist in individual filings on EDGAR. <a href="/methodology/#m2">methodology §13F ↗</a>`,
+            ? `All ${fmtInt(inst.mapped.holderCount)} 13F filers reporting this share class are listed.`
+            : `Top ${fmtInt(holders.length)} of ${fmtInt(inst.mapped.holderCount)} holders shown; the rest are on EDGAR.`) +
+          ` <a href="/methodology/#m2">Method ↗</a>`
+        : `Top ${fmtInt(inst.topn ?? 25)} holders per issuer, set by the site — not a census; the rest are on EDGAR. <a href="/methodology/#m2">Method ↗</a>`,
     }) +
-    footnoteBlock(
-      [
-        {
-          mark: "§",
-          /* Architecture H (G-11): plain words. W-3 (M3 review): on the
-             reviewed-mapping path the list DOES carry each holder's share
-             count, share change and filed date — only this table leaves them
-             out — so the "not in that list" sentence is said of the
-             entity-keyed list alone. */
-          html: inst.mapped
-            ? `derived by Public Filings from this build's reviewed ticker-mapping holders list for this share class; that list carries each holder's share count, share change and filed date${inst.holdersPage ? " (the full holders view shows them)" : ", which this table does not show"}, but no document links — the EDGAR link opens the filer's 13F list`
-            : `derived by Public Filings from this build's published top-holders list; per-filer filed dates, share counts and document links are not in that list — the EDGAR link opens the filer's 13F list`,
-        },
-        { mark: "n/c", html: esc(instFiledNote(inst.latestFiled ?? null)) },
-      ],
-      { id: "ticker-inst-footnotes" },
-    ) +
+    `</div>` +
     `</section>`
   );
 }
+
+/** One ticker-tab holder row's inputs — exactly what `tickerHolderRowHtml`
+    reads, so the held island carries nothing else (launch M7b, R33). */
+export interface TickerHolderRow {
+  rank: number;
+  cik: string;
+  name: string;
+  value: number | null;
+  securities: number;
+  flags: string[];
+  tier: FilerBudgetState;
+}
+
+/** The inputs every row shares: the flags hoisted over ALL N holders. */
+export interface TickerHolderCtx {
+  stated: readonly string[];
+}
+
+/** One row of the ticker tab's holders table — the server's first 25, the
+    no-JS second table and the binder's held rows alike. Explicit table roles
+    (R40) ride every row and cell. */
+export function tickerHolderRowHtml(h: TickerHolderRow, ctx: TickerHolderCtx): string {
+  return (
+    `<tr role="row"><td role="cell" class="c-num c-muted">${fmtInt(h.rank)}</td>` +
+    // ONE href primitive (filerHref): the payload carries the top/tail target.
+    `<td role="cell" class="c-filer c-flex"><a data-row-link href="${esc(filerHref(h.cik, h.tier ?? "tail"))}">${esc(h.name)}</a></td>` +
+    `<td role="cell" class="c-num c-strong has-marks">${h.value == null ? `—<span class="visually-hidden"> value not disclosed</span>` : esc(fmtUsd(h.value))}</td>` +
+    `<td role="cell" class="c-num">${fmtInt(h.securities)}</td>` +
+    `<td role="cell" class="c-flags">${flagTags(h.flags, undefined, { stated: ctx.stated })}</td>` +
+    `<td role="cell" class="c-src">${srcLinkDerived(null, edgarFilerUrl(h.cik))}</td></tr>`
+  );
+}
+
+/** The ticker tab's held-rows renderer and its search text, registered by
+    the page script (`registerHeldRows("ticker-holder", row, { text })`): the
+    row reads the island's `shared.ctx`, the flags hoisted over all N. */
+export const TICKER_HOLDER_HELD = {
+  render: "ticker-holder",
+  row: (r: unknown, _index: number, shared: unknown): string =>
+    tickerHolderRowHtml(r as TickerHolderRow, (shared as HeldListShared<TickerHolderCtx>).ctx),
+  text: (r: unknown): string => (r as TickerHolderRow).name,
+};
 
 /** SSR-only inputs for the Ticker.dc.html bands; the generic /e/ route passes
     none and every dependent band renders its stated unavailable state. */
@@ -280,14 +326,7 @@ export function tickerUnifiedBody(
       }${(
         [["Member", "c-member c-flex"], ["Side · Owner", "c-kind"], ["Traded · Lag", "c-num"], ["Amount", "c-num"], ["Range · Flags", "c-bar"], ["Src", "c-src"]] as const
       ).map(([label, cls]) => thHtml({ label, mark: null, cls })).join("")}</tr></thead>` +
-      `<tbody>${entityTxnRowsHtml(previewRows, "ticker", ctx, statedPreview, null, { dataTxn: true, pinned: pinnedIds })}</tbody></table></div>` +
-      cardFoot({
-        short: "Traded → filed dates on every row",
-        full: "Each row shows the trade date and the filing date; the gap between them is the disclosure lag.",
-        scope: "ticker-congress-foot",
-        key: "dates",
-        extraHtml: `<a href="${congressTickerHref(t.ticker)}">all ${fmtInt(t.txns.length)} rows ↗</a>`,
-      });
+      `<tbody>${entityTxnRowsHtml(previewRows, "ticker", ctx, statedPreview, null, { dataTxn: true, pinned: pinnedIds })}</tbody></table></div>`;
 
   /* R17: the five-figure ledger. Every figure is computed from this page's
      own rows. Totals are over the FULL qualifying population; `disclosing`
@@ -315,13 +354,18 @@ export function tickerUnifiedBody(
       : unknownTimeliness > 0
         ? { detail: `${fmtInt(unknownTimeliness)} of ${fmtInt(t.txns.length)} undated: timeliness unknown`, subKind: "count" as const }
         : late > 0
-          ? { detail: "filed past the 45-day window", subKind: "qualifier" as const }
+          ? /* launch copy audit ticker-03: the label, the SELL tone and the
+               figure's note ("past the STOCK Act's 45-day window") say it */
+            { detail: "", subKind: "qualifier" as const }
           : { detail: "every row filed inside 45 days", subKind: "qualifier" as const };
   const ledger = disclosureLedger(
     [
-      { label: "Congress txns", value: fmtInt(t.txns.length), detail: `all PTR rows naming ${t.ticker}`, subKind: "count" },
+      /* Launch copy audit ticker-03: #163 settled the 13F figure (the holder
+         count with "top N listed"); the remainder is the PTR jargon in the
+         other labels. */
+      { label: "Congress trades", value: fmtInt(t.txns.length), detail: "all time", subKind: "count" },
       { label: "Members · 12m", value: fmtInt(members12), detail: `${fmtInt(buys12)} buys · ${fmtInt(sells12)} sells · by trade date`, subKind: "count" },
-      { label: "Latest PTR", value: latestFiled ? latestFiled.slice(5) : "—", detail: latestFiled ? `filed ${latestFiled}` : "no filing on record", subKind: latestFiled ? "date" : "absence" },
+      { label: "Latest filing", value: latestFiled ? latestFiled.slice(5) : "—", detail: latestFiled ?? "no filing on record", subKind: latestFiled ? "date" : "absence" },
       {
         label: "Filed late",
         value: fmtInt(late),
@@ -365,17 +409,18 @@ export function tickerUnifiedBody(
   return (
     `<div class="page-head">` +
     `<div class="page-head-copy">` +
-    `<div class="kicker">Public record / Tickers / ${esc(t.ticker)}</div>` +
+    /* launch copy audit ticker-01: the "Public record / Tickers / X" kicker repeated the H1 */
     `<h1 class="entity-title">${tickerTitleHtml(info)}</h1>` +
     `</div>` +
     ledger +
     `</div>` +
     /* R17 / LD9: the provenance line carries each section's own clock (it was
-       the lede's sentence). */
-    `<div class="design-provenance"><span>Congress = transactions in statutory ranges, 45-day lag · Institutions = quarter-end positions, 45-day lag</span>` +
-    `<span class="tk-clock">Each section keeps its own clock — congressional trades on the 45-day PTR clock, 13F holdings as quarter-end snapshots.</span>` +
-    `<span class="stamp-line">${asOfNote(stamps)}</span>` +
-    `<span>no price data — a disclosure record, not a chart</span></div>` +
+       the lede's sentence). Launch copy audit ticker-04: each regime's clock
+       stated once — Congress in statutory ranges on the 45-day filing clock,
+       13F as quarter-end snapshots filed up to 45 days later — without the
+       sentence that restated them. */
+    `<div class="design-provenance"><span class="tk-clock">Congress: statutory ranges, filed up to 45 days after the trade · 13F: quarter-end snapshots, filed up to 45 days later</span>` +
+    `<span class="stamp-line">as of ${esc(stamps.generatedAtDate)}</span></div>` +
     onSignals +
     tabs +
     /* PANEL 1 — Congress: the timeline beside the members active, then the
@@ -388,17 +433,18 @@ export function tickerUnifiedBody(
     `<div class="design-band design-ticker-band design-ticker-congress">` +
     `<section class="panel" aria-label="Congressional disclosures">` +
     `<div class="panel-head"><h2 class="section-h">Congressional disclosures</h2>` +
-    `<span class="panel-note">ALL PTR ROWS NAMING ${esc(t.ticker)} · ${
-      pinned.length > 0 && !opts.fullTable ? "ON SIGNALS ROWS FIRST, THEN FILED ↓" : "SORTED FILED ↓"
-    } · STATUTORY RANGES · FILED ≤45D LATE</span>` +
-    (opts.fullTable ? "" : `<a class="section-link" href="${congressTickerHref(t.ticker)}">full congressional view ↗</a>`) +
+    /* Launch copy audit ticker-08: the order in a few words and one link to
+       every row; the ranges and the filing clock are the provenance line's, and
+       both dates show on every row. */
+    `<span class="panel-note">${pinned.length > 0 && !opts.fullTable ? "Signals rows first, then newest" : "Newest filed first"}</span>` +
+    (opts.fullTable ? "" : `<a class="section-link" href="${congressTickerHref(t.ticker)}">All ${fmtInt(t.txns.length)} ${t.txns.length === 1 ? "row" : "rows"} ↗</a>`) +
     `</div>` +
     recent +
     `</section>` +
     `</div>` +
     `</section>` +
     /* PANEL 2 — Institutional (R21): who holds (with crowding), then the
-       Congress ↔ notable-managers overlap, then "Do the two regimes agree?" */
+       Congress ↔ notable-managers overlap, then "Congress vs filers" (ticker-13) */
     `<section class="tk-panel" role="tabpanel" id="institutional" aria-labelledby="tab-institutional">` +
     `<div class="design-band design-ticker-band design-ticker-holders">` +
     `<div>` + tickerInstSectionHtml(inst, t.ticker) + `</div>` +
@@ -408,18 +454,7 @@ export function tickerUnifiedBody(
     `<div class="design-band design-ticker-band design-ticker-agree">` +
     agreementHtml(t, stamps, inst) +
     `</div>` +
-    `</section>` +
-    footnoteBlock(
-      info.mappedName
-        ? [
-            {
-              mark: "†",
-              html: `issuer name from the SEC's present-day ticker list — a present-day mapping, not the name as of each filing`,
-            },
-          ]
-        : [],
-      { id: "ticker-footnotes" },
-    )
+    `</section>`
   );
 }
 
@@ -488,19 +523,28 @@ function timelineHtml(t: TickerEntity, stamps: BuildStamps, pinned: ReadonlySet<
     const d = new Date(Date.UTC(+bounds.start.slice(0, 4), +bounds.start.slice(5, 7) - 1 + m, 1));
     return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
   });
+  /* Launch copy audit ticker-06: one meta line — the axis, the window, the
+     rows placed, and (when any) the rows that cannot be placed — with the
+     legend and the trade-date-not-filing-date note as its tip. */
+  const legend =
+    `▲ buy, ▼ sell; height = lower bound (log scale)${ringed > 0 ? "; ringed = on Signals" : ""}. ` +
+    `Trade date, not filing date — the filing lag is in the table below.`;
   return (
     `<section class="panel design-timeline" aria-label="Congress disclosure timeline">` +
     `<div class="panel-head"><h2 class="section-h">Congress · disclosure timeline</h2>` +
-    `<span class="panel-note">TRADE DATES · 24M · ▲ BUY ▼ SELL · HEIGHT = LOG LOWER BOUND${ringed > 0 ? " · RINGED = ON SIGNALS" : ""}</span></div>` +
+    `<span class="panel-note">By trade date · 24 months · ${fmtInt(rows.length)} ${rows.length === 1 ? "row" : "rows"}` +
+    (undated > 0 ? ` · ${fmtInt(undated)} undated, not placed` : "") +
+    " " +
+    noteFromHtml(esc(legend), { scope: "ticker-timeline" }, "legend", { trigger: "mark", name: "Timeline legend" }) +
+    `</span></div>` +
     (rows.length === 0
       ? `<p class="section-note">No dated ${esc(t.ticker)} rows fall inside the trailing 24 months by trade date.</p>`
       : `<div class="tl-plot" aria-hidden="true">${grid}${marks}</div>` +
         `<div class="tl-axis" aria-hidden="true">${ticks.map((x) => `<span>${esc(x)}</span>`).join("")}</div>` +
         `<p class="visually-hidden">${fmtInt(rows.length)} dated disclosures in the window, placed by trade date; magnitudes are the disclosed lower bounds, against gridlines at ${TIMELINE_GRIDLINES.map(([, l]) => l).join(", ")}` +
-        `${ringed > 0 ? `; ${fmtInt(ringed)} ringed ${ringed === 1 ? "mark is a row" : "marks are rows"} on Signals, pinned in the table below` : ""}.</p>`) +
-    `<p class="section-note">Trade date, not filing date — the lag lives in the table below. ${fmtInt(rows.length)} rows placed` +
-    (undated > 0 ? ` · ${fmtInt(undated)} rows disclose no trade date and cannot be placed` : "") +
-    `.</p></section>`
+        `${ringed > 0 ? `; ${fmtInt(ringed)} ringed ${ringed === 1 ? "mark is a row" : "marks are rows"} on Signals, pinned in the table below` : ""}` +
+        `${undated > 0 ? `; ${fmtInt(undated)} ${undated === 1 ? "row discloses" : "rows disclose"} no trade date and cannot be placed` : ""}.</p>`) +
+    `</section>`
   );
 }
 
@@ -558,7 +602,7 @@ function membersActiveHtml(t: TickerEntity, stamps: BuildStamps, ctx: RenderCtx,
     .map((m) => {
       const dir = netDirection(m.net);
       return (
-        `<tr><td class="c-member c-flex">${m.first.bioguide ? `<a href="${memberHrefFor(m.first.bioguide, ctx)}">${esc(m.first.name)}</a>` : esc(m.first.name)} <span class="aff ${partyClass(m.first.party)}">${esc(affTextOf(m.first))}</span></td>` +
+        `<tr><td class="c-member c-flex">${m.first.bioguide ? `<a data-row-link href="${memberHrefFor(m.first.bioguide, ctx)}">${esc(m.first.name)}</a>` : esc(m.first.name)} <span class="aff ${partyClass(m.first.party)}">${esc(affTextOf(m.first))}</span></td>` +
         `<td class="c-num">${fmtInt(m.rows)}</td>` +
         `<td class="c-num ${dir === "accumulation" ? "c-buy" : dir === "disposal" ? "c-sell" : "c-muted"}">${esc(netIntervalText(m.net))}</td>` +
         (hasCommittees ? `<td class="c-num ${m.committee && m.committee !== "—" && m.committee !== "unanswerable" ? "c-amber" : "c-muted"}">${m.committee === null ? "—" : esc(m.committee)}</td>` : "") +
@@ -569,7 +613,22 @@ function membersActiveHtml(t: TickerEntity, stamps: BuildStamps, ctx: RenderCtx,
   return (
     `<section class="panel design-members-active" aria-label="Members active">` +
     `<div class="panel-head"><h2 class="section-h">Members active in ${esc(t.ticker)}</h2>` +
-    `<span class="panel-note">12M · NET LOWER BOUND · ${deps?.committees ? `COMMITTEES AS OF TRADE DATE · SNAPSHOT ${esc(deps.committees.snapshotDate)}` : "COMMITTEE ROSTER NOT IN BUILD"}</span></div>` +
+    /* Launch copy audit ticker-07: the window and the order in a few words;
+       the two method lines are its tip. (Without the roster, the table foot
+       still states the Committees column's absence.) */
+    `<span class="panel-note">12 months · most active first ` +
+    noteFromHtml(
+      esc(
+        `Rows = number of disclosures, not dollars. Net = lower bound of the net range. ` +
+          (deps?.committees
+            ? `Committees as of each member's latest trade in the window (roster snapshot ${deps.committees.snapshotDate}).`
+            : "The committee roster is not in this build."),
+      ),
+      { scope: "ticker-members" },
+      "method",
+      { trigger: "mark", name: "How this table counts" },
+    ) +
+    `</span></div>` +
     (members.length === 0
       ? `<p class="section-note">No member disclosed ${esc(t.ticker)} in the trailing 12 months.</p>`
       : `<div class="table-scroll"><table class="etable etable-compact"${dataColumnsAttr(cols)}><caption class="visually-hidden">Members disclosing ${esc(t.ticker)} in the trailing 12 months</caption>` +
@@ -583,7 +642,9 @@ function membersActiveHtml(t: TickerEntity, stamps: BuildStamps, ctx: RenderCtx,
         `</tr></thead>` +
         `<tbody>${rowsHtml}</tbody></table></div>` +
         tableFootReasonHtml(cols) +
-        `<p class="section-note">${byMember.size > members.length ? `${esc(rangeOfTotal(1, members.length, byMember.size, "members"))} in the window, most active first` : `${fmtInt(byMember.size)} members in the window`} · counts of disclosures, not dollars.</p>`) +
+        /* launch copy audit ticker-07: the range alone ("1–8 of 28"); the
+           heading names the members and the meta the window */
+        `<p class="section-note">${byMember.size > members.length ? esc(rangeOfTotal(1, members.length, byMember.size, "").trim()) : `${fmtInt(byMember.size)} ${byMember.size === 1 ? "member" : "members"}`}</p>`) +
     `</section>`
   );
 }
@@ -623,13 +684,19 @@ function agreementHtml(t: TickerEntity, stamps: BuildStamps, inst: TickerInstSec
   const row = (k: string, left: number, right: number, text: string, cls: string): string =>
     `<div class="agree-row"><span class="agree-k">${esc(k)}</span><span class="design-diverging" aria-hidden="true"><span style="right:50%;width:${((left / total) * 50).toFixed(1)}%"></span><span class="sale" style="left:50%;width:${((right / total) * 50).toFixed(1)}%"></span></span><span class="agree-v ${cls}">${esc(text)}</span></div>`;
   return (
-    `<section class="panel design-agree" aria-label="Do the two regimes agree">` +
-    `<div class="panel-head"><h2 class="section-h">Do the two regimes agree?</h2><span class="panel-note">TRAILING 12M · CONGRESS vs FILERS NET</span></div>` +
+    /* launch copy item ticker-13 (adapted): one head and one line for the
+       side this build cannot compute; WHY it cannot, and that agreement is
+       stated only when both sides are computed, are that line's tip */
+    `<section class="panel design-agree" aria-label="Congress vs filers">` +
+    `<div class="panel-head"><h2 class="section-h">Congress vs filers</h2><span class="panel-note">12 months</span></div>` +
     row("Congress net (rows)", buys, sells, rows.length === 0 ? "no rows" : `${fmtInt(buys)} buy / ${fmtInt(sells)} sell`, dir === "accumulation" ? "c-buy" : dir === "disposal" ? "c-sell" : "c-muted") +
     row("Congress net ($ bound)", dir === "accumulation" ? 1 : 0, dir === "disposal" ? 1 : 0, netIntervalText(net), dir === "accumulation" ? "c-buy" : dir === "disposal" ? "c-sell" : "c-muted") +
-    `<div class="agree-row agree-unavailable"><span class="agree-k">Filers net (actions)</span><span class="design-diverging" aria-hidden="true"></span><span class="agree-v c-muted">not in build</span></div>` +
-    `<div class="agree-row agree-unavailable"><span class="agree-k">Filers net ($ Q/Q)</span><span class="design-diverging" aria-hidden="true"></span><span class="agree-v c-muted">not in build</span></div>` +
-    `<p class="section-note">${instAbsenceReason(inst, "the filer side cannot be computed", "The filer side needs per-issuer quarter-over-quarter actions, which the published aggregate does not carry for this issuer.")} Convergence and divergence are stated only when both sides are computed.</p>` +
+    `<div class="agree-row agree-unavailable"><span class="agree-k">Filers</span><span class="design-diverging" aria-hidden="true"></span><span class="agree-v c-muted">not computed${noteFromHtml(
+      `${instAbsenceReason(inst, "the filer side cannot be computed", "The filer side needs per-issuer quarter-over-quarter actions, which the published aggregate does not carry for this issuer.")} Convergence and divergence are stated only when both sides are computed.`,
+      { scope: "ticker-agree" },
+      "filers",
+      { trigger: "mark", name: "Why the filer side is not computed" },
+    )}</span></div>` +
     `</section>`
   );
 }

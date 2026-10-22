@@ -217,8 +217,10 @@
    the table reaches the band's edges: row rules, hover and the row edge run the
    full band width while the first cell's text sits on the gutter. */
 :is(.design-page, .entity-page) .table-scroll {
-  --gutter-l: var(--gutter);
-  --gutter-r: var(--gutter);
+  /* launch M1c (LD10): the band's safe gutters (the root pair, restated here
+     because `.table-scroll` redefines the pair for its own cells) */
+  --gutter-l: max(var(--gutter), env(safe-area-inset-left));
+  --gutter-r: max(var(--gutter), env(safe-area-inset-right));
   margin-left: calc(-1 * var(--gutter-l));
   margin-right: calc(-1 * var(--gutter-r));
 }
@@ -505,7 +507,6 @@ table:is(.etable, .feed-table.reference-feed) {
   border-top: 1px dashed var(--rule);
   white-space: normal;
 }
-.etable .mix-bucket td { color: var(--ink3); font-style: italic; }
 .etable td sup,
 .reference-feed td sup {
   font-size: var(--fs-meta);
@@ -552,8 +553,8 @@ tr[data-edge="late"] > td.c-kind.neutral { --kind-color: var(--kind-exch-text); 
    edge sits on the band edge and its text on the gutter — the same geometry
    as the ledger tables' first cell. */
 .reference-feed :is(.reference-row, .reference-paper) > td:first-child {
-  margin-left: calc(-1 * var(--gutter));
-  padding-left: var(--gutter);
+  margin-left: calc(-1 * var(--gutter-l));
+  padding-left: var(--gutter-l);
 }
 .reference-feed tr.reference-row[data-edge] > td:first-child {
   box-shadow: inset 3px 0 0 var(--row-edge, transparent);
@@ -1129,8 +1130,8 @@ span.mgr-chip,
 /* ---------- ≤1080px: the feed's two-line rows (moved here unchanged, with the
    reference rows' alignment and wrap rules that media.css used to give them) ---------- */
 @media (max-width: 1080px) {
-  .reference-feed .reference-row { display: grid; grid-template-columns: 70px minmax(0,1fr) 100px; gap: 8px 12px; padding: 12px var(--gutter); min-height: 0; height: auto; position: relative; }
-  .reference-feed .reference-paper { grid-template-columns: 70px minmax(0,1fr) 100px; gap: 8px 12px; padding: 12px var(--gutter); min-height: 0; }
+  .reference-feed .reference-row { display: grid; grid-template-columns: 70px minmax(0,1fr) 100px; gap: 8px 12px; padding: 12px var(--gutter-r) 12px var(--gutter-l); min-height: 0; height: auto; position: relative; }
+  .reference-feed .reference-paper { grid-template-columns: 70px minmax(0,1fr) 100px; gap: 8px 12px; padding: 12px var(--gutter-r) 12px var(--gutter-l); min-height: 0; }
   /* The range line keeps the height of a flag chip, so rows with and without
      flags fold to the same height. */
   .reference-feed .reference-row > .cell-range { min-height: 17px; }
@@ -1153,14 +1154,14 @@ span.mgr-chip,
      and as #feed-section does at ≥1081px: the rows carry the gutter, so a feed
      left inside the band's content box put its text on a DOUBLE gutter
      (review C-11). The box keeps its top and bottom rules. */
-  #congress-feed { margin-left: calc(-1 * var(--gutter)); margin-right: calc(-1 * var(--gutter)); border-left: 0; border-right: 0; }
+  #congress-feed { margin-left: calc(-1 * var(--gutter-l)); margin-right: calc(-1 * var(--gutter-r)); border-left: 0; border-right: 0; }
   /* The column head is folded away visually, never removed: its labels and
      notes (the column definitions) stay in the accessibility tree (review
      C-12; css-fold's honesty sweep lists `.reference-head`). */
   .reference-feed .reference-head { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
   /* …and a keyboard user who tabs into its sort buttons or notes SEES where
      focus is: the head unfolds as a wrapped line of labels while it holds it. */
-  .reference-feed .reference-head:focus-within { position: static; width: auto; height: auto; margin: 0; padding: 8px var(--gutter); overflow: visible; clip: auto; clip-path: none; white-space: normal; display: flex; flex-wrap: wrap; gap: 6px 14px; }
+  .reference-feed .reference-head:focus-within { position: static; width: auto; height: auto; margin: 0; padding: 8px var(--gutter-r) 8px var(--gutter-l); overflow: visible; clip: auto; clip-path: none; white-space: normal; display: flex; flex-wrap: wrap; gap: 6px 14px; }
   .reference-feed .cell-traded .filed { display: inline; }
   .reference-feed .cell-member .aff { white-space: nowrap; }
   .reference-feed .reference-row .flag { max-width: 100%; }
@@ -1176,7 +1177,7 @@ span.mgr-chip,
    band width with its text on the gutter, and the count and pager share the
    foot row. */
 @media (min-width: 1081px) {
-  #feed-section { display: grid; grid-template-columns: minmax(0,1fr) auto; margin-left: calc(-1 * var(--gutter)); margin-right: calc(-1 * var(--gutter)); border-top: 0; }
+  #feed-section { display: grid; grid-template-columns: minmax(0,1fr) auto; margin-left: calc(-1 * var(--gutter-l)); margin-right: calc(-1 * var(--gutter-r)); border-top: 0; }
   #feed-section > .panel-head { grid-row: 1; grid-column: 1; margin: 0; padding: 12px 0 12px var(--gutter); justify-content: flex-start; border: 0; }
   #feed-section .filterbar, #congress-feed { display: contents; }
   #feed-section .filter-controls { grid-column: 2; grid-row: 1; display: flex; align-items: center; padding-right: var(--gutter); gap: 8px; }
@@ -1192,7 +1193,6 @@ span.mgr-chip,
   #feed-section .filter-count { grid-row: 3; grid-column: 1; padding: 12px 0 8px var(--gutter); font: 400 var(--fs-note)/1.6 var(--sans); align-self: center; text-align: left; }
   #feed-section .reference-feed-scroll { grid-row: 2; grid-column: 1/-1; border-top: 1px solid var(--rule); padding-top: 18px; }
   #feed-section .feed-foot { grid-row: 3; grid-column: 2; padding: 8px var(--gutter) 8px 8px; margin: 0; border: 0; justify-content: flex-end; }
-  #feed-section .feed-foot .pager-range { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   #feed-footnote { grid-row: 4; grid-column: 1/-1; margin: 0; padding: 0 var(--gutter) 12px; font-size: var(--fs-meta); }
   #feed-section .feed-loading, #feed-section .feed-empty { grid-row: 2; grid-column: 1/-1; }
   .design-rankings .reference-ranking { padding-top: 14px; }
@@ -1204,8 +1204,8 @@ span.mgr-chip,
   .reference-feed .reference-paper {
     grid-template-columns: 58px minmax(150px,1.2fr) 70px minmax(100px,1fr) 100px 200px 140px 60px;
     column-gap: 12px;
-    padding-left: var(--gutter);
-    padding-right: var(--gutter);
+    padding-left: var(--gutter-l);
+    padding-right: var(--gutter-r);
   }
   /* 30px rows; a row whose flags wrap grows rather than overlapping the next. */
   .reference-feed :is(.reference-row, .reference-paper) { min-height: max(30px, var(--hit-min)); margin: 0; }
@@ -1216,30 +1216,207 @@ span.mgr-chip,
   .th-full { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
 
-/* ---------- ≤720px: the fold ----------
-   Wide tables scroll inside their container with a sticky identity column and
-   an edge fade; the page never scrolls sideways. Type stays on the tokens and
-   the floor; the 16px gutter and the 44px rows come from the tokens. */
+/* ---------- ≤720px: the fold — row cards (launch M1b: D4, LD5, LD6) ----------
+   D4 reverses "wide tables scroll within their container" on phones
+   (docs/frontend/design-principles.md §5, the reversal record): no table
+   scrolls sideways and the page never does. Every table row becomes a CARD —
+   a wrapping line of its cells, ordered by the ledger ROLE classes (never
+   :nth-child): the kind word and the identity first, then the qualifiers and
+   the numbers (each number prints its column's label, `data-label`, copied
+   from the head by withTableRoles), then the dates and the receipt. `data-card`
+   on the table (emitted with the explicit roles, R40) selects the layout; the
+   feed keeps its own ≤1080px grid card (above). The head folds through the
+   clip pattern and unfolds as a wrapped line while it holds focus, so its sort
+   buttons and notes stay reachable and announced. Names, assets and managers
+   WRAP; an owner, partial, flag, date, lag, range or receipt is never clamped
+   or ellipsised (launch-phone-css.test.ts sweeps it). The decorative size band
+   (aria-hidden, no honesty class) is omitted: the range text it draws stays.
+   Type stays on the tokens (the phone ramp, foundation.css); the 16px gutter
+   and the 44px row come from the tokens. */
 @media (max-width: 720px) {
   .table-scroll {
     position: relative;
-    mask-image: linear-gradient(to right, #000 calc(100% - 28px), rgba(0, 0, 0, 0.25));
-    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), rgba(0, 0, 0, 0.25));
+    overflow-x: visible;
+    background: none;
+    mask-image: none;
+    -webkit-mask-image: none;
   }
-  .etable[data-sticky-first] th:first-child,
-  .etable[data-sticky-first] td:first-child {
-    position: sticky;
-    left: 0;
-    background: var(--paper);
-    border-right: 1px solid var(--rule2);
+  table[data-card]:not([data-card="feed"]) {
+    --card-l: 0px;
+    --card-r: 0px;
+    display: block;
+    width: 100%;
+    min-width: 0; /* a card never keeps a scrolling table's width (launch review B1) */
+  }
+  .table-scroll > table[data-card]:not([data-card="feed"]) {
+    --card-l: var(--gutter-l);
+    --card-r: var(--gutter-r);
+  }
+  table[data-card]:not([data-card="feed"]) > :is(thead, tbody, tfoot) { display: block; }
+  /* the head: folded, never removed; unfolded while it holds focus */
+  table[data-card]:not([data-card="feed"]) > thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+  table[data-card]:not([data-card="feed"]) > thead:focus-within {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
+    clip-path: none;
+    white-space: normal;
+  }
+  table[data-card]:not([data-card="feed"]) > thead:focus-within > tr {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    padding: 8px var(--card-r) 8px var(--card-l);
+  }
+  .etable[data-card]:not([data-card="feed"]) > thead:focus-within > tr > th { padding: 0; border: 0; white-space: normal; }
+  /* the row: one card */
+  table[data-card]:not([data-card="feed"]) > :is(tbody, tfoot) > tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 12px;
+    position: relative;
+    min-height: var(--hit-min);
+    padding: 10px var(--card-r) 10px var(--card-l);
+    border-bottom: 1px solid var(--rule-row);
+  }
+  /* the kind edge rides on the card, not on its first cell */
+  table[data-card]:not([data-card="feed"]) > tbody > tr[data-edge] {
+    padding-left: max(var(--card-l), 11px);
+    box-shadow: inset 3px 0 0 var(--row-edge, transparent);
+  }
+  .etable[data-card]:not([data-card="feed"]) > tbody > tr[data-edge] > td:first-child { box-shadow: none; }
+  /* every cell: a wrapping inline block, never clipped. The `.table-scroll >`
+     form matches the gutter rules' weight above and wins by source order. */
+  table[data-card]:not([data-card="feed"]) > :is(tbody, tfoot) > tr > :is(td, th),
+  .table-scroll > table[data-card]:not([data-card="feed"]) > :is(tbody, tfoot) > tr > :is(td, th) {
+    display: block;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    padding: 0;
+    border: 0;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    text-align: left;
+    position: static;
+    background: none;
+  }
+  .etable[data-card]:not([data-card="feed"]):not([data-multiline]) > * > tr > .c-num:not(:first-child) { padding-left: 0; }
+  /* order by role: the kind word and rank, then the identity, then the rest,
+     then the dates, then the receipt (pushed to the line's end) */
+  table[data-card]:not([data-card="feed"]) > tbody > tr > :is(.c-kind, .c-side, .c-rank) { order: -3; }
+  table[data-card]:not([data-card="feed"]) > tbody > tr > :is(.c-member, .c-filer, .c-pos, .c-issuer, .c-ticker) { order: -2; }
+  table[data-card]:not([data-card="feed"]) > tbody > tr > :is(.c-member, .c-filer, .c-pos, .c-issuer) {
+    flex: 1 1 60%;
+    font-size: var(--fs-name);
+  }
+  table[data-card]:not([data-card="feed"]) > tbody > tr > :is(.c-secondary, .c-flags) { order: -1; flex: 1 1 100%; }
+  table[data-card]:not([data-card="feed"]) > tbody > tr > :is(.c-traded, .c-dates, .c-filed) { order: 1; }
+  table[data-card]:not([data-card="feed"]) > tbody > tr > .c-src { order: 2; margin-left: auto; }
+  /* a cell that spans the table (a separator, an empty state) spans the card */
+  table[data-card]:not([data-card="feed"]) > :is(tbody, tfoot) > tr > [colspan] { flex: 1 1 100%; }
+  /* a number names its column (the head is folded); the label is decoration
+     for sight — the column head already announces it, so it is spoken once */
+  table[data-card]:not([data-card="feed"]) > tbody > tr > [data-label]::before {
+    content: attr(data-label) " ";
+    content: attr(data-label) " " / "";
+    font: 600 var(--fs-label)/1 var(--mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-label);
+  }
+  /* names, assets and managers wrap instead of ellipsising */
+  table[data-card]:not([data-card="feed"]) .asset-line { flex-wrap: wrap; }
+  table[data-card]:not([data-card="feed"]) .asset-line > .asset-text,
+  table[data-card]:not([data-card="feed"]) .asset-line > .asset-text > .note > .note-label {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+  }
+  /* the decorative size band: the range text beside it stays */
+  table[data-card]:not([data-card="feed"]) .band { display: none; }
+  /* ...and a cell that shows nothing — the one that held only that band (a
+     row with no flags), or an empty one (a holder with no flags) — leaves the
+     card's line: kept in the accessibility tree like any visually hidden
+     text, but no longer an empty flex item that doubled the gap beside it,
+     or started a line 12px in (24px for 12, the gate's card G10 on 75e9920) */
+  table[data-card]:not([data-card="feed"]) > tbody > tr > td:empty,
+  table[data-card]:not([data-card="feed"]) > tbody > tr > td.c-bar:not(:has(.flag)):has(> .band) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  /* a board's buy │ sell bar keeps its own width on a card: the board zeroes
+     it to flex inside its column, and a card has no column, so it drew
+     nothing and its split was lost on a phone */
+  .design-rankings table[data-card]:not([data-card="feed"]) .design-diverging { min-width: 90px; }
+  /* a mark takes its own advance on a card: there is no column slot for it to
+     hang in, and at a line's end a hanging mark (the receipt's ⓘ) reached past
+     the card's right inset, its hit square 14px past the viewport, so the
+     page scrolled sideways (gate on 75e9920: /institutional/ Recent activity,
+     404px at 390) */
+  table[data-card]:not([data-card="feed"]) > tbody > tr > td :is(.hang, .note:has(> .note-mark)) { width: auto; }
+  /* no sticky identity column on a card — and none of its stacking: a card
+     cell is a flex item, so the sticky column's z-index 2 still made it a
+     stacking layer over the cell before it, covering that cell's tip square
+     (the filer's ticker tips, gate G12 on 75e9920) */
+  .etable[data-card]:is([data-sticky-first], [data-sticky-issuer]) > * > tr > :is(:first-child, .c-pos) {
+    position: static;
+    z-index: auto;
+    border-right: 0;
+    background: none;
+  }
+  /* Whole-row taps (launch M1c, LD7, R7): the row's MAIN link stretches over
+     the card through its ::after, BENEATH the row's other links, buttons and
+     summaries, which sit above it; so a tap anywhere else on the card opens
+     the row, and a receipt, a tip or a chip is still its own target. The main
+     link — the member, else the filer, position or issuer, else the ticker —
+     is the one its RENDERER marks `data-row-link` (format.ts, ROW_LINK_ATTR);
+     it is never guessed by position (launch review M2: `a:first-of-type` also
+     matched the receipt inside a position cell, `div.cell-src > a`, whose
+     stretch then took every tap on the card and opened the SEC filing). A
+     receipt is never stretched, marked or not: the :not() is the backstop. */
+  table[data-card] > tbody > tr a[data-row-link]:not(:is(.cell-src, .c-src) a),
+  .reference-feed .reference-row a[data-row-link]:not(:is(.cell-src, .c-src) a) {
+    position: static;
+  }
+  table[data-card] > tbody > tr a[data-row-link]:not(:is(.cell-src, .c-src) a)::before,
+  .reference-feed .reference-row a[data-row-link]:not(:is(.cell-src, .c-src) a)::before {
+    content: none;
+  }
+  table[data-card] > tbody > tr a[data-row-link]:not(:is(.cell-src, .c-src) a)::after,
+  .reference-feed .reference-row a[data-row-link]:not(:is(.cell-src, .c-src) a)::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+  }
+  table[data-card] > tbody > tr :is(a, button, summary, [tabindex]):not(a[data-row-link]:not(:is(.cell-src, .c-src) a)),
+  .reference-feed .reference-row :is(a, button, summary, [tabindex]):not(a[data-row-link]:not(:is(.cell-src, .c-src) a)) {
+    position: relative;
     z-index: 2;
   }
-  .etable td:is(.c-member, .c-filer, .c-pos):not(.c-flex) { max-width: 200px; }
-  /* A scrolling table's flexible column keeps its name readable (to 200px)
-     rather than collapsing to its zero minimum; the table scrolls instead. */
-  .etable td.c-flex { max-width: 200px; }
   .reference-feed .cell-member { white-space: normal; }
-  .design-band > *, .design-rankings > * { padding-left: var(--gutter); padding-right: var(--gutter); }
+  .design-band > *, .design-rankings > * { padding-left: var(--gutter-l); padding-right: var(--gutter-r); }
 }
 /* ================================================================ ledger:end */
 
@@ -1274,8 +1451,6 @@ span.mgr-chip,
   flex: 0.7;
   position: relative;
 }
-.rb-split { display: flex; gap: 3px; }
-.rb-half { flex: 1; position: relative; }
 .rb-bar {
   position: absolute;
   left: 50%;
@@ -1284,7 +1459,6 @@ span.mgr-chip,
   border: 1px solid var(--rule2);
   box-sizing: border-box;
 }
-.rb-half .rb-bar { width: 14px; }
 .rb-buy { background: var(--buy); opacity: 0.8; }
 .rb-sell { background: var(--sell); opacity: 0.8; }
 .rb-down .rb-bar { top: 0; bottom: auto; }
@@ -1301,6 +1475,7 @@ span.mgr-chip,
 }
 .rb-label {
   flex: 1;
+  min-width: 0; /* a label never widens its column past the track's (launch review M3) */
   text-align: center;
   font: 400 var(--fs-meta) var(--mono);
   color: var(--ink3);
@@ -1341,14 +1516,8 @@ span.mgr-chip,
 .mf-shade-est .mf-swatch { background: color-mix(in oklab, var(--ink3) 12%, transparent); }
 .ribbon-monthly .mf-window,
 .mf-shade-window .mf-swatch { background: color-mix(in oklab, var(--ink3) 26%, transparent); }
-.mf-breadth { display: flex; gap: 2px; height: 48px; padding: 0 2px; margin-top: 12px; }
-.mf-bcol { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.mf-bup, .mf-bdown { flex: 1; position: relative; }
-.mf-bup { border-bottom: 1px solid var(--rule2); }
-.mf-bbar { position: absolute; left: 50%; transform: translateX(-50%); width: 70%; min-width: 2px; max-width: 18px; opacity: 0.8; }
-.mf-bup .mf-bbar { bottom: 0; }
-.mf-bdown .mf-bbar { top: 0; }
-.mf-breadth-note,
+/* Launch M3b: the breadth strip and its caption are retired — the Members
+   line chart (congress-feed.css) draws the same counts on a labelled axis. */
 .mf-completeness,
 .mf-exclusions {
   font: 400 var(--fs-note)/1.6 var(--mono);

@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { baseStyleImports, baseStylesheet, styleFilesOnDisk } from "./lib/styles.ts";
+import { HONESTY_SELECTORS } from "./lib/honesty-selectors.ts";
 
 import {
   s1ModuleAbsent,
@@ -21,7 +22,6 @@ import {
   s7Banner,
   tickerInstSectionHtml,
   specimenCard,
-  moduleCard,
   holdersTableHtml,
   changesTableHtml,
   flowRibbon,
@@ -38,9 +38,9 @@ import {
   signalsBody,
   signalsInstitutionalHtml,
 } from "../src/lib/ui/index.ts";
-import { fixtureInstitutional, fixtureTxns } from "./lib/inst-signals-fixture.ts";
+import { fixtureInstitutional, fixtureMoves, fixtureTxns } from "./lib/inst-signals-fixture.ts";
 import { fixtureOverlap } from "./lib/overlap-fixture.ts";
-import { buildOverlap } from "../src/lib/ui/signals-overlap.ts";
+import { buildOverlap, overlapCarried, overlapRowId } from "../src/lib/ui/signals-overlap.ts";
 import { playbookTriggers } from "../src/lib/playbooks.ts";
 import { signalsOverlapHtml, signalsPlaybooksHtml, signalsOverlapMethodHtml, signalsPlaybooksMethodHtml } from "../src/lib/ui/index.ts";
 import { redactFiledNames } from "./lib/banned-scan.ts";
@@ -50,6 +50,17 @@ import { memberSignalsPanel, ruleBookHtml, lagBandHtml, signalsRankingHtml, comm
 import { buildTriage, type TriageResult } from "../src/lib/signal-triage.ts";
 import type { SignalArtifact } from "../src/lib/signals.ts";
 import { loadTriageFixture } from "./lib/triage-fixture.ts";
+import {
+  congressTileHtml,
+  homeFigures,
+  homeHeroCopyHtml,
+  homeLeadHtml,
+  homeLedgerHtml,
+  homeSectionsHtml,
+  homeTrustHtml,
+  homeTryChips,
+  movesTileHtml,
+} from "../src/lib/ui/home.ts";
 
 let goldenCache: { artifact: SignalArtifact; triage: TriageResult } | null = null;
 /** The golden public-row fixture's triage (signals-v3 M2), built once. */
@@ -80,7 +91,10 @@ function goldenTickerBody(ticker: string): string {
   const txns = f.rows
     .filter((r) => r.ticker === ticker)
     .sort((a, b) => (a.filed !== b.filed ? (a.filed < b.filed ? 1 : -1) : a.txnId < b.txnId ? -1 : 1));
-  const holders = Array.from({ length: 12 }, (_, i) => ({ rank: i + 1, cik: String(1000 + i).padStart(10, "0"), name: `H${i}`, value: 12_000 - i, securities: 1, keySource: "entity", flags: [] }));
+  /* launch M7b (R33): 30 holders, so the list holds rows back (26..30) and the
+     "Show all N holders" disclosure is emitted — the property this fixture
+     carried at 12 holders under the old 10-row window. */
+  const holders = Array.from({ length: 30 }, (_, i) => ({ rank: i + 1, cik: String(1000 + i).padStart(10, "0"), name: `H${i}`, value: 30_000 - i, securities: 1, keySource: "entity", flags: [] }));
   return tickerUnifiedBody(
     { ticker, txns },
     { state: "data", name: "X", cik: "0000070858", period: "2026-06-30", latestFiled: null, topn: 25, holders },
@@ -311,191 +325,8 @@ function rulesOf(body: string): { selector: string; decls: string }[] {
   return rules;
 }
 
-/** The honesty-selector allowlist: any ≤720px rule matching one of these must
-    never remove the element from the accessibility tree. */
-const HONESTY_SELECTORS = [
-  ".cell-filed",
-  ".cell-traded",
-  ".traded-date",
-  ".mobile-dates",
-  ".lag",
-  ".lag-late",
-  ".lag-anomaly",
-  ".owner-note",
-  ".flag",
-  ".cell-src",
-  ".src-missing",
-  ".src-derived",
-  ".feed-footnote",
-  ".footnotes-stacked",
-  ".footnote-line",
-  ".dagger",
-  ".fn-ref",
-  ".terminus",
-  ".caveat-line",
-  ".caveat-inline",
-  /* SL-R15/LD8 point 4: the collapsed §5 box's summary is now the honesty
-     channel that stands in for the always-open body, so the fold sweep must
-     protect it exactly as it protects `.caveat-line`. */
-  ".caveat-box-summary",
-  ".table-stamp",
-  ".inst-stamp",
-  ".rb-caption",
-  /* SIGNALS-CLARITY M3 (R19): the Monthly flow panel's honesty lines — the
-     exclusion counts, the per-month "≈p% filed (est.)" shading labels, the
-     completeness method with its measured CDF and stated bias — and the
-     visually-hidden month table that carries every figure for assistive
-     technology. (Its method caption is `.rb-caption`, above.) */
-  ".mf-exclusions",
-  ".mf-shade-labels",
-  ".mf-completeness",
-  ".mf-table",
-  ".c-traded",
-  ".c-src",
-  ".c-flags",
-  ".c-amount",
-  ".spec-dates",
-  /* signals-v3 M3: `.si-asof` left with the ticker's section index (its "as
-     of" stays in the provenance strip, `.stamp-line`). The ticker page's own
-     honesty lines join below with the M3 sweep. */
-  ".filter-count",
-  ".paper-note",
-  ".chip-ocr",
-  ".nc-chip",
-  ".qoq-chip",
-  ".s7-banner",
-  ".period-note",
-  ".mtile-sub",
-  ".view-note",
-  /* RUN ALPHA-SURFACES-V2. Each of these carries a fact about what the reader
-     is NOT seeing, so none may be suppressed at any swept width:
-     `.col-why`  — why a column cannot be sorted
-     `.compact-disclosure` — the count a collapsed table is holding back
-     `.unranked-sep` — the count of rows a column cannot rank, and why */
-  ".col-why",
-  ".compact-disclosure",
-  ".unranked-sep",
-  /* Institutional (R9/R11/R22): each states a fact about what is NOT shown or
-     what a number does not mean, so none may be suppressed at any width:
-     `.mgr-person`  — the person behind a curated display name
-     `.mgr-chip`    — the manager's curated type, and the notable flag
-     `.c-issuer`    — the issuer a change is attributed to
-     `.c-secondary` — the manager, still full-contrast, merely not the anchor */
-  ".mgr-person",
-  ".mgr-chip",
-  ".c-issuer",
-  ".c-secondary",
-  /* SIGNALS-CLARITY M2 (R10, R12): the count of hits the default "Listed
-     stocks only" view hides, and the asset-type chip that labels the filed
-     type of every hit that is NOT a listed stock (a listed stock carries
-     none) — neither may vanish at a breakpoint. */
-  ".si-hidden-count",
-  ".si-asset-chip",
-  /* signals-v3 M2 (R11, R12, R23): a triage row's both dates, its LATE tag,
-     owner and receipt; a lead card's dual dates and receipt; the committee
-     caveat on the committee card and in the Cmte legend; and the meter's
-     inline name on phones. None may vanish at a breakpoint. */
-  ".si-row-filed",
-  ".si-row-traded",
-  ".si-row-src",
-  ".si-late-tag",
-  ".si-card-dates",
-  ".si-card-src",
-  ".si-card-context",
-  ".si-cmte-context",
-  ".si-meter-label",
-  /* signals-v4 M1 (LD4): the row's reason sentence — one line on the collapsed
-     row, cut by an ellipsis, never removed; whole in the opened row. */
-  ".si-row-why",
-  /* signals-v4 M1 (R3, R24; codex M1 round 1, F3): the statutory range on a
-     collapsed row and on a lead card — the only size a reader is shown, so
-     it may never vanish at a breakpoint either. */
-  ".si-row-amt",
-  ".si-card-amt",
-  /* signals-v3 M3 (R17, R19, R21, R23, LD9): the ticker page's "each section
-     keeps its own clock" line (moved from the lede into the provenance strip),
-     a pinned row's "On Signals" marker, and the "Show all N holders"
-     disclosure that holds holders 11..N. None may vanish at a breakpoint. */
-  ".tk-clock",
-  ".on-signals-mark",
-  ".tk-holders-more",
-  /* signals-v4 M2 (R12, R13, R16, R24, LD10, LD11): the Institutional tab's
-     honesty fields — a Congress line's range and dates (its owner, side and
-     receipt ride on `.owner-note`, `.si-chip` and `.si-row-src`); a move's
-     Δ $, filed date, 13F receipt and Congress count, and its Congress side's
-     stated absences; the page's own bound; the Consensus Congress count and
-     its qualifying count; the leaders' count and each one's largest new
-     position (or the stated absence); the provenance chips (the quarter, the
-     newest filing); /institutional/'s pointer to the moved sections. */
-  ".cl-amt",
-  ".cl-dates",
-  ".mv-dv",
-  ".mv-fil",
-  ".mv-src",
-  ".mv-cg",
-  ".mv-cong-none",
-  ".mv-bound",
-  ".cs-cg",
-  ".cs-count",
-  ".cv-count",
-  ".cv-top",
-  ".sig-pchip",
-  ".inst-moved",
-  /* signals-v4 M3 (R18, R19, R21, R24, R25): Overlap's co-occurrence line,
-     each row's relation and both sides' counts, and the page's own bound;
-     the Playbooks tab's "Not advice" line, its count line, each playbook's
-     status and verdict, each finding with its venue, sample and source link;
-     a playbook's chip and an opened row's playbook section; the filter's
-     live count. None may vanish at a breakpoint. */
-  ".ov-lede",
-  ".ov-rl",
-  ".ov-cg",
-  ".ov-mg",
-  ".ov-bound",
-  ".pb-disc",
-  ".pb-count",
-  ".pb-st",
-  ".pb-verdict",
-  ".ev-f",
-  ".ev-v",
-  ".ev-src",
-  ".pb-chip",
-  ".si-row-pb",
-  ".si-pb-status",
-  /* RUN SURFACES-LEGIBILITY, SL-R24 (T12). The note primitive is now the
-     channel a large share of this site's explanations travel on — every
-     `.col-why`, every footnote clause, the exclusion counts, the owner codes,
-     the signal rules. Suppressing either half of it at a breakpoint would hide
-     all of that at exactly the width where the page has least room, which is
-     the failure mode this sweep exists to catch. `.note-btn` is the reader's
-     only cue that an explanation exists; `.note-pop` is the explanation. */
-  ".note-btn",
-  ".note-pop",
-  /* DESIGN-POLISH M1 (H-15, T-17). The ledger's own honesty channels:
-     `.note-label` — a label that IS its explanation's trigger
-     `.hang`       — a mark (§ † ‡ ≈) hung in the column's slot
-     `.c-kind`     — the kind word (BUY, SELL, LATE, NEW, EXIT …)
-     `.cell-side`  — the feed row's side, the one cell that says which way
-     `.reference-head` — the feed's column head: its labels and their notes are
-                     the column definitions, and at ≤1080px it folds away
-                     visually, never out of the accessibility tree (review C-12)
-     The table foot's reason class is born with T2.1 (M2) and joins then. */
-  ".note-label",
-  ".hang",
-  ".c-kind",
-  ".cell-side",
-  ".reference-head",
-  /* DESIGN-POLISH M2 (T2.1, R12; M1 debt D9): `.table-foot-reason` — the one
-     line that says which honesty column a table REMOVED and why (no owner
-     qualifier, no flag, an incomplete book). A removed column plus a hidden
-     reason is a silent omission, the exact failure column presence forbids. */
-  ".table-foot-reason",
-  /* SIGNALS-CLARITY M1 (R2, R3): `.footer-notice` — the footer's one notice
-     sentence, the §13107(c) prohibited uses and "not financial advice" (or the
-     13F caveat) on every page. The full text moved to /methodology; this
-     sentence is what stays on the page, so no width may hide it. */
-  ".footer-notice",
-];
+/* The honesty-selector allowlist lives in test/lib/honesty-selectors.ts (launch
+   M1a, T1.1), shared with the phone predicates; the list is unchanged. */
 const M1_HONESTY_SELECTORS = [".note-label", ".hang", ".c-kind", ".cell-side", ".reference-head"];
 
 const PROHIBITED = [/display\s*:\s*none/, /visibility\s*:\s*hidden/, /content-visibility\s*:\s*hidden/];
@@ -620,7 +451,9 @@ test("signals-v4 T1.2: at ≤720px an open note is a bottom sheet — fixed, ins
   assert.equal(sheet.length, 1, "one screen-only sheet block");
   const rules = rulesOf(sheet[0]!.body);
   const open = rules.find((r) => r.selector === ".note-pop:popover-open")!;
-  for (const decl of [/position: fixed/, /inset: auto 10px 10px 10px/, /width: auto/, /max-width: none/, /max-height: 70vh/, /overflow: auto/, /translate: none/]) assert.match(open.decls, decl);
+  /* launch M1c (LD10): the 10px sheet inset grows to clear the device's safe
+     areas — the property (a fixed sheet inset by its gutters) is unchanged */
+  for (const decl of [/position: fixed/, /inset: auto max\(10px, env\(safe-area-inset-right\)\) max\(10px, env\(safe-area-inset-bottom\)\) max\(10px, env\(safe-area-inset-left\)\)/, /width: auto/, /max-width: none/, /max-height: 70vh/, /overflow: auto/, /translate: none/]) assert.match(open.decls, decl);
   assert.match(rules.find((r) => r.selector === ".note-pop::backdrop")!.decls, /background: rgb\(0 0 0 \/ 55%\)/, "the scrim");
   for (const r of rules) for (const bad of PROHIBITED) assert.ok(!bad.test(r.decls), `${r.selector} never hides a panel`);
   assert.deepEqual(foldViolations(css), [], "the fold sweep (which covers this block) is clean");
@@ -727,12 +560,17 @@ test("SIGNALS-CLARITY M3 (R19): the Monthly flow honesty lines are swept at the 
 /* SIGNALS-CLARITY M3: the Monthly flow panel's classes. Styled ones must be
    styled AND emitted; hooks (read by the toggle, or carrying a shared base
    class's styling) must be emitted and stay unstyled. */
+/* Launch M3b (R21): the breadth strip (`mf-breadth`, `mf-bcol`, `mf-bup`,
+   `mf-bdown`, `mf-bbar`, `mf-breadth-note`) is retired with its CSS; the
+   Members line chart, its axes, zone and readout, and the Dollars axis join. */
 const M3_FLOW_CLASSES = [
-  "ribbon-monthly", "mf-est", "mf-window", "mf-breadth", "mf-bcol", "mf-bup", "mf-bdown", "mf-bbar",
-  "mf-breadth-note", "mf-shade-labels", "mf-shade-est", "mf-shade-window", "mf-swatch", "mf-completeness",
-  "mf-exclusions", "mf-cap", "mf-stub", "mf-tick",
+  "ribbon-monthly", "mf-est", "mf-window", "mf-shade-labels", "mf-shade-est", "mf-shade-window", "mf-swatch",
+  "mf-completeness", "mf-exclusions", "mf-cap", "mf-stub", "mf-tick",
+  "mf-controls", "mf-legend", "mf-key-buy", "mf-key-sell", "mf-chart", "mf-yt", "mf-plot", "mf-hit", "mf-line",
+  "mf-line-buy", "mf-line-sell", "mf-line-est", "mf-yaxis", "mf-ytick", "mf-fill", "mf-cursor", "mf-xaxis", "mf-x",
+  "mf-readout", "mf-dollars", "mf-dollar-axis", "mf-notes",
 ];
-const M3_FLOW_HOOKS = ["mf-variant", "mf-table"];
+const M3_FLOW_HOOKS = ["mf-variant", "mf-table", "mf-measure"];
 
 test("SIGNALS-CLARITY M3: dead-CSS sweep over the Monthly flow panel — styled AND emitted, hooks unstyled", async () => {
   const { monthlyFlowPanel } = await import("../src/lib/ui/index.ts");
@@ -751,7 +589,11 @@ test("SIGNALS-CLARITY M3: dead-CSS sweep over the Monthly flow panel — styled 
     row({ txnId: "unparsed", traded: "2026-05-10", low: null, high: null }), // an all-unparsed sum: the stub
     row({ txnId: "outlier", traded: "2026-03-10", low: 5000001, high: 25000000 }), // an outlier scale: the small ranges get the tick
   ];
-  const corpus = monthlyFlowPanel(rows as never, "2026-08-17");
+  /* launch F2 (R35, LD31): the Dollars view and the All-assets variant are
+     island data the toggle draws on first use, so the corpus is the panel with
+     every view drawn by the real toggle — the classes a reader's DOM carries */
+  const { drawnMonthlyFlow } = await import("./lib/held-views.ts");
+  const corpus = drawnMonthlyFlow(monthlyFlowPanel(rows as never, "2026-08-17")).outerHTML;
   const bare = css.replace(/\/\*[\s\S]*?\*\//g, "");
   const styled = (cls: string): boolean => new RegExp(`\\.${cls}(?![\\w-])`).test(bare);
   const emitted = (cls: string): boolean => new RegExp(`class="(?:[^"]*\\s)?${cls}(?:\\s[^"]*)?"`).test(corpus);
@@ -806,7 +648,7 @@ test("the fold keeps the feed's dual dates on screen — re-placed in the stacke
     ticker: "WMB", side: "purchase", owner: null, low: 1001, high: 15000, lag: 27, late: 0, flags: [],
     doc: "https://efdsearch.senate.gov/x",
   }, {});
-  assert.match(row, /<td class="cell cell-traded c-num"><span class="design-dates">[\s\S]*2026-06-24[\s\S]*2026-07-21/, "both dates sit in that one cell");
+  assert.match(row, /<td class="cell cell-traded c-num"[^>]*><span class="design-dates">[\s\S]*2026-06-24[\s\S]*2026-07-21/, "both dates sit in that one cell");
 });
 
 /* ---------- R13: corrected tokens verbatim ---------- */
@@ -999,6 +841,23 @@ function renderCorpus(): string {
       () => "/institutional/filers/0000000001/",
     ),
     memberBody(m, stamps, CTX),
+    /* launch M4b (R23): a member with four trades over two filings renders
+       the ACTIVE layout — the one-trade member above renders the compact one
+       — so both layouts' classes are swept */
+    memberBody(
+      {
+        ...m,
+        filingCount: 2,
+        txns: [
+          t,
+          { ...t, txnId: "t-2", side: "purchase", low: 1001, high: 15000 },
+          { ...t, txnId: "t-3", doc: "https://efdsearch.senate.gov/y/" },
+          { ...t, txnId: "t-4", ticker: "XOM", side: "purchase", low: 15001, high: 50000, late: 0 },
+        ],
+      },
+      stamps,
+      CTX,
+    ),
     congressTickerBody({ ticker: "WMB", txns: [t] }, stamps, CTX),
     tickerUnifiedBody(
       { ticker: "WMB", txns: [t] },
@@ -1037,8 +896,25 @@ function renderCorpus(): string {
     s4Error("timeout", "/x.json", "d", true),
     s7Banner(window),
     specimenCard({ ...t, low: 1001, high: 15000 }, CTX),
-    moduleCard("M", "/m/", "d", { live: true, statLines: ["x"] }),
-    moduleCard("P", null, "d", { live: false, statLines: ["x"] }),
+    /* launch M2 (Home A): the hero's copy and chips, the four-figure ledger,
+       and the body — the triage's lead cards, both tables and the trust
+       strip (the Modules grid's `moduleCard` is retired, below) */
+    homeHeroCopyHtml(homeTryChips({ v: 1, tickers: [["WMB", "", 2]], members: [["T000001", "M", "R–OK", 3]], filers: [] }, { name: "F", href: "/f/" }, CTX)),
+    homeLedgerHtml(
+      homeFigures({
+        txns: [t], paper: [], members: [{}], filedFrom: "2026", stats: {},
+        coverage: { housePct: "93.9", senatePct: "100", needsOcr: 0 },
+        inst: { present: true, filers: 3, closedQuarter: "2026-03-31", filingsThrough: "2026-05-15" },
+        signals: { active: 2, retentionDays: 90, coverageFrom: "2026-04-25", coverageTo: "2026-07-24" },
+        triage: { stands: 1, ranked: 4 }, generatedAtDate: "2026-07-24",
+      }),
+    ),
+    homeSectionsHtml({
+      lead: homeLeadHtml(goldenTriage().triage, CTX, 90),
+      congress: congressTileHtml([t], CTX),
+      moves: movesTileHtml(fixtureMoves(12), "2026-03-31", (cik) => `/f/${cik}`, { filingsThrough: "2026-05-15" }),
+      trust: homeTrustHtml({}),
+    }),
     flowRibbon(quarterlyFlow([t], "2026-07-24", 4), { twoSided: true, sourceLine: "s" }),
     entityTxnTable([t], { kind: "member", caption: "c", page: 0, ctx: CTX }),
     entityTxnTable([{ ...t, bioguide: null, party: "" }], {
@@ -1105,6 +981,9 @@ function renderCorpus(): string {
       playbooks: m3Playbooks(),
     }),
     signalsOverlapHtml(null, CTX),
+    /* launch M7a (D5): every carried Overlap name rendered in the page, so the
+       relation classes the island's names carry are in the corpus */
+    signalsOverlapHtml(fixtureOverlap(), CTX, { keep: new Set([...overlapCarried(fixtureOverlap())].map(overlapRowId)) }),
     signalsPlaybooksHtml(null, CTX),
     /* a move's "See {TICKER} in Overlap →": the Institutional tab beside the Overlap of its own moves */
     signalsBody(goldenTriage().artifact, CTX, { rowsEvaluated: 2051, triage: null, institutional: fixtureInstitutional(), overlap: buildOverlap(fixtureInstitutional().quarter, fixtureInstitutional().moves) }),
@@ -1165,7 +1044,7 @@ const NEW_RENDERER_CLASSES = [
   "absent-block", "absent-h", "s1-block", "s1-mark", "s1-h", "s1-detail",
   "s2-block", "s4-shell", "s4-error", "s4-actions", "s7-banner", "s7-chip", "s7-copy",
   "cta", "plain-link", "specimen", "spec-head", "spec-dates", "spec-scale",
-  "mod-card", "badge-live", "badge-planned",
+  "badge-planned",
   "search-group-h", "search-opt", "opt-label", "opt-sub", "search-empty",
   "quick-links", "quick-link", "s6-block", "s6-h", "s6-body",
   "footnotes-stacked", "footnote-line", "fn-ref", "flag-raw",
@@ -1174,9 +1053,9 @@ const NEW_RENDERER_CLASSES = [
      filer parts (T2.3–T2.5), column presence's foot reason (T2.1), the hit
      evidence row (T2.7). `.explainer` left this list with M2: filerHeadHtml
      replaced the paragraph with the provenance strip (see RETIRED below). */
-  "ledger-fig", "ledger-value", "ledger-sub", "design-pair", "design-filer-band",
+  "ledger-fig", "ledger-value", "ledger-sub", "design-filer-band",
   "design-filer-side", "filer-ledger-root", "filer-data-note", "head-controls", "head-control",
-  "table-foot-reason", "design-member-history-band",
+  "table-foot-reason",
   /* SIGNALS-CLARITY M2 (R10–R12): the WHAT sentence and its asset-type chip,
      the ×n repeat mark, and the listed-stock filter's hidden count. (The
      evidence row, its rule restatement and its member list left with
@@ -1241,6 +1120,17 @@ const NEW_RENDERER_CLASSES = [
   "pb-arts", "pb-main", "pb-h", "pb-name", "pb-meta", "pb-p", "pb-verdict", "pb-sec", "pb-k", "pb-row", "pb-row-open", "pb-line", "pb-needs",
   "pb-ev", "ev", "ev-d", "ev-supports", "ev-against", "ev-indirect", "ev-c", "ev-src", "ev-v", "ev-f",
   "mv-ov-link",
+  /* launch M2 (Home A, R14–R17): the hero's launcher and its parts, the "Try"
+     strip, its group, label and chips; the ledger's 2×2 card; a band head's
+     right-hand link; a lead card's asset as filed; the two tables' pair and
+     each table's section, the 13F note; the trust strip and its parts. */
+  "home-search", "home-search-g", "home-search-t", "home-search-kbd",
+  "home-try-strip", "home-try", "home-try-k", "home-chip",
+  "home-ledger", "home-sec-link", "si-card-iss",
+  "home-lead", "home-pair", "home-tile", "home-13f-note",
+  "home-trust", "home-trust-k", "home-trust-v", "home-trust-s",
+  /* launch M5 (R28): the Playbooks "Triggers now" table */
+  "pb-tg",
 ];
 
 /* DESIGN-POLISH M2: classes a renderer emits as HOOKS — a root the period
@@ -1276,6 +1166,8 @@ const NEW_HOOK_CLASSES = [
      colour is its `pb-st-*` modifier); a filter chip (a `.chips` item); the
      "All n" link (a `.pb-line`'s); a tier's no-match line (a `.section-note`) */
   "sig-ov", "sig-pb", "ov-rels", "ov-list", "ov-side", "ov-bound", "pb-count", "pbi-src", "pb-st", "si-pb-pick", "pb-all", "si-pb-none",
+  /* launch M2: a home lead card (laid out by `.si-card`, the Signals tab's) */
+  "home-card",
 ];
 
 /* Classes a milestone RETIRED: neither styled nor emitted — by a renderer OR
@@ -1291,6 +1183,24 @@ const NEW_HOOK_CLASSES = [
    marks), and the classic nine-cell feed only that page rendered — its filed
    cell, its paper-row name and its visible `.col-why` header reasons. */
 const RETIRED_CLASSES = [
+  /* launch M4b (R23, R26): the member page's paired bands — Filing history │
+     Signals and the net-flow band — are gone: Signals sits in the side column
+     and the history stands alone, so their band classes and CSS left with
+     them (design-pair had no other caller). */
+  "design-pair", "design-member-history-band", "design-member-band",
+  /* launch integration (M4b member-18 + M6 filer-06): the member page's
+     PLANNED strip and the filer page's roadmap line were plannedLine()'s only
+     two callers, so the function and its `.planned-line` rules left with
+     them. `.badge-planned` stays: the Methodology module headings, the
+     overlap band and the WITHHELD marker still emit it. */
+  "planned-line",
+  /* launch integration (M4b, R24/LD25): the two-sided ribbon draws one bar
+     per side on one axis, so the old split column (`rb-split` with its two
+     `rb-half` cells) has no emitter and its rules left. (`.paper-note` also
+     lost its only emitter to member-17 and its rules left, but it stays an
+     honesty selector rather than a retired class: the paper fact is the
+     block's section note now, and the sweep keeps guarding the class.) */
+  "rb-split", "rb-half",
   "explainer", "explainer-h", "design-rankings-single", "coverage-strip",
   "design-triptych", "design-triptych-single", "design-activity-band",
   "nav-shell", "footer-block", "footer-build",
@@ -1321,10 +1231,17 @@ const RETIRED_CLASSES = [
      provenance chips' tip) — all moved to /signals/#institutional or left. */
   "design-notable-moves", "design-consensus", "design-newpositions", "design-consensus-band", "design-institutional-band",
   "design-weight-bar", "inst-watermark-foot", "inst-method-foot",
+  /* launch M2 (R14, Home A): the Modules grid — its head, grid, card and the
+     card's parts, its LIVE badge — the three-tile row and its one-column
+     hero, and the old hero's call-to-action row and buttons. */
+  "modules-head", "mod-grid", "mod-card", "mod-card-planned", "mod-head", "mod-name", "mod-desc", "mod-stats",
+  "badge-live", "home-tiles", "hero-claim", "hero-ctas", "hero-sub", "cta-primary", "cta-plain",
 ];
 
 const ASTRO_ONLY_CLASSES = [
-  "hero", "hero-title", "hero-lede", "hero-ctas", "mod-grid", "modules-head", "commitments",
+  "hero", "hero-title", "hero-lede", "commitments",
+  /* launch M2: the home's hero copy column and its page wrapper */
+  "home-hero-copy", "home-page",
   "metho-title", "metho-lede", "toc", "metho-section", "standing-caveat",
   "metho-tiles", "mtile", "mtile-sub", "metho-grid", "source-list", "source-row",
   "gaps-block", "pub-grid", "pub-card", "verify-line", "module-shell",
@@ -1387,14 +1304,25 @@ test("dead-CSS sweep: every new class is styled AND emitted", () => {
   }
 });
 
-test("sticky identity column + edge fade exist for wide 13F tables at the fold", () => {
+/* RETIRED by launch M1b (D4; reversal record in docs/frontend/design-principles.md
+   §5). This test pinned the MECHANISM of the old fold — "sticky identity column
+   + edge fade exist for wide 13F tables at the fold" — whose property was: the
+   page never scrolls sideways and no column goes off-screen without a cue. The
+   property is kept and pinned more sharply by launch-phone-css.test.ts (the
+   EFFECTIVE overflow-x of every table wrapper at 390, resolved over the whole
+   cascade, is neither auto nor scroll; every table at the fold is a card; no
+   honesty cell is clamped or ellipsised; a re-planted scrolling table and a
+   planted clamp each fail) and by G3 run in full at 390 (ledger.spec.ts) and
+   the phone harness at 360/390/430 (phone.spec.ts). What remains true of the
+   13F tables is asserted here: they still carry their sticky marker for the
+   widths above the fold, and the fold turns them into cards. */
+test("launch M1b (D4): at the fold the 13F tables fold into cards; their sticky identity column stays above it", () => {
   const blocks = narrowMediaBlocks(css);
   const foldBody = blocks.map((b) => b.body).join("\n");
-  assert.ok(foldBody.includes("data-sticky-first"), "sticky first column rule");
-  assert.ok(foldBody.includes("position: sticky") || foldBody.includes("position:sticky"));
-  assert.ok(foldBody.includes("mask-image"), "edge fade signals in-container scroll");
+  assert.ok(foldBody.includes('table[data-card]:not([data-card="feed"]) > :is(tbody, tfoot) > tr'), "the fold's card row rule");
+  assert.ok(!/\.table-scroll\s*\{[^}]*mask-image:\s*linear-gradient/.test(foldBody), "no edge fade announces an in-container scroll at the fold");
   const corpus = renderCorpus();
-  assert.ok(corpus.includes("data-sticky-first"), "13F tables carry the sticky marker");
+  assert.ok(corpus.includes("data-sticky-first"), "13F tables carry the sticky marker (for the widths above the fold)");
 });
 
 test("print keeps the honesty layer: footnotes/terminus forced visible, chrome dropped", () => {

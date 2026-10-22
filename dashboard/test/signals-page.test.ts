@@ -12,14 +12,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { signalsBody, triageRowHtml, lagBandHtml, groupHits, hitMatches, hitsView, hitsHiddenText, signalSentence, memberSignalsPanel, signalsTileHtml, hitsBodyHtml, sortHits, type HitFilter } from "../src/lib/ui/index.ts";
-import { COMMITTEE_CAVEAT, DEFAULT_HIT_FILTER, leadCardsHtml, memberLastName, SIGNAL_HITS_COMPACT_ROWS, SIGNAL_HITS_DOM_ROWS, SIGNAL_HITS_PAGE_SIZE, triageRowId } from "../src/lib/ui/signals.ts";
+import { signalsBody, triageRowHtml, lagBandHtml, groupHits, hitMatches, hitsView, hitsHiddenText, signalSentence, memberSignalsPanel, hitsBodyHtml, sortHits, type HitFilter } from "../src/lib/ui/index.ts";
+import { COMMITTEE_CAVEAT, COMMITTEE_CAVEAT_SHORT, DEFAULT_HIT_FILTER, ctxOfCut, heldHitRowHtml, leadCardsHtml, memberLastName, SIGNAL_HITS_COMPACT_ROWS, SIGNAL_HITS_DOM_ROWS, SIGNAL_HITS_PAGE_SIZE, triageRowId, type HeldHits } from "../src/lib/ui/signals.ts";
 import type { Signal, SignalArtifact } from "../src/lib/signals.ts";
 import type { TxnRow } from "../src/lib/format.ts";
 import { buildTriage, daysBetween, type TriageResult } from "../src/lib/signal-triage.ts";
 import { scanBannedWording } from "../src/lib/activity.ts";
 import { MiniElement } from "./lib/mini-dom.ts";
-import { syncScrollRegion, type ScrollRegionNode } from "../src/scripts/signals-client.ts";
+import { syncScrollRegion, type ScrollRegionNode } from "../src/scripts/scroll-regions.ts";
 import { loadTriageFixture } from "./lib/triage-fixture.ts";
 import { baseStylesheet } from "./lib/styles.ts";
 
@@ -179,19 +179,24 @@ test("LD9 / signals-v4 LD19 (T1.8): every caveat that left the visible page is i
   const how = root.querySelector(".page-head .page-title-row .note-pop")!;
   assert.ok(how, "the head's How signals work tip");
   const howText = how.textContent;
+  /* launch copy item signals-02 (reversal record: the launch copy ledger):
+     the generic sentences are said in fewer words — every caveat kept (not a
+     forecast; no prices, returns or intent; zero is computed; the window by
+     filed date) — and the ranking sentence left this tip for its own, "About
+     filings to read" (asserted below: "each against the filer's own record,
+     as of its filing"). This build's facts stay here by exact text. */
   for (const needle of [
-    "A signal is a fact about a filing, not a forecast: no returns are computed.",
-    "Never used: prices, returns, intent.",
-    "Recomputed every build from the same rows you can audit; zero hits is a computed answer, not missing coverage.",
-    `The coverage window is ${art.coverageFrom} → ${art.coverageTo} (${art.retentionDays} days by filed date).`,
+    "A signal is a rule-based fact about a filing — never a forecast; no prices, returns or intent are used.",
+    "Zero hits is a computed answer, not missing coverage.",
+    `Congress: the last ${art.retentionDays} days by filed date (${art.coverageFrom} → ${art.coverageTo}).`,
     art.lagCaveat,
     `Lifecycle: ${art.lifecycleNote}`,
     "No kind was withheld this build.",
     "date-anomaly rows were excluded before any rule ran",
-    "Filings to read ranks each filing against the filer's own record as it stood on the filing's date; the tiers, meters and cards are defined on Methodology.",
   ]) assert.ok(howText.includes(needle), `How signals work carries: ${needle}`);
   assert.match(howText, /\d+ signals? from an earlier build left the window; \d+ (?:is|are) carried forward unevaluated\./);
-  assert.match(how.querySelector('a[href="/methodology/#signals-ranking"]')!.textContent, /How rows are ranked/);
+  assert.match(how.querySelector('a[href="/methodology/#signal-rules"]')!.textContent, /How signals work/);
+  assert.ok(!howText.includes("Filings to read ranks each filing"), "the ranking sentence is the triage tip's, not repeated here");
   const trigger = root.querySelector(".page-head .page-title-row .note-btn")!;
   assert.equal(trigger.getAttribute("aria-label"), "How signals work, explain");
   assert.ok(trigger.classList.contains("note-mark"), "an ⓘ (mark) trigger");
@@ -203,7 +208,7 @@ test("LD9 / signals-v4 LD19 (T1.8): every caveat that left the visible page is i
   assert.equal(howParas.length, 4, "the Congress paragraph, then the Institutional, Overlap and Playbooks ones");
   assert.equal(howParas[2]!.textContent, "Overlap — Same name, same quarter: a co-occurrence in public filings, never coordination or intent.", "LD9's Overlap paragraph");
   assert.equal(howParas[3]!.textContent, "Playbooks — Published research on the patterns these rows show, with evidence on both sides; the numbers are the papers' own. Not advice.", "LD9's Playbooks paragraph");
-  assert.ok(howParas[0]!.textContent.includes("A signal is a fact about a filing"), "the nine sentences come first");
+  assert.ok(howParas[0]!.textContent.includes("A signal is a rule-based fact about a filing"), "the Congress sentences come first");
   assert.ok(
     howParas[1]!.textContent.includes("13F filings are quarter-end, long-only snapshots filed up to 45 days after the quarter — never current holdings. Exits are inferred from absence in the next filing."),
     "the Institutional paragraph",
@@ -274,10 +279,16 @@ test("LD9 / signals-v4 LD19 (T1.8): every caveat that left the visible page is i
   // the hits panel note and key → "About hits"
   const hitsTip = tipText(root, "About hits");
   for (const d of ["Every rule hit, newest filed first; every hit carries its receipt.", "Sizes are the row's statutory range, never narrowed.", "Each kind word opens its exact rule."]) assert.ok(hitsTip.includes(d), d);
-  // the committee caveat → card foot, the bars tip, and every opened row's Cmte line
-  assert.equal(ownText(root.querySelector("#lead-cards .si-card-context")!).trim(), COMMITTEE_CAVEAT);
+  /* Reversal record (launch M7a, copy items signals-03 and signals-07): the
+     card foot states the short caveat; the full wording is the bars tip's
+     (asserted above) and Methodology's; an opened row states each meter's
+     level in words, its definition said once in the bars tip. Property kept:
+     the committee caveat is visible wherever a committee overlap is surfaced. */
+  assert.equal(ownText(root.querySelector("#lead-cards .si-card-context")!).trim(), COMMITTEE_CAVEAT_SHORT);
+  assert.equal(COMMITTEE_CAVEAT_SHORT, "Context, not an allegation.");
   for (const a of root.querySelectorAll("#triage article.si-row")) {
-    assert.ok(ownText(a.querySelector(".si-row-mw")!).includes("context, never an allegation"), "each opened row's Cmte line");
+    assert.equal(a.querySelectorAll(".si-row-mw .si-mw-word").length, 4, "each opened row states every meter's level");
+    assert.equal(a.querySelector(".si-row-mw .si-mw-def"), null, "no per-row definition (signals-07)");
   }
   // the per-kind exact rule → each hit's kind word
   const kindNote = root.querySelector("#hits tbody td.c-kind .note-pop")!;
@@ -323,7 +334,23 @@ test("signals-v3 M1: the page embeds no watch band and no data island; hostile n
   assert.doesNotMatch(html, /<script\b/i, "no script element, inert or not");
   assert.doesNotMatch(html, /id="signal-watch|si-watchband|aria-label="Watchlist"/, "no watch band");
   assert.deepEqual(scanBannedWording(goldenPage().html), []);
-  assert.doesNotMatch(goldenPage().html, /<script\b/i, "the ranking control is CSS: no script anywhere on the page");
+  /* Reversal record (launch M7a, D5/LD27): the page now carries inert JSON
+     islands for its held lists. Property kept: no executable script and no
+     watch-band data anywhere on the page — every script element is a
+     `type="application/json"` island naming the list it holds (and, since
+     the integration onto the one held-rows carrier, the row function it
+     renders through), and parses. */
+  const scripts = [...goldenPage().html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)];
+  for (const [, attrs, body] of scripts) {
+    assert.match(attrs!, /^ type="application\/json" data-held-for="[a-z-]+" data-held-render="[a-z-]+"$/, "an inert held-list island, nothing else");
+    assert.doesNotMatch(body!, /</, "no tag can open inside an island");
+    assert.doesNotThrow(() => JSON.parse(body!));
+  }
+  assert.equal([...goldenPage().html.matchAll(/<script\b/gi)].length, scripts.length, "every script element is an island");
+  // a hostile name in a held hit line stays inert inside its island
+  const many = Array.from({ length: 12 }, (_, i) => sig({ kind: "s1-large", id: `s1-large:h${i}`, entities: { bioguide: null, memberName: i === 11 ? "</script><b>x" : `M ${i}`, ticker: null }, occurrence: { tradeDate: "2026-03-01", filedDate: `2026-06-${String(i + 1).padStart(2, "0")}` } }));
+  const held = signalsBody({ ...ART, signals: many }, CTX);
+  assert.doesNotMatch(held, /<\/script><b>/);
 });
 
 /* ================================================================ R12: the triage rows */
@@ -384,7 +411,8 @@ test("R12 / signals-v4 R2 (LD4): every triage row is an article holding a <detai
     if (row.lateLines > 0) assert.ok(facts.includes("Late"), `${key}: the LATE detail`);
     const words = det.querySelectorAll(".si-row-mw dd .si-mw-word").map((x) => ownText(x));
     assert.deepEqual(words, (["size", "pattern", "others", "cmte"] as const).map((k) => ({ 3: "strong", 2: "medium", 1: "low", 0: "none", [-1]: "unknown" } as Record<number, string>)[row.meters[k]]));
-    for (const dd of det.querySelectorAll(".si-row-mw dd")) assert.ok(ownText(dd.querySelector(".si-mw-def")!).length > 20, "each meter's definition");
+    /* launch M7a (signals-07): the definitions are the column head's bars tip, said once */
+    assert.equal(det.querySelectorAll(".si-row-mw .si-mw-def").length, 0, "no per-row definition");
     const links = det.querySelectorAll(".si-row-links a").map((x) => x.getAttribute("href")!);
     if (row.lead.txn.ticker) assert.ok(links.some((h) => /^\/tickers\/[^/]+\/#on-signals$|^\/e\/\?k=t:/.test(h)), `${key}: the ticker page`);
     if (row.lead.txn.bioguide) assert.ok(links.some((h) => h.includes(row.lead.txn.bioguide!)), `${key}: the member page`);
@@ -630,11 +658,16 @@ test("R13 / signals-v4 R5: the slim hits — Kind · Ticker · Who · Traded →
     hits.querySelectorAll("thead th").map((th) => [ownText(th).trim(), th.getAttribute("class")]),
     [["Kind", "c-kind"], ["Ticker", "c-ticker"], ["Who", "c-member c-flex"], ["Traded → Filed", "c-num"], ["Size", "c-num"], ["Src", "c-src"]],
   );
+  /* Reversal record (launch M7a, D5/LD27): the page carries SIGNAL_HITS_DOM_ROWS
+     lines as before, but only the first ten are in the DOM; the rest ship in
+     the island and render through the same body renderer on reveal. */
   const all = hits.querySelectorAll("tbody tr.si-hit");
-  assert.equal(all.length, Math.min(25, SIGNAL_HITS_DOM_ROWS), "every line up to SIGNAL_HITS_DOM_ROWS is rendered");
+  assert.equal(all.length, 10, "the first ten lines are in the page");
   const rows = all.filter((r) => !r.hasAttribute("hidden"));
   assert.equal(rows.length, 10, "the first 10 visible");
-  assert.ok(all.slice(10).every((r) => r.hasAttribute("hidden")), "the rest carry hidden");
+  const island = JSON.parse(/<script type="application\/json" data-held-for="signal-hits-body" data-held-render="signal-hits">([\s\S]*?)<\/script>/.exec(html)![1]!) as { offset: number; rows: unknown[] };
+  assert.equal(island.offset, 10, "the island continues after the tenth line");
+  assert.equal(island.rows.length, Math.min(25, SIGNAL_HITS_DOM_ROWS) - 10, "the island holds the rest of the lines the page carries");
   assert.equal(hits.getAttribute("data-dom-rows"), String(SIGNAL_HITS_DOM_ROWS));
   assert.equal(hits.getAttribute("data-shown"), "10");
   assert.equal(SIGNAL_HITS_COMPACT_ROWS, 10);
@@ -820,13 +853,15 @@ test("R10 / T9: the WHAT sentence — owner, verb, asset, chip; S-3 names its me
   }
 });
 
-test("R10 / T9: the home tile and member panel keep their sentence; the island repaints only through the server's renderer", () => {
+/* launch M2 (Home A, D1, R14): the home's Signals tile is gone — the home
+   shows the triage's three lead cards instead, through the Signals tab's own
+   card renderer (test/launch-home.test.ts) — so this test keeps the member
+   panel's sentence and the island's single renderer, and drops the tile's. */
+test("R10 / T9: the member panel keeps its sentence; the island repaints only through the server's renderer", () => {
   const art: SignalArtifact = { ...ART, signals: [other({ entities: { bioguide: "A000001", memberName: "Test <Member>", ticker: null } }), sig({ kind: "s2-first" })] };
   const client = readFileSync(path.resolve(import.meta.dirname, "..", "src", "scripts", "signals-client.ts"), "utf-8");
   assert.match(client, /\bhitsBodyHtml\(/, "the island repaints through the server's row renderer");
   assert.doesNotMatch(client, /signalSentence/, "the island composes no sentence of its own");
-  const tile = signalsTileHtml(art.signals, CTX, () => "LARGE");
-  assert.match(ownText(domOf(tile).querySelector("tbody td.c-flex")!), /Purchase of ABC Holdings Inc/);
   const panel = memberSignalsPanel(art, "A000001", CTX);
   const whats = domOf(panel).querySelectorAll("tbody td.si-what").map((td) => ownText(td).trim());
   assert.ok(whats.includes("Spouse: Purchase of Not Fade Away LLC · Other"), whats.join(" | "));
@@ -897,11 +932,11 @@ test("R13 / T2.7: family × stocks — the hidden count is the total minus shown
   assert.deepEqual(Object.keys(DEFAULT_HIT_FILTER).sort(), ["family", "stocksOnly"], "no kind, no watched-only field");
 });
 
-test("R12: the home tile takes the same default and states its hidden count", () => {
-  const tile = signalsTileHtml([other(), sig({ kind: "s1-large" }), other()], CTX, () => "LARGE");
-  assert.equal(domOf(tile).querySelectorAll("tbody tr").length, 1);
-  assert.match(tile, /<span class="si-hidden-count">2 hits on other asset types hidden<\/span>/);
-});
+/* launch M2 (Home A, D1, R14): "R12: the home tile takes the same default
+   and states its hidden count" left with the Signals tile. The home's cards
+   are listed-stock lines of the triage by construction (their tip says so),
+   and the ledger's Signals figure counts every active hit; the hidden-count
+   property stays pinned on /signals/ by "R12 / T11" above. */
 
 test("R14: the lag distribution renders on Methodology through lagBandHtml — identical (member, lag) rows group and the 45-day line is marked", () => {
   const row = { name: "Bulk Filer", bioguide: "B1", party: "D", traded: "2026-01-01", filed: "2026-05-01", lag: 120, late: 1 } as Pick<TxnRow, "name" | "bioguide" | "party" | "traded" | "filed" | "lag" | "late">;
@@ -914,13 +949,25 @@ test("R14: the lag distribution renders on Methodology through lagBandHtml — i
   assert.match(lagBandHtml({ latestBatch: [], latestBatchFiled: null }), /No rows with both dates in the latest filed batch\./);
 });
 
-test("R13: hitsBodyHtml is the ONE body renderer (server lines = the shared view's first SIGNAL_HITS_DOM_ROWS, the first 10 shown)", () => {
+test("R13 + launch M7a (D5): hitsBodyHtml is the ONE body renderer — the page's first ten lines, and the island's lines past them rendered the client's way equal the server's rendering of the same lines", () => {
   const { html, art } = goldenPage();
   const active = art.signals.filter((s) => s.status === "active");
   const cols = domOf(html).querySelector("#hits table")!.getAttribute("data-columns")!.split(",");
   const view = hitsView(sortHits(active), DEFAULT_HIT_FILTER);
   const body = /<tbody id="signal-hits-body">([\s\S]*?)<\/tbody>/.exec(html)![1]!;
-  assert.equal(body, hitsBodyHtml(view.lines.slice(0, SIGNAL_HITS_DOM_ROWS), CTX, cols, SIGNAL_HITS_COMPACT_ROWS));
-  // control: the hidden marks are the ONLY difference from an all-visible body
-  assert.equal(body.replace(/ hidden>/g, ">"), hitsBodyHtml(view.lines.slice(0, SIGNAL_HITS_DOM_ROWS), CTX, cols));
+  assert.equal(body, hitsBodyHtml(view.lines.slice(0, SIGNAL_HITS_COMPACT_ROWS), CTX, cols, SIGNAL_HITS_COMPACT_ROWS));
+  const m = /<script type="application\/json" data-held-for="signal-hits-body" data-held-render="signal-hits">([\s\S]*?)<\/script>/.exec(html);
+  if (view.lines.length > SIGNAL_HITS_COMPACT_ROWS) {
+    const island = JSON.parse(m![1]!) as HeldHits;
+    /* the client's composition: the one binder draws each island line
+       through the registered row function (`heldHitRowHtml`, hidden rows
+       over the island's ctx), joined as the server joins lines */
+    const client = island.rows.map((l, j) => heldHitRowHtml(l, island.offset + j, island.shared)).join("\n");
+    const server = hitsBodyHtml(view.lines.slice(SIGNAL_HITS_COMPACT_ROWS, SIGNAL_HITS_DOM_ROWS), CTX, cols, 0);
+    assert.equal(client, server, "byte for byte");
+    assert.equal(client, hitsBodyHtml(island.rows, ctxOfCut(island.shared.cut), island.shared.columns, 0), "the registered row function is the body renderer's row");
+    // control: a planted cut member changes the client's link, so the ctx is load-bearing
+    const t = island.rows.find((l) => l.lead.entities.bioguide);
+    if (t) assert.notEqual(island.rows.map((l, j) => heldHitRowHtml(l, island.offset + j, { ...island.shared, cut: { members: [t.lead.entities.bioguide!], tickers: [] } })).join("\n"), server);
+  } else assert.equal(m, null, "no island with ten lines or fewer");
 });

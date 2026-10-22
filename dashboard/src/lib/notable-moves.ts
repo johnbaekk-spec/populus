@@ -251,7 +251,8 @@ export function consensusExclusionText(board: Pick<ConsensusBoard, "wrappersExcl
   const u = board.unkeyedMoves;
   return (
     `${fmtInt(w)} fund-wrapper ${w === 1 ? "registrant" : "registrants"} on the reviewed list ${w === 1 ? "is" : "are"} excluded · ` +
-    `${fmtInt(u)} ${u === 1 ? "move carries" : "moves carry"} no issuer identity and ${u === 1 ? "is" : "are"} outside this board.`
+    /* "change", never "move": the site-wide banned-wording gate reads "1 move" as the banned word (launch final pass) */
+    `${fmtInt(u)} ${u === 1 ? "change carries" : "changes carry"} no issuer identity and ${u === 1 ? "is" : "are"} outside this board.`
   );
 }
 

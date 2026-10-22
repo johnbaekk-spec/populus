@@ -20,27 +20,13 @@ const description =
   <main class="shell page">
     <div class="page-head">
       <div class="page-head-copy">
-        <div class="kicker">/congress/tickers</div>
         <h1 class="page-title">This view moved</h1>
+        <!-- Launch M3b (copy item stub-02): one line and a visible link that
+             works with scripting and refresh both disabled. -->
+        <p class="page-lede">Ticker rankings are now on the Congress page.</p>
         <p class="page-lede">
-          Ticker net disclosed flow is now the ticker momentum section that
-          leads the single Congress page, where it can be read beside the
-          disclosure feed and the member ranking without navigating between
-          them. It also gained a 7d / 30d / 90d / 12m range control and a
-          traded / filed basis toggle it did not have here.
+          <a class="stub-link" href={target}>Go to Tickers →</a>
         </p>
-        <p class="page-lede">
-          <a class="stub-link" href={target}>Go to ticker momentum →</a>
-        </p>
-        <div class="caveat-line">
-          The target is <strong>not</strong> a like-for-like copy of this page, and
-          saying so matters more than a reassuring sentence. This page windowed by
-          trade date with a filing-date fallback; the section defaults to a <strong>trade-date</strong> basis, which excludes rows disclosing no trade
-          date and states how many — switch the basis control to filing date to
-          include them. It also renders a compact slice by default and expands on
-          request. The interval arithmetic and the stated no-ticker count are
-          unchanged, and the full published data remains at <a href="/congress/data/">congress/data</a>.
-        </div>
       </div>
     </div>
   </main>

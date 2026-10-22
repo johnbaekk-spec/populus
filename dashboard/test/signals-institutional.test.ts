@@ -18,12 +18,14 @@ import {
   CONSENSUS_COMPACT_ROWS,
   buildSignalsInstitutional,
   convictionLeadersHtml,
+  moveRowFrom,
   moveRowHtml,
   namedMoveIds,
   namedMovesBoundText,
   namedMovesRangeText,
   parseNamedMovesTotals,
   signalsInstitutionalHtml,
+  type HeldMoves,
 } from "../src/lib/ui/signals-institutional.ts";
 import { congressLineHtml } from "../src/lib/ui/signals.ts";
 import {
@@ -147,28 +149,47 @@ function openedRows(model: ReturnType<typeof fixtureInstitutional>, opts: { bank
   // without the bank, an opened body is the renderer's alone (no Congress lines copied in)
   if (opts.bank === false) doc.getElementById("mv-bank")!.innerHTML = "";
   const pager = initNamedMoves()!;
+  /* launch M7a (D5): the rows past the first fifteen render from the island
+     on demand; a reader who reveals them all has every row */
+  const ids = namedMoveIds(model);
+  if (ids.length > NAMED_MOVES_MIN) assert.ok(pager.materialize(ids.at(-1)!), "the island renders the last held row");
   const rows = doc.querySelectorAll("#mv-list article.mv-item");
   for (const r of rows) pager.fill(r.querySelector("details")!);
   return { rows, restore };
 }
 
-test("T2.4 (R12, LD11): the first 15 rows carry their opened body; a held row carries only its data, and the client renders its body byte-for-byte as the server renders that row's", () => {
+test("T2.4 (R12, LD11) + launch M7a (D5, LD27): the first 15 rows are in the page with their opened body; every row past them ships in the island as data, and the client renders it byte-for-byte as the server renders that held row", () => {
   const model = fixtureInstitutional();
-  const root = domOf(signalsInstitutionalHtml(model, CTX));
+  const html = signalsInstitutionalHtml(model, CTX);
+  const root = domOf(html);
   const rows = root.querySelectorAll("article.mv-item");
   const ids = namedMoveIds(model);
+  assert.equal(rows.length, NAMED_MOVES_MIN, "only the first fifteen rows are in the page");
+  rows.forEach((r) => {
+    assert.ok(r.querySelector(".mv-det")!.innerHTML.length > 0, "a server-visible row's body is rendered (a reader without script can open it)");
+    assert.equal(r.getAttribute("data-fp"), null);
+  });
+  // launch integration: the site's one held-rows island (lib/held-rows.ts)
+  const raw = /<script type="application\/json" data-held-for="mv-list" data-held-render="named-moves">([\s\S]*?)<\/script>/.exec(html)![1]!;
+  assert.doesNotMatch(raw, /</, "the island is inert: no tag can open in it");
+  const island = JSON.parse(raw) as HeldMoves;
+  assert.doesNotMatch(JSON.stringify(island), /<\/?[a-z]/i, "data, never markup");
+  assert.equal(island.rows.length, model.domSet.length - NAMED_MOVES_MIN, "every carried row past the fifteen");
   let held = 0;
-  rows.forEach((r, i) => {
-    const det = r.querySelector(".mv-det")!;
-    if (i < NAMED_MOVES_MIN) {
-      assert.ok(det.innerHTML.length > 0, "a server-visible row's body is rendered (a reader without script can open it)");
-      assert.equal(r.getAttribute("data-fp"), null);
-    } else if (det.innerHTML === "") {
+  island.rows.forEach((r, k) => {
+    const i = NAMED_MOVES_MIN + k;
+    const client = moveRowFrom(r, island.shared.sec, true, island.shared.tv);
+    assert.equal(client, moveRowHtml(model.domSet[i]!, ids[i]!, model, true, island.shared.tv), `${ids[i]}: the client's held row is the server's`);
+    const el = domOf(client).querySelector("article.mv-item")!;
+    if (el.querySelector(".mv-det")!.innerHTML === "") {
       held++;
-      assert.match(r.getAttribute("data-fp")!, /^\/institutional\/filers\/\d+\/#pos-/, "a held row carries its filer page");
+      assert.match(el.getAttribute("data-fp")!, /^\/institutional\/filers\/\d+\/#pos-/, "a held row carries its filer page");
     }
   });
   assert.ok(held > 0, "the fixture holds lean rows");
+  // control: the row function reads the data — a changed count changes the row
+  const r0 = island.rows[0]!;
+  assert.notEqual(moveRowFrom({ ...r0, counted: r0.counted + 1 }, island.shared.sec, true, island.shared.tv), moveRowFrom(r0, island.shared.sec, true, island.shared.tv));
   const { rows: opened, restore } = openedRows(model, { bank: false });
   try {
     opened.forEach((r, i) => {
@@ -270,10 +291,15 @@ test("T2.4 (R13, LD10): the Congress column equals an independent recount; no ti
     present: true, period: FIXTURE_PERIOD, latestFiled: "2026-07-31", freshness: "f", notableManagers: 1,
     moves: fixtureMoves(20).map((m) => ({ ...m, ticker: "ZZ01", kind: "new" as const })), leaders: null, txns, filerHref: (c) => `/f/${c}`, filerTier: () => "top",
   });
-  const heldBroad = domOf(signalsInstitutionalHtml(manyBroad, CTX)).querySelectorAll("article.mv-item")[NAMED_MOVES_MIN]!;
-  assert.ok(heldBroad.hasAttribute("hidden"), "a held row");
-  assert.equal(heldBroad.getAttribute("data-fp"), null, "with no lean data");
-  assert.match(text(heldBroad.querySelector(".mv-det .mv-cong")), /^Only broad accounts — .* Broad Member \(26 names\)\. They are not counted\.$/);
+  const mb = installDom(signalsInstitutionalHtml(manyBroad, CTX));
+  try {
+    const heldBroad = initNamedMoves()!.materialize(namedMoveIds(manyBroad)[NAMED_MOVES_MIN]!)! as unknown as MiniElement;
+    assert.ok(heldBroad.hasAttribute("hidden"), "a held row");
+    assert.equal(heldBroad.getAttribute("data-fp"), null, "with no lean data");
+    assert.match(text(heldBroad.querySelector(".mv-det .mv-cong")), /^Only broad accounts — .* Broad Member \(26 names\)\. They are not counted\.$/);
+  } finally {
+    mb.restore();
+  }
 });
 
 /** The honesty fields one Congress line must carry (LD10). */
@@ -494,7 +520,8 @@ test("T2.4 (R12, LD6, LD11): a kind chip shows only that kind; the count is the 
     // a type chip refines within it (single-select per group)
     doc.querySelector('button[data-mv-type="insurer"]')!.bubbleClick();
     assert.ok(visibleRows(doc).every((r) => r.getAttribute("data-kind") === "exit" && r.getAttribute("data-type") === "insurer"));
-    const held = doc.querySelectorAll("#mv-list article.mv-item").filter((r) => r.getAttribute("data-kind") === "exit" && r.getAttribute("data-type") === "insurer").length;
+    /* launch M7a: the rows the page carries are the DOM's and the island's (the DOM set) */
+    const held = model.domSet.filter((x) => x.kind === "exit" && x.type === "insurer").length;
     const sliceTotal = model.totals["exit|insurer"]!;
     // the count is the slice's TRUE total; the bound shows only once the shown rows exhaust the held ones short of it
     const shownNow = Math.min(15, held);
@@ -544,7 +571,9 @@ test("T2.4 (R11, R14): a name filter lists EVERY move on its key and clears the 
     const all = model.moves.filter((x) => moveNameKey(x) === key).length;
     const vis = () => visibleRows(m.doc);
     assert.ok(all > 15, "the fixture's top name has more moves than the base");
-    assert.equal(doc.querySelectorAll(`#mv-list article.mv-item[data-ikey="${key}"]`).length, all, "the DOM holds every move on the key");
+    /* launch M7a: the page carries every move on the key — in the DOM or its island */
+    assert.equal(model.domSet.filter((x) => moveNameKey(x) === key).length, all, "the page carries every move on the key");
+    assert.equal(doc.querySelectorAll(`#mv-list article.mv-item[data-ikey="${key}"]`).filter((r) => !r.hasAttribute("hidden")).length, Math.min(15, all), "the first fifteen show, rendered from the island where needed");
     assert.ok(vis().every((r) => r.getAttribute("data-ikey") === key));
     assert.equal(text(doc.getElementById("mv-range")), namedMovesRangeText(Math.min(15, all), all), "the total is the DOM's own count, complete for the key");
     assert.ok(doc.querySelectorAll("button[data-mv-kind], button[data-mv-type]").every((b) => b.getAttribute("aria-pressed") === "false"), "the name clears the chips");
@@ -601,9 +630,13 @@ test("T2.4 (R9, LD7, LD8): revealTarget — on a phone a Consensus row selects t
     // a hash to a move held back by a kind filter: the filter clears and the row shows, opened
     doc.getElementById("mv-name-pill")!.click();
     doc.querySelector('button[data-mv-kind="new"]')!.bubbleClick();
-    const target = doc.querySelectorAll('#mv-list article.mv-item[data-kind="trim"]').at(-1)!;
-    assert.ok(target.hasAttribute("hidden"), "precondition: held by the kind filter");
-    m.env.fire(`#${target.getAttribute("id")}`);
+    /* launch M7a: a held trim row still in the island — the hash renders it, then reveals it */
+    const allIds = namedMoveIds(fixtureInstitutional());
+    const heldId = fixtureInstitutional().domSet.map((x, i) => ({ x, id: allIds[i]! })).filter(({ x, id }) => x.kind === "trim" && !doc.getElementById(id)).at(-1)!.id;
+    assert.equal(doc.getElementById(heldId), null, "precondition: held in the island");
+    m.env.fire(`#${heldId}`);
+    const target = doc.getElementById(heldId)!;
+    assert.ok(target, "rendered from its island");
     assert.equal(target.hasAttribute("hidden"), false, "the row shows");
     assert.ok(doc.querySelectorAll("button[data-mv-kind]").every((b) => b.getAttribute("aria-pressed") === "false"), "the filter cleared");
     assert.ok(target.querySelector("details")!.hasAttribute("open"), "and it opens");
@@ -679,7 +712,7 @@ test("T2.4 (R13, R24; codex M2 r2 F2): a Consensus name only broad accounts trad
   assert.doesNotMatch(none.detail + none.body, /broad/i);
 });
 
-test("T2.4 (R12, R13, LD11, D11; codex M2 r2 F3): a HELD row a reader pages to and opens — a summary click, then the browser's toggle — gets its body: filer page, verification, filed date and quarter, and its side's Congress lines with range, both dates, owner and receipt", () => {
+test("T2.4 (R12, R13, LD11, D11; codex M2 r2 F3): a HELD row a reader pages to and opens — a summary click, then the browser's toggle — gets its body: filer page, verification (the filed date on its row, the quarter in its Congress head), and its side's Congress lines with range, both dates, owner and receipt", () => {
   const m = mount(false);
   try {
     const model = fixtureInstitutional();
@@ -697,7 +730,12 @@ test("T2.4 (R12, R13, LD11, D11; codex M2 r2 F3): a HELD row a reader pages to a
     summary.activate();
     assert.ok(row.querySelector("details.mv-row")!.hasAttribute("open"), "the reader's click opened it");
     const facts = text(row.querySelector(".mv-facts"));
-    assert.match(facts, new RegExp(` · filed ${mv.filed} · quarter ended ${FIXTURE_PERIOD}`), "the filed date and the quarter");
+    /* launch copy item signals-11: the filed date is the row's own Filed cell
+       and the quarter the tab's chip and this body's Congress head — the
+       facts line no longer repeats them; an exit keeps its inference */
+    assert.equal(row.querySelector(".mv-fil time")!.getAttribute("datetime"), mv.filed, "the filed date, on the row itself");
+    assert.doesNotMatch(facts, /quarter ended| · filed /, "the body does not repeat the row's date or the tab's quarter");
+    assert.match(facts, mv.kind === "exit" ? /exit inferred from absence/ : /^\S/, "an exit says it is inferred");
     assert.match(facts, new RegExp(`${mv.ticker} — verified against the SEC company list on ${mv.ticker_verified}`), "the verification statement");
     assert.equal(row.querySelector(".mv-facts a")!.getAttribute("href"), row.getAttribute("data-fp"), "the filer-page link");
     assert.match(text(row.querySelector(".mv-cong-h")), new RegExp(`^Congress · \\d+ members? with a ${side === "buy" ? "purchase" : "sale"} of ${mv.ticker} traded in Q1 2026$`));
