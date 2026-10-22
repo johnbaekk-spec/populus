@@ -1215,10 +1215,26 @@ test.describe("route negative controls (clean target → injected defect → sam
 
   /* ----------------------------------------------------- T1.5/T1.6 G12 */
   const HIT_CONTROLS = ":is(.note-btn,.th-sort,.seg > button,.chips > button,.mgr-chips > button,.pager-btn,.compact-toggle)";
+  /* Gate 2 (67b9a8d on 20261019.2): at ≤720px every tip outside a table head
+     is now a 44px BOX of its own (late-additions.css, "launch gate — R7 at the
+     fold"), so no route's tips reach 44 through the ::before square any more
+     and neither control below found a target. Both controls therefore PLANT
+     the condition they test first: the tips back to their own small boxes,
+     whose 44px comes only from the ::before square and its midpoint clip — the
+     mechanism G12 guards wherever a trigger is not a box (a table head's
+     triggers, a header ledger's labels, any future small control). G12 itself
+     is unchanged. The page's script re-measures after the plant. */
+  async function plantSmallTips(page: Page): Promise<void> {
+    await page.addStyleTag({ content: "@media (max-width: 720px) { .note-btn { min-height: 0 !important; min-width: 0 !important; } }" });
+    await page.evaluate(() => window.dispatchEvent(new Event("resize")));
+    await page.waitForTimeout(300);
+    await installProbe(page);
+  }
 
   test("T1.5 G12 @390: removing the midpoint clip makes a neighbour's centre hit the trigger", async ({ page }) => {
     for (const route of ["/congress/", "/signals/", "/institutional/filers/1135730/", "/institutional/"]) {
       await openRoute(page, route, 390);
+      await plantSmallTips(page);
       const before = await probe(page, "g12");
       if (before.failures.length !== before.failureCount) continue;
       /* every control's square back to the centred, UNclipped max(box, hit-min) */
@@ -1238,6 +1254,7 @@ test.describe("route negative controls (clean target → injected defect → sam
 
   test("T1.6 G12 @390: removing the ::before hit square is DETECTED", async ({ page }) => {
     await openRoute(page, "/congress/", 390);
+    await plantSmallTips(page);
     const before = await probe(page, "g12");
     await page.addStyleTag({ content: `${HIT_CONTROLS}::before{display:none !important}` });
     const fresh = newFindings(before, await probe(page, "g12"), elKey);
