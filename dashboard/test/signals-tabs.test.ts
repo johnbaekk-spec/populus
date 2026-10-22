@@ -90,9 +90,11 @@ test("T2.2 / T3.5 (R9, LD8): one tablist — Congress, Institutional, Overlap, P
     ["tab-overlap", "#overlap", "overlap"],
     ["tab-playbooks", "#playbooks", "playbooks"],
   ]);
-  assert.match(text(tabs[1]), /^Institutional 200$/, "the Institutional tab counts the quarter's moves");
-  assert.equal(text(tabs[2]), "Overlap 26 New", "Overlap counts its same-side names, and says it is new");
-  assert.equal(text(tabs[3]), "Playbooks 7 New");
+  assert.match(text(tabs[1]), /^Institutional 200 13F manager changes$/, "the Institutional tab counts the quarter's moves, and says what it holds");
+  assert.equal(text(tabs[2]), "Overlap 26 Congress and 13F, same name", "Overlap counts its same-side names");
+  assert.equal(text(tabs[3]), "Playbooks 6 Names that match published studies");
+  assert.equal(text(tabs[0]), `Congress ${text(tabs[0]?.querySelector(".tk-tab-n"))} Member trades that stand out`);
+  assert.ok(!goldenPage().includes("tab-new") && tabs.every((t) => !/\bNew\b/.test(text(t))), "launch polish: no tab says New");
   const panels = root.querySelectorAll('[role="tabpanel"]');
   assert.deepEqual(panels.map((p) => [p.getAttribute("id"), p.getAttribute("aria-labelledby")]), [["congress", "tab-congress"], ["institutional", "tab-institutional"], ["overlap", "tab-overlap"], ["playbooks", "tab-playbooks"]]);
   assert.ok(panels.every((p) => !p.hasAttribute("hidden")), "no panel is hidden in the server HTML (no-JS: stacked)");
@@ -102,7 +104,7 @@ test("T2.2 / T3.5 (R9, LD8): one tablist — Congress, Institutional, Overlap, P
   for (const id of ["lead-cards", "triage", "stands", "look", "routine", "families", "hits"]) assert.ok(congress.querySelector(`#${id}`), `#${id} in #congress`);
   for (const id of ["named-moves", "consensus", "new-position-leaders", "inst-lead-cards"]) assert.ok(root.querySelector(`#institutional #${id}`), `#${id} in #institutional`);
   assert.ok(root.querySelector("#overlap #ov-section #ov-list article.ov-item"), "the Overlap rows in #overlap");
-  assert.equal(root.querySelectorAll("#playbooks article.pb-main").length, 7, "the seven playbooks in #playbooks");
+  assert.equal(root.querySelectorAll("#playbooks article.pb-main").length, 6, "the six playbooks in #playbooks");
 });
 
 test("T2.2 (R10, LD9): the head — h1 Signals, the M2 lede, the How tip — and one ledger group per tab, three figures each; Congress shows, Institutional is hidden", () => {
@@ -115,9 +117,9 @@ test("T2.2 (R10, LD9): the head — h1 Signals, the M2 lede, the How tip — and
   const labels = (g: MiniElement) => g.querySelectorAll(".ledger-fig dt").map((d) => text(d).replace(/,? explain$/, "").split(" ")[0]);
   assert.deepEqual(labels(groups[1]!), ["Moves", "Top", "Quarter"]);
   assert.deepEqual(labels(groups[2]!), ["Same", "Opposite", "Quarter"]);
-  assert.deepEqual(labels(groups[3]!), ["Playbooks", "Triggered", "Needs"]);
+  assert.deepEqual(labels(groups[3]!), ["Playbooks", "Triggered", "Studies"]);
   assert.deepEqual(groups[2]!.querySelectorAll(".ledger-value").map((x) => text(x)), ["26", "12", "Q1 2026"], "LD9: Overlap's core same and opposite names, the quarter");
-  assert.equal(groups[3]!.querySelectorAll(".ledger-value").map((x) => text(x))[0], "7");
+  assert.equal(groups[3]!.querySelectorAll(".ledger-value").map((x) => text(x))[0], "6");
   // every value in a hidden group is stated inside its panel (LD9)
   for (const [g, id] of [[groups[1]!, "institutional"], [groups[2]!, "overlap"], [groups[3]!, "playbooks"]] as const) {
     const panel = text(root.querySelector(`#${id}`));
@@ -263,11 +265,11 @@ test("T2.2 / T3.5: an artifact-only view still renders every tab, the Institutio
   assert.equal(root.querySelectorAll('[role="tab"]').length, 4);
   assert.match(text(root.querySelector("#overlap")), /Overlap is computed on the server from the build's Congress rows and 13F changes; this view carries the Congress artifact only\./);
   assert.match(text(root.querySelector('[data-tab-for="overlap"]')), /not computed in this view/);
-  assert.equal(text(root.querySelector("#tab-overlap")), "Overlap New", "no count it cannot state");
+  assert.equal(text(root.querySelector("#tab-overlap")), "Overlap Congress and 13F, same name", "no count it cannot state");
   assert.equal(text(root.querySelector("#playbooks .pb-disc")), "Published research on the patterns these rows show. Not advice.");
   assert.match(text(root.querySelector("#playbooks")), /The Playbooks tab is computed on the server from the build's triage/);
   assert.match(text(root.querySelector('[data-tab-for="playbooks"]')), /not computed in this view/);
   assert.match(text(root.querySelector("#institutional")), /computed on the server from the build's 13F data; this view carries the Congress artifact only/);
   assert.match(text(root.querySelector('[data-tab-for="institutional"]')), /not computed in this view/);
-  assert.equal(text(root.querySelector("#tab-institutional")), "Institutional", "no count it cannot state");
+  assert.equal(text(root.querySelector("#tab-institutional")), "Institutional 13F manager changes", "no count it cannot state");
 });

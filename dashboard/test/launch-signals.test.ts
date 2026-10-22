@@ -20,6 +20,7 @@ import { fixtureInstitutional } from "./lib/inst-signals-fixture.ts";
 import { fixtureOverlap } from "./lib/overlap-fixture.ts";
 import { MiniElement } from "./lib/mini-dom.ts";
 import { outline, playbookArticles, servedWords, splitTab, wordsOfOutline } from "./lib/served-words.ts";
+import { SIGNAL_SECTIONS } from "../src/lib/signal-sections.ts";
 
 const CTX = {};
 const text = (el: MiniElement | null | undefined): string => (el?.textContent ?? "").replace(/\s+/g, " ").trim();
@@ -73,7 +74,15 @@ const T0_ARTICLES: Readonly<Record<string, number>> = {
 /** R28: the approved mock's cut, 334 → 240 visible words (−28%), carried
     into served-HTML units. */
 const CUT = 240 / 334;
-const TAB_GATE = Math.round(T0_TAB * CUT);
+/** Launch polish (owner, 2026-10-22: no "planned" features on the site): the
+    Form 4 playbook left the tab, so its T0 article leaves the base — the gate
+    stays the same cut of what remains, not slack for the other articles. */
+const T0_REMOVED = T0_ARTICLES["pb-insider-opp"]!;
+const TAB_GATE = Math.round((T0_TAB - T0_REMOVED) * CUT);
+/** Launch polish: each Signals tab names what it holds on a second line. The
+    four hints are the tab strip's, shown on every tab like the masthead, so
+    they are chrome here (as T0_CHROME is), counted separately and pinned. */
+const TAB_HINT_WORDS = SIGNAL_SECTIONS.reduce((n, s) => n + s.hint.split(/\s+/).length, 0);
 
 let golden: TriageResult | null = null;
 function triage(): TriageResult {
@@ -103,12 +112,13 @@ function pageBody(m: PlaybooksModel): string {
   return signalsBody(f.artifact, CTX, { rowsEvaluated: 2051, triage: m.triage, institutional: fixtureInstitutional(), overlap: fixtureOverlap(), playbooks: m });
 }
 
-test("R28 / SC5: on the served HTML the Playbooks tab is at most 680 words (round(946 × 240/334)) and each article at most round(its T0 count × 240/334)", () => {
-  assert.equal(TAB_GATE, 680);
+test("R28 / SC5: on the served HTML the Playbooks tab is at most 581 words (round((946 − 137) × 240/334)) and each article at most round(its T0 count × 240/334)", () => {
+  assert.equal(TAB_GATE, 581);
   const m = stressModel();
   for (const id of CONGRESS_PLAYBOOKS) assert.ok(m.triggers.counts[id] > 5, `${id}: the stress model lists five rows and "All n"`);
   const tab = splitTab(pageBody(m), "playbooks");
-  const words = servedWords(tab) + T0_CHROME;
+  assert.ok(TAB_HINT_WORDS <= 18, `the four tab hints read ${TAB_HINT_WORDS} words; they stay short`);
+  const words = servedWords(tab) - TAB_HINT_WORDS + T0_CHROME;
   assert.ok(words <= TAB_GATE, `the tab reads ${words} words; the gate is ${TAB_GATE}`);
   const arts = playbookArticles(tab);
   assert.deepEqual([...arts.keys()], PLAYBOOKS.map((p) => `pb-${p.id}`), "every article is counted");
@@ -132,7 +142,7 @@ test("R28 / SC5 (control): a planted 40-word paragraph in an article, or in the 
   const art = playbookArticles(tab).get("pb-leader")!;
   const planted = art.replace("</article>", `${plant}</article>`);
   assert.ok(servedWords(planted) > Math.round(T0_ARTICLES["pb-leader"]! * CUT), "the article gate catches it");
-  assert.ok(servedWords(tab.replace(art, planted)) + T0_CHROME > TAB_GATE, "the tab gate catches it");
+  assert.ok(servedWords(tab.replace(art, planted)) - TAB_HINT_WORDS + T0_CHROME > TAB_GATE, "the tab gate catches it");
   // and what the ruler counts in an article is copy, row by row
   const rows = wordsOfOutline(outline(art)).rows.map((r) => r.tag);
   assert.ok(rows.some((t) => t.startsWith("p.pb-verdict")) && rows.some((t) => t.startsWith("li.ev")), "the verdict and the evidence are counted");

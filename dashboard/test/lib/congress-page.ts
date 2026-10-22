@@ -13,6 +13,7 @@
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { signalMenuHtml } from "../../src/lib/signal-sections.ts";
 
 import { congressTickersRollup, leadersRollup } from "../../src/lib/derive.ts";
 import { pct } from "../../src/lib/data.ts";
@@ -162,6 +163,8 @@ export function congressPageFixture(): { html: string; body: string } {
       "navCounts.congress": `${fmtInt(txns.length)} trades`,
       "navCounts.institutional": "9,451 13F filers",
       "navCounts.signals": "152 hits · 2025-07-21 → 2026-10-19",
+      signalMenu: signalMenuHtml(),
+      canonical: "https://publicfilings.org/congress/",
       searchHint: `${fmtInt(members)} members · ${fmtInt(tickers)} tickers · 9,451 13F filers`,
       "FOOTER_NOTICE[footer]":
         "Not financial advice. Use of congressional disclosure reports for commercial purposes, credit decisions or solicitation is restricted by 5 U.S.C. §13107(c).",

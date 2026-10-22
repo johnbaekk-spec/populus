@@ -1177,8 +1177,6 @@ details.si-tier > summary > .si-tier-h { display: inline; }
 }
 
 /* ---------- signals-v4 M3 (R18–R22, LD8, LD14–LD16): Overlap, Playbooks and the playbook chips ---------- */
-/* LD8: the two new tabs say so */
-.tab-new { font: 600 var(--fs-label)/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--amber); border: 1px solid var(--amber); border-radius: 3px; padding: 2px 4px; }
 /* R21: a playbook's chip — dashed, leading a triggered row's line-2 reason,
    in its opened row, on a strip and on the playbook's own head */
 .pb-chip { display: inline-block; font: 600 var(--fs-label)/1.3 var(--mono); letter-spacing: .06em; color: var(--accent); border: 1px dashed var(--accent); border-radius: 3px; padding: 0 4px; white-space: nowrap; vertical-align: baseline; }
@@ -1248,7 +1246,7 @@ details.si-tier > summary > .si-tier-h { display: inline; }
 .pbi[aria-current="true"] { background: var(--seg-fill); box-shadow: inset 3px 0 0 var(--amber); }
 .pbi-n { font: 600 var(--fs-small)/1.4 var(--sans); }
 .pbi-s { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 0; font: 500 var(--fs-label)/1.5 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink3); }
-.pb-st-live { color: var(--buy); } .pb-st-descriptive { color: var(--ink3); } .pb-st-needs-data { color: var(--amber); }
+.pb-st-live { color: var(--buy); } .pb-st-descriptive { color: var(--ink3); }
 .pb-arts { flex: 999 1 560px; min-width: 0; }
 .pb-main + .pb-main { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--rule2); }
 .pb-h { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 4px 0 0; }
@@ -1267,12 +1265,14 @@ details.si-tier > summary > .si-tier-h { display: inline; }
 .pb-tg thead th { padding: 0; border: 0; }
 .pb-row > td { padding: 7px 14px 7px 0; border-bottom: 1px solid var(--rule-row); vertical-align: baseline; text-align: left; }
 .pb-row > td:last-child { padding-right: 0; text-align: right; }
+/* the receipt is a cell here, not the triage row's corner badge: without this
+   the triage row's absolute position lifted it out of the table, ~700px up */
+.pb-tg .si-row-src { position: static; }
 .pb-tg .cl-amt { font: 400 var(--fs-control)/1.5 var(--mono); white-space: nowrap; }
-.pb-tg .cl-dates { font: 400 var(--fs-control)/1.5 var(--mono); color: var(--ink3); }
+.pb-tg .cl-dates { font: 400 var(--fs-control)/1.5 var(--mono); color: var(--ink3); white-space: nowrap; }
 .pb-tg .si-row-traded, .pb-tg .si-row-filed { white-space: nowrap; }
 .pb-row-open { font: 600 var(--fs-small)/1.5 var(--mono); white-space: nowrap; }
 .pb-line { margin: 6px 0 0; font: 400 var(--fs-note)/1.5 var(--sans); }
-.pb-needs { margin: 0; padding-left: 18px; font: 400 var(--fs-small)/1.55 var(--sans); color: var(--ink2); }
 .pb-ev { list-style: none; margin: 0; padding: 0; }
 .ev { display: grid; grid-template-columns: 76px minmax(0,1fr) auto; grid-template-areas: "d c src" "d f f"; gap: 2px 12px; align-items: baseline; padding: 9px 0; border-bottom: 1px solid var(--rule-row); }
 .ev-d { grid-area: d; font: 600 var(--fs-label)/1.5 var(--mono); letter-spacing: .1em; text-transform: uppercase; }
@@ -1422,7 +1422,6 @@ details.si-tier > summary > .si-tier-h { display: inline; }
 .overlap-rows dd { margin: 0; }
 .overlap-n { display: inline-block; min-width: 1.6em; font: 600 var(--fs-body) var(--mono); margin-right: 4px; }
 .overlap-total { display: block; font: 500 var(--fs-control) var(--mono); color: var(--ink3); margin-top: 2px; }
-.overlap-planned .badge-planned { margin-left: 6px; }
 @media (max-width: 720px) { .design-overlap .overlap-halves { grid-template-columns: minmax(0,1fr); } }
 
 
@@ -1540,4 +1539,42 @@ details.si-tier > summary > .si-tier-h { display: inline; }
   table[data-card] > tbody > tr a[data-row-link]:not(:is(.cell-src, .c-src) a)::after { bottom: -1px; }
   /* R4: a committee name wraps instead of widening a phone page */
   .member-cmte { white-space: normal; }
+}
+
+/* launch polish: the header's Signals menu names the page's four sections
+   (on hover or keyboard focus); in the phone drawer the same four links list
+   under Signals. The bridge (::before) keeps the menu open across the gap. */
+.nav-has-drop { position: relative; display: inline-flex; align-items: baseline; gap: 6px; }
+.nav-has-drop > a::after { content: "▾"; margin-left: 4px; font-size: var(--fs-label); color: var(--ink3); }
+.nav-drop { display: none; position: absolute; top: 100%; left: -14px; z-index: 30; min-width: 290px; margin-top: 12px; padding: 6px 0; background: var(--raised); border: 1px solid var(--rule2); border-radius: 3px; box-shadow: 0 10px 28px rgba(0,0,0,.35); }
+.nav-drop::before { content: ""; position: absolute; left: 0; right: 0; top: -13px; height: 13px; }
+.nav-has-drop:hover > .nav-drop, .nav-has-drop:focus-within > .nav-drop { display: block !important; } /* over the global [hidden] rule */
+.site-nav .nav-drop-item { display: grid; gap: 2px; padding: 9px 14px; min-height: var(--hit-min); white-space: normal; border: 0; margin: 0; }
+.site-nav .nav-drop-item:hover, .site-nav .nav-drop-item:focus-visible { background: var(--paper); }
+.nav-drop-name { font: 600 var(--fs-name)/1.3 var(--sans); color: var(--ink); }
+.nav-drop-hint { font: 400 var(--fs-note)/1.35 var(--sans); color: var(--ink3); }
+/* the Signals tabs read as four buttons, each naming what it holds */
+/* one connected bar: four equal segments split by hairlines; the selected one
+   is raised and carries the amber bar the Playbooks list uses for its pick */
+.sig-tabs { display: grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap: 0; padding: 0; border: 1px solid var(--rule2); border-radius: 4px; overflow: hidden; background: var(--paper); }
+.sig-tab { flex-direction: column; align-items: flex-start; justify-content: center; gap: 4px; padding: 12px 18px 12px; margin: 0; white-space: normal; border: 0; border-left: 1px solid var(--rule2); box-shadow: inset 0 3px 0 transparent; transition: background-color .12s; }
+.sig-tab:first-child { border-left: 0; }
+.sig-tab:hover { background: var(--raised); }
+.sig-tab[aria-selected="true"] { background: var(--raised); box-shadow: inset 0 3px 0 var(--amber); }
+.sig-tab-name { display: inline-flex; align-items: baseline; gap: 8px; font: 600 var(--fs-body)/1.2 var(--sans); color: var(--ink2); }
+.sig-tab:hover .sig-tab-name, .sig-tab[aria-selected="true"] .sig-tab-name { color: var(--ink); }
+.sig-tab-hint { font: 400 var(--fs-note)/1.3 var(--sans); color: var(--ink3); }
+.sig-tab[aria-selected="true"] .sig-tab-hint { color: var(--ink2); }
+@media (max-width: 720px) {
+  .site-nav.open .nav-has-drop { display: contents; }
+  .site-nav.open .nav-has-drop > a::after { content: none; }
+  .site-nav.open .nav-drop { display: block !important; position: static; grid-column: 1 / -1; min-width: 0; margin: 0; padding: 0 0 0 16px; background: none; border: 0; box-shadow: none; }
+  .site-nav.open .nav-drop::before { content: none; }
+  .site-nav.open .nav-drop-item { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--rule); }
+  .site-nav.open .nav-drop-name { font-weight: 500; color: var(--ink2); }
+  /* the strip sticks under the header; on a phone it stays one line tall, and
+     the drawer's Signals list carries the same hints */
+  .sig-tabs { grid-template-columns: repeat(4, max-content); }
+  .sig-tab { padding: 10px 14px; }
+  .sig-tab-hint { display: none; }
 }

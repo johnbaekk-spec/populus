@@ -339,7 +339,9 @@ test("R8 (LD8): at ≤720px the masthead sticks at top 0, a 54px bar; --masthead
 
 test("R8 (LD8, D2): the drawer is #site-nav with each section's count as a sibling span, computed from the build; no account control", () => {
   const nav = BASE_SRC.slice(BASE_SRC.indexOf('<nav class="site-nav"'), BASE_SRC.indexOf("</nav>", BASE_SRC.indexOf('<nav class="site-nav"')));
-  assert.equal((nav.match(/<a\b/g) ?? []).length, 3, "the nav stays exactly three links");
+  assert.equal((nav.match(/<a\b/g) ?? []).length, 3, "the nav stays exactly three module links");
+  /* launch polish: the Signals menu (its section links, hidden until shown) */
+  assert.match(nav, /<span class="nav-drop" hidden><Fragment set:html=\{signalMenu\} \/><\/span>/);
   assert.equal((nav.match(/class="nav-count"/g) ?? []).length, 3, "one count per section, outside its link");
   /* launch gate (SC5): no default view shows the counts or the sheet hint, so
      the served HTML marks them `hidden`; the drawer's and sheet's `.open`

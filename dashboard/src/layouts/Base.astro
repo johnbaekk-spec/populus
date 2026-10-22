@@ -27,12 +27,13 @@ import "../styles/late-additions.css";
 import { getBuildData } from "../lib/data";
 import { fmtInt, withTableRoles } from "../lib/format";
 import { getSignalArtifact } from "../lib/data";
+import { signalMenuHtml } from "../lib/signal-sections";
 import Mark from "../components/Mark.astro";
 
 interface Props {
   title: string;
   description: string;
-  active?: "home" | "congress" | "institutional" | "signals" | "financials" | "macro" | "methodology";
+  active?: "home" | "congress" | "institutional" | "signals" | "methodology";
   /** search-first masthead emphasis (Ticker Unified) — one shell, variant props */
   searchEmphasis?: boolean;
   /** footer variant: the three 13F pages (institutional index, filer, ticker
@@ -47,6 +48,14 @@ interface Props {
 
 const { title, description, active, searchEmphasis = false, footer = "standard", head = "" } = Astro.props;
 const build = getBuildData();
+
+/* launch polish: what a shared link previews — the page's own title and
+   description over one site card (public/og.png, 1200×630). The redirect
+   stubs name their own canonical in `head`, so the default steps aside. */
+const site = Astro.site ?? new URL("https://publicfilings.org");
+const pageUrl = new URL(Astro.url.pathname, site).href;
+const canonical = head.includes('rel="canonical"') ? "" : pageUrl;
+const ogImage = new URL("/og.png", site).href;
 
 /* launch M1a (R40, LD37): the page body is rendered once, here, and every
    table in it leaves with its explicit roles (table, rowgroup, row,
@@ -74,6 +83,7 @@ const navCounts = {
   institutional: instFilers > 0 ? `${fmtInt(instFilers)} 13F filers on record` : "",
   signals: `${fmtInt(activeHits)} hits · ${signalArtifact.coverageFrom} → ${signalArtifact.coverageTo}`,
 };
+const signalMenu = signalMenuHtml();
 const searchHint =
   `${fmtInt(build.members.length)} members · ${fmtInt(build.tickers.length)} tickers` +
   (instFilers > 0 ? ` · ${fmtInt(instFilers)} 13F filers on record` : "");
@@ -102,6 +112,16 @@ const FOOTER_NOTICE = {
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>{title}</title>
     <meta name="description" content={description} />
+    {canonical && <link rel="canonical" href={canonical} />}
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Public Filings" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={pageUrl} />
+    <meta property="og:image" content={ogImage} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
     {head && <Fragment set:html={head} />}
     {/* Machine-readable build markers. Deploy verification PARSES these
         by name and compares the values exactly — never a substring search over
@@ -132,8 +152,15 @@ const FOOTER_NOTICE = {
             <span class="nav-count" hidden>{navCounts.congress}</span>
             <a href="/institutional/" aria-current={active === "institutional" ? "page" : undefined}>Institutional</a>
             {navCounts.institutional && <span class="nav-count" hidden>{navCounts.institutional}</span>}
-            <a href="/signals/" aria-current={active === "signals" ? "page" : undefined}>Signals</a>
-            <span class="nav-count" hidden>{navCounts.signals}</span>
+            <span class="nav-has-drop">
+              <a href="/signals/" aria-current={active === "signals" ? "page" : undefined}>Signals</a>
+              <span class="nav-count" hidden>{navCounts.signals}</span>
+              {/* the four Signals sections, named where a first-time reader
+                  looks: a menu under the link on hover or focus, a list under
+                  it in the phone drawer. `hidden` until shown, so the served
+                  words are what a reader sees at load (SC5). */}
+              <span class="nav-drop" hidden><Fragment set:html={signalMenu} /></span>
+            </span>
           </nav>
         </div>
         <div class="masthead-right">
@@ -227,6 +254,15 @@ const FOOTER_NOTICE = {
       }
       wireToggle(".nav-burger", document.getElementById("site-nav"));
       wireToggle(".search-toggle", document.getElementById("site-search-box"));
+      // a Signals menu pick on /signals/ only changes the hash; let go of the
+      // focus that holds the menu open (:focus-within) and close the drawer
+      for (const a of document.querySelectorAll<HTMLAnchorElement>(".nav-drop-item")) {
+        a.addEventListener("click", () => {
+          a.blur();
+          document.getElementById("site-nav")?.classList.remove("open");
+          document.querySelector(".nav-burger")?.setAttribute("aria-expanded", "false");
+        });
+      }
     </script>
     <script>
       import { initSearch } from "../scripts/search-client";

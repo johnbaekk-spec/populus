@@ -45,13 +45,13 @@ export const PLAYBOOK_TRIGGER_ROWS = 5;
     never travels as free text. */
 export const LEADERS_LABEL_TOKEN = "{{leaders-label}}";
 
-export type PlaybookId = "opp-buy" | "leader" | "cmte" | "best-ideas" | "consensus" | "overlap" | "insider-opp";
+export type PlaybookId = "opp-buy" | "leader" | "cmte" | "best-ideas" | "consensus" | "overlap";
 /** The playbooks that trigger on a Congress row (LD16). */
 export type CongressPlaybookId = "opp-buy" | "leader" | "cmte";
 export const CONGRESS_PLAYBOOKS: readonly CongressPlaybookId[] = ["opp-buy", "leader", "cmte"];
 
-export type PlaybookSource = "Congress" | "Institutional" | "Overlap" | "Form 4";
-export type PlaybookStatus = "live" | "descriptive" | "needs-data";
+export type PlaybookSource = "Congress" | "Institutional" | "Overlap";
+export type PlaybookStatus = "live" | "descriptive";
 export type EvidenceDir = "supports" | "against" | "indirect";
 
 export interface Evidence {
@@ -80,8 +80,6 @@ export interface Playbook {
   horizon: string;
   verdict: string;
   evidence: readonly Evidence[];
-  /** what it needs before it can trigger (needs-data only) */
-  needs?: readonly string[];
 }
 
 const CMP_2012: Omit<Evidence, "sample"> = {
@@ -207,21 +205,6 @@ export const PLAYBOOKS: readonly Playbook[] = [
     horizon: "Not studied: no published research found.",
     verdict: "Descriptive only: the site uses no prices to test it.",
     evidence: [],
-  },
-  {
-    /* † "…buying" is banned wording (LD15) */
-    id: "insider-opp", short: "INSIDER", name: "Opportunistic insider purchases", source: "Form 4", status: "needs-data", grade: "needs data",
-    pattern: "Routine insider trades carry no information; the rest is informed money.",
-    trigger:
-      "Proposed: open-market purchases (Form 4 code P) by insiders not tagged routine; routine = traded in the same calendar month in each of the 3 prior years. Extra weight when 2 or more insiders of one issuer buy within 30 days — a proposed refinement, not tested in the paper.",
-    horizon: "Portfolios formed monthly on the filing.",
-    verdict: "The strongest evidence of the set, but there is no Form 4 data here yet.",
-    needs: [
-      "A Form 4 ingest (EDGAR ownership XML, due 2 business days after the trade).",
-      "Three years of history per insider (the routine test).",
-      "An issuer-to-ticker bridge, so rows can name tickers.",
-    ],
-    evidence: [{ ...CMP_2012, sample: "Corporate insiders, 1986–2007" }],
   },
 ];
 

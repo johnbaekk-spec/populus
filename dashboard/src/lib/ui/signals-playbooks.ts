@@ -65,7 +65,7 @@ export function playbookTextHtml(text: string): string {
   return esc(text).replaceAll(LEADERS_LABEL_TOKEN, CONVICTION_LABEL_HTML);
 }
 
-const STATUS_WORD: Readonly<Record<Playbook["status"], string>> = { live: "Live", descriptive: "Descriptive", "needs-data": "Needs Form 4" };
+const STATUS_WORD: Readonly<Record<Playbook["status"], string>> = { live: "Live", descriptive: "Descriptive" };
 const DIR_WORD: Readonly<Record<string, string>> = { supports: "Supports", against: "Against", indirect: "Indirect" };
 
 function plural(n: number, one: string, many: string): string {
@@ -92,8 +92,6 @@ export function playbookStatusText(p: Playbook, model: PlaybooksModel | null): s
     that cannot trigger this build, why — the count itself is the list's and
     the article's "Triggers now". */
 export function articleStatusText(p: Playbook, model: PlaybooksModel | null): string {
-  /* "Form 4 · Needs data": the source already names the form */
-  if (p.status === "needs-data") return "Needs data";
   if (p.status !== "live") return STATUS_WORD[p.status];
   if (model === null) return "Live · not computed in this view";
   if (p.id === "cmte" && !model.triggers.cmteAvailable) return "Live · unavailable this build";
@@ -169,16 +167,17 @@ export function playbookFilterHtml(model: PlaybooksModel): string {
 
 /* ---------------------------------------------------------------- the ledger group (LD9) */
 
-/** LD9: Playbooks · Triggered · Needs data. */
+/** LD9: Playbooks · Triggered · Studies (launch polish: the Form 4 playbook
+    and its "Needs data" figure left with the site's not-yet-built features). */
 export function playbooksLedgerItems(model: PlaybooksModel | null): LedgerItem[] {
   const live = PLAYBOOKS.filter((p) => p.status === "live").length;
-  const needs = PLAYBOOKS.filter((p) => p.status === "needs-data").length;
+  const studies = new Set(PLAYBOOKS.flatMap((p) => p.evidence.map((e) => e.url))).size;
   return [
     { label: "Playbooks", value: fmtInt(PLAYBOOKS.length), detail: `${fmtInt(live)} live`, subKind: "count", tone: "blue" },
     model === null
       ? { label: "Triggered", value: "—", detail: "not computed in this view", subKind: "absence", tone: "gold" }
       : { label: "Triggered", value: fmtInt(model.triggers.byRow.size), detail: "Congress rows", subKind: "count", tone: "gold" },
-    { label: "Needs data", value: fmtInt(needs), detail: "Form 4", subKind: "count" },
+    { label: "Studies", value: fmtInt(studies), detail: "cited, for and against", subKind: "count" },
   ];
 }
 
@@ -206,9 +205,6 @@ const FULL_PAGE: PlaybooksTargets = { institutionalPanels: true, triageRows: tru
 
 function triggersNowHtml(p: Playbook, model: PlaybooksModel | null, ctx: RenderCtx, to: PlaybooksTargets = FULL_PAGE): string {
   const sec = (k: string, body: string): string => `<div class="pb-sec"><p class="pb-k">${esc(k)}</p>${body}</div>`;
-  if (p.status === "needs-data") {
-    return sec("What it needs", `<ul class="pb-needs">${(p.needs ?? []).map((n) => `<li>${esc(n)}</li>`).join("")}</ul>`);
-  }
   if (p.id === "overlap") return sec("Where it shows", `<p class="pb-line"><a href="#overlap">Overlap →</a></p>`);
   if (model === null) return sec("Triggers now", `<p class="section-note">Not computed in this view: the triggers are computed on the server from the build's rows.</p>`);
   /* the panel's own anchor where the Institutional tab renders it; else the
@@ -333,7 +329,7 @@ export function signalsPlaybooksHtml(model: PlaybooksModel | null, ctx: RenderCt
       `<section class="panel sig-pb" id="pb-section" aria-labelledby="playbooks-h" data-empty-state>` +
       `<div class="panel-head"><h2 class="section-h" id="playbooks-h">Playbooks</h2></div>` +
       `<p class="pb-disc">Published research on the patterns these rows show. Not advice.</p>` +
-      `<p class="section-note">The Playbooks tab is computed on the server from the build's triage; this view carries the Congress artifact only. The seven playbooks and their sources are on <a href="/methodology/#signals-playbooks">Methodology</a>.</p>` +
+      `<p class="section-note">The Playbooks tab is computed on the server from the build's triage; this view carries the Congress artifact only. The playbooks and their sources are on <a href="/methodology/#signals-playbooks">Methodology</a>.</p>` +
       `</section>`
     );
   }
@@ -409,9 +405,9 @@ export function signalsPlaybooksMethodHtml(): string {
         `The roster (v${ROSTER_VERSION}) starts ${ROSTER_FROM}: a trade before it is never classified. ${esc(ROSTER_PRECISION_TEXT)}`,
     ) +
     li(`<strong>Committee-linked trade.</strong> It triggers when a row's Cmte meter reads medium — a direct match in the committee table (<a href="#committee-direct">above</a>). When the committee inputs are not in a build it has no rows, and the tab says it is unavailable. ${esc(COMMITTEE_CAVEAT)}`) +
-    li(`<strong>Best ideas and Consensus</strong> trigger on panels, not rows: the new-position leaders and Consensus on the Institutional tab state how many managers and names qualify. Opportunistic insider purchases need Form 4 data Public Filings does not hold.`) +
+    li(`<strong>Best ideas and Consensus</strong> trigger on panels, not rows: the new-position leaders and Consensus on the Institutional tab state how many managers and names qualify.`) +
     `</ul>` +
-    `<p class="metho-body">The seven playbooks, their rules and their sources:</p>` +
+    `<p class="metho-body">The ${PLAYBOOKS.length} playbooks, their rules and their sources:</p>` +
     `<ul class="si-method-list">${rules}</ul>` +
     `<p class="metho-body">The leadership roster (v${ROSTER_VERSION}, from ${ROSTER_FROM}, every row checked ${ROSTER_CHECKED} against its primary source):</p>` +
     `<div class="table-scroll"><table class="etable etable-compact">` +
