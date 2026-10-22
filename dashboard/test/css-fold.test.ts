@@ -7,6 +7,7 @@
    corrected-token assertions. The fold and token rules asserted here are
    specified by docs/frontend/design-principles.md (§5 and §6). */
 
+import { signalMenuHtml } from "../src/lib/signal-sections.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -783,6 +784,8 @@ function renderCorpus(): string {
     basis: "traded",
   });
   return [
+    // launch polish: the header's Signals menu (Base.astro renders it)
+    signalMenuHtml(),
     // RUN ALPHA-SURFACES-V2: both congress ranking sections, with the range
     // control, the compact disclosure, the unsortable-column reason and the
     // wholly-undisclosed bucket all present, so every new class is swept.
@@ -1105,19 +1108,21 @@ const NEW_RENDERER_CLASSES = [
   "cl-list", "cl-line", "cl-tk", "cl-amt", "cl-dates",
   "cs-count", "cs-head", "cs-hr", "cs-hcg", "cs-row", "cs-list", "cs-pick", "cs-tk", "cs-iss", "cs-n", "cs-a", "cs-t", "cs-x", "cs-net", "cs-cg", "cs-strong", "cs-top",
   "cv-count", "cv-list", "cv-row", "cv-rk", "cv-fl", "cv-bar", "cv-pc", "cv-top", "cv-rt",
-  /* signals-v4 M3 (R18–R22, LD8, LD14–LD16): the tabs' "New"; a playbook's
+  /* signals-v4 M3 (R18–R22, LD8, LD14–LD16): a playbook's
      dashed chip, its strip, an opened row's playbook section and the
      Playbooks filter; Overlap — its line, controls, column head, each row's
      summary cells and opened sides, the managers' lines; the Playbooks tab —
      the "Not advice" line, the list, each article and its evidence; a move's
      link to its Overlap row. */
-  "tab-new", "pb-chip", "pb-strip", "si-row-pb", "si-row-pb-one", "si-row-pb-h", "si-row-pb-v",
+  /* launch polish: the Signals tabs' name and hint, the header's Signals menu */
+  "sig-tab", "sig-tab-name", "sig-tab-hint", "nav-drop-item", "nav-drop-name", "nav-drop-hint",
+  "pb-chip", "pb-strip", "si-row-pb", "si-row-pb-one", "si-row-pb-h", "si-row-pb-v",
   "si-pb-filter", "si-pb-l", "si-pb-chips", "si-pb-status",
   "ov-lede", "ov-tools", "ov-broad", "ov-box", "ov-head", "ov-item", "ov-row", "ov-sum", "ov-tk", "ov-rl", "ov-rel",
   "ov-rel-buy", "ov-rel-sell", "ov-rel-opp", "ov-rel-mix", "ov-iss", "ov-who", "ov-cg", "ov-mg", "ov-mw",
   "ov-det", "ov-det-h", "ov-det-k", "ov-mlist", "ov-mline", "ov-m", "ov-n",
-  "pb-disc", "pbg", "pb-nav", "pb-list", "pbi", "pbi-n", "pbi-s", "pb-st-live", "pb-st-descriptive", "pb-st-needs-data",
-  "pb-arts", "pb-main", "pb-h", "pb-name", "pb-meta", "pb-p", "pb-verdict", "pb-sec", "pb-k", "pb-row", "pb-row-open", "pb-line", "pb-needs",
+  "pb-disc", "pbg", "pb-nav", "pb-list", "pbi", "pbi-n", "pbi-s", "pb-st-live", "pb-st-descriptive",
+  "pb-arts", "pb-main", "pb-h", "pb-name", "pb-meta", "pb-p", "pb-verdict", "pb-sec", "pb-k", "pb-row", "pb-row-open", "pb-line",
   "pb-ev", "ev", "ev-d", "ev-supports", "ev-against", "ev-indirect", "ev-c", "ev-src", "ev-v", "ev-f",
   "mv-ov-link",
   /* launch M2 (Home A, R14–R17): the hero's launcher and its parts, the "Try"
@@ -1158,7 +1163,7 @@ const NEW_HOOK_CLASSES = [
      Congress line's member and receipt cells (the
      receipt is the swept `.si-row-src`); the owner's reference label, which
      the wording scan reads (LD20) */
-  "sig-tab", "sig-moves", "sig-cons", "sig-conv", "mv-list", "mv-bound", "cl-who", "cl-src", "ref-label",
+  "sig-moves", "sig-cons", "sig-conv", "mv-list", "mv-bound", "cl-who", "cl-src", "ref-label",
   /* signals-v4 M3: the Overlap and Playbooks panels (laid out by `.panel`),
      the relation group (a `.seg`), the row list and a row's opened side
      (laid out by `.ov-det`), the stated bound and the count line (each a
@@ -1244,10 +1249,12 @@ const ASTRO_ONLY_CLASSES = [
   "home-hero-copy", "home-page",
   "metho-title", "metho-lede", "toc", "metho-section", "standing-caveat",
   "metho-tiles", "mtile", "mtile-sub", "metho-grid", "source-list", "source-row",
-  "gaps-block", "pub-grid", "pub-card", "verify-line", "module-shell",
-  "shell-title", "shell-lede", "caveat-box", "caveat-box-head", "caveat-box-body",
+  "gaps-block", "pub-grid", "pub-card", "verify-line",
+  "caveat-box", "caveat-box-head", "caveat-box-body",
   "search-panel", "search-panel-foot", "search-kbd", "masthead-search-first",
   "entity-page", "footer-row", "footer-brand", "footer-nav", "footer-notice",
+  /* launch polish: the header's Signals menu wrapper */
+  "nav-has-drop", "nav-drop",
   /* signals-v4 M2 (LD18): /institutional/'s pointer to the moved sections,
      and its provenance line's hook (styled as `.design-provenance`) */
   "inst-moved", "inst-prov",
@@ -1260,8 +1267,6 @@ test("dead-CSS sweep: every new class is styled AND emitted", () => {
     "layouts/Base.astro",
     "pages/index.astro",
     "pages/methodology/index.astro",
-    "pages/financials/index.astro",
-    "pages/macro/index.astro",
     "pages/e/index.astro",
     "pages/404.astro",
     "pages/institutional/index.astro",

@@ -75,8 +75,8 @@ test("status contract: /e/ 200 · canonical 200 · garbage 404 (Locked #3)", asy
   assert.equal(nowhere.status, 404);
 });
 
-test("nav routes all resolve: /institutional /methodology /financials /macro", async () => {
-  for (const route of ["/institutional/", "/methodology/", "/financials/", "/macro/", "/congress/"]) {
+test("nav routes all resolve: /institutional /methodology /signals /congress", async () => {
+  for (const route of ["/institutional/", "/methodology/", "/signals/", "/congress/"]) {
     const r = await fetch(`${BASE}${route}`);
     assert.equal(r.status, 200, `${route} must not 404 from the masthead`);
   }

@@ -783,14 +783,14 @@ test("R19: the Congress half is exactly the last 90 days by filed date; the 13F 
   assert.doesNotMatch(html, /PLANNED/);
 });
 
-test("R19: an unmapped ticker ships the Congress half and a Planned badge on the 13F half", () => {
+test("R19: an unmapped ticker ships the Congress half and a plain absence statement on the 13F half (no PLANNED badge)", () => {
   const ctx: RenderCtx = {};
   const band = overlapBand({ ticker: "ZZZZ", txns: overlapTxns(), generatedAtDate: NOW, inst: overlapInst(), typingByCik: overlapInst().typingByCik, period: "2026-03-31", ctx, filerHref: (cik) => `/f/${cik}` });
   assert.equal(band.inst, null);
   assert.ok(band.buyers.length > 0);
   const html = overlapBandHtml(band, ctx, () => "/");
-  assert.match(html, /overlap-planned/);
-  assert.match(html, /badge-planned">PLANNED/);
+  assert.doesNotMatch(html, /PLANNED|overlap-planned/);
+  assert.match(html, /data-absent="unmapped"/);
   assert.match(html, /Seller One/);
 });
 

@@ -45,7 +45,7 @@ const signalSections =
 
 const description =
   "Per-module sources and conditions, coverage measured against the full corpus, known gaps, " +
-  "and the structural caveats no engineering removes — regenerated from stats.json on every build.";
+  "and the structural caveats no engineering removes — updated on every build.";
 ---
 
 <Base title="Methodology — Public Filings" description={description} active="methodology">
@@ -59,11 +59,9 @@ const description =
         closes the `<details open>` sections there; without JavaScript nothing
         changes). A link here opens the section it names. */}
     <nav class="toc metho-toc" aria-label="Sections">
-      <a href="#m1">M1 · Congressional</a>
+      <a href="#m1">Congress trades</a>
       <a href="#signals-method">Congress signals · rules &amp; ranking</a>
-      <a href="#m2">M2 · Institutional 13F</a>
-      <a href="#m3m4" class="toc-muted">M3 · Financials — planned</a>
-      <a href="#m3m4" class="toc-muted">M4 · Macro — planned</a>
+      <a href="#m2">Institutional 13F</a>
       <a href="#principles">Principles</a>
       <a href="#publication">Publication &amp; verification</a>
       <a href="#privacy">Privacy</a>
@@ -73,7 +71,7 @@ const description =
     <section class="metho-section" id="m1">
       <details class="metho-fold" open data-metho-fold>
       <summary class="metho-summary metho-section-head">
-        <h2 class="section-h2">M1 — Congressional trading</h2>
+        <h2 class="section-h2">Congress trades</h2>
         <span class="mono-note">build {build.buildId} · generated {build.generatedAtDate}</span>
       </summary>
       <blockquote class="standing-caveat">
@@ -189,7 +187,7 @@ const description =
     <section class="metho-section" id="m2">
       <details class="metho-fold" open data-metho-fold>
       <summary class="metho-summary metho-section-head">
-        <h2 class="section-h2">M2 — Institutional 13F</h2>
+        <h2 class="section-h2">Institutional 13F</h2>
         <span class="mono-note">
           {inst.present
             ? `in this build · latest period ${inst.watermarks.latest_period_of_report ?? "—"} · latest filing ${inst.watermarks.latest_filed_date ?? "—"}`
@@ -250,30 +248,6 @@ const description =
       </details>
     </section>
 
-    <section class="metho-section" id="m3m4">
-      <div class="metho-grid">
-        <div>
-          <h2 class="section-h2">M3 — Company financials <span class="badge-planned">PLANNED</span></h2>
-          <p class="metho-planned">
-            As-reported XBRL from EDGAR, for a curated universe. Standing caveat,
-            committed now: <em>as-reported ≠ normalized comparables</em> —
-            restatements and taxonomy drift will be shown as vintages, not
-            silently overwritten. This section fills in when the module ships;
-            its gates are published before its data.
-          </p>
-        </div>
-        <div>
-          <h2 class="section-h2">M4 — Macro <span class="badge-planned">PLANNED</span></h2>
-          <p class="metho-planned">
-            Treasury curve, CPI, employment, COT positioning from agency
-            sources. Standing caveat, committed now: <em>series are revised</em>
-            — each print carries vintage semantics per series, and BLS-derived
-            responses carry the BLS-required citation and disclaimer verbatim.
-          </p>
-        </div>
-      </div>
-    </section>
-
     <section class="metho-section" id="principles">
       <details class="metho-fold" open data-metho-fold>
       <summary class="metho-summary"><h2 class="section-h2">Principles — what this site is for</h2></summary>
@@ -299,7 +273,7 @@ const description =
         </div>
         <div class="commit">
           <div class="commit-h">No cookies, no account required</div>
-          <div class="commit-body">No cookies, no profiles, nothing gated behind sign-up. The only thing kept in your browser is the light or dark theme you pick. Page traffic is measured in aggregate and without cookies — the privacy section below names the provider, the fields, and the retention. Also available as an MIT-licensed MCP server for analysts working inside an LLM client.</div>
+          <div class="commit-body">No cookies, no profiles, nothing gated behind sign-up. The only thing kept in your browser is the light or dark theme you pick. Page traffic is measured in aggregate and without cookies — the privacy section below names the provider, the fields, and the retention.</div>
         </div>
       </div>
       <p class="metho-body" id="published-dataset">

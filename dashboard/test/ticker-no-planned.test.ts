@@ -120,11 +120,11 @@ test("F1: each reason reads as what the code knows — mapping, closed quarter, 
   assert.match(overlapAbsenceText("ZZZZ", "artifact-missing"), /aggregate is missing/);
 });
 
-test("F1 control: the badge branch is still the holders page's default, and the ticker-body reading catches it", () => {
+test("F1 control: the holders page's band carries no badge either, and the ticker-body reading catches a planted one", () => {
   const c = CASES[0]!;
-  const badge = overlapBandHtml(bandOf(c), CTX, HREF);
-  assert.match(badge, /<span class="badge-planned">PLANNED<\/span>/, "the holders page keeps its bytes");
-  // re-plant the defect on the ticker body: the reading must flag it
+  assert.deepEqual(plannedMarkup(overlapBandHtml(bandOf(c), CTX, HREF)), [], "launch polish: no PLANNED badge on any page");
+  // plant the defect on the ticker body: the reading must flag it
+  const badge = `<div class="overlap-half overlap-inst overlap-planned"><h3 class="section-h">Notable managers <span class="badge-planned">PLANNED</span></h3></div>`;
   assert.deepEqual(plannedMarkup(tickerBody(c, badge)), ["PLANNED", "badge-planned", "overlap-planned"]);
 });
 
