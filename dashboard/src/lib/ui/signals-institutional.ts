@@ -35,6 +35,7 @@ import {
   fmtUsd,
   kindWord,
   kindWordHtml,
+  memberHrefFor,
   note,
   noteFromHtml,
   normalizeTicker13f,
@@ -209,6 +210,23 @@ export function broadAccountsText(broad: readonly MemberLines[]): string {
   return broad.map((m) => `${m.name} (${fmtInt(m.breadth)} names)`).join(", ");
 }
 
+/** One broad account as DATA (premarketing B): its name, its member page
+    (`memberHrefFor`, so a budget-cut member rides `/e/`; null for a filer no
+    member record joins, which stays plain text), its breadth. Carried in the
+    held-rows islands as data, never HTML. */
+export interface BroadAccount {
+  name: string;
+  href: string | null;
+  breadth: number;
+}
+export function broadAccountsOf(broad: readonly MemberLines[], ctx: RenderCtx): BroadAccount[] {
+  return broad.map((m) => ({ name: m.name, href: m.bioguide ? memberHrefFor(m.bioguide, ctx) : null, breadth: m.breadth }));
+}
+/** `broadAccountsText`'s words, each name a link to its member page. */
+export function broadAccountsHtml(accounts: readonly BroadAccount[]): string {
+  return accounts.map((a) => `${a.href ? `<a href="${esc(a.href)}">${esc(a.name)}</a>` : esc(a.name)} (${fmtInt(a.breadth)} names)`).join(", ");
+}
+
 /** The absence's words for assistive technology beside a "—": `side` for one
     side of a move row, `name` for a name's both sides (a Consensus row). */
 export function congressAbsenceText(a: CongressAbsence, scope: "side" | "name"): string {
@@ -262,8 +280,8 @@ function congId(ticker: string, side: QuarterSide): string {
 /** The broad-only statement of one side — members of Congress traded it, but
     only broad accounts — or null when that is not the side's case. It names
     the accounts, so it is the one Congress side only the server can say. */
-function congressBroadHtml(q: CongressQuarter | null, ticker: string | null, side: QuarterSide): string | null {
-  return congressBroadFrom(broadSideOf(q, ticker, side));
+function congressBroadHtml(q: CongressQuarter | null, ticker: string | null, side: QuarterSide, ctx: RenderCtx): string | null {
+  return congressBroadFrom(broadSideOf(q, ticker, side, ctx));
 }
 
 /** The broad-only statement as data (launch M7a, LD26): the quarter's label,
@@ -272,18 +290,18 @@ export interface MoveBroadSide {
   quarter: string;
   ticker: string;
   side: QuarterSide;
-  accounts: string;
+  accounts: BroadAccount[];
 }
-function broadSideOf(q: CongressQuarter | null, ticker: string | null, side: QuarterSide): MoveBroadSide | null {
+function broadSideOf(q: CongressQuarter | null, ticker: string | null, side: QuarterSide, ctx: RenderCtx): MoveBroadSide | null {
   const a = congressAbsence(q, ticker, [side]);
   if (!q || !ticker || a?.kind !== "broad-only") return null;
-  return { quarter: quarterLabel(q.period) ?? q.period, ticker, side, accounts: broadAccountsText(a.broad) };
+  return { quarter: quarterLabel(q.period) ?? q.period, ticker, side, accounts: broadAccountsOf(a.broad, ctx) };
 }
 export function congressBroadFrom(b: MoveBroadSide | null): string | null {
   if (b === null) return null;
   return (
     `<div class="mv-cong"><p class="mv-cong-none">Only broad accounts — members who traded more than ${fmtInt(BROAD_ACCOUNT_NAMES)} names in ${esc(b.quarter)} — reported a ${SIDE_NOUN[b.side]} of ${esc(b.ticker)} traded in the quarter: ` +
-    `${esc(b.accounts)}. They are not counted.</p></div>`
+    `${broadAccountsHtml(b.accounts)}. They are not counted.</p></div>`
   );
 }
 
@@ -333,9 +351,9 @@ function congressHeadHtml(n: number, ticker: string, side: QuarterSide, quarter:
 
 /** The server's side: the broad-only statement where it applies, else the
     shared form over the quarter's counted members. */
-function congressSideHtml(q: CongressQuarter | null, ticker: string | null, side: QuarterSide): string {
+function congressSideHtml(q: CongressQuarter | null, ticker: string | null, side: QuarterSide, ctx: RenderCtx): string {
   return (
-    congressBroadHtml(q, ticker, side) ??
+    congressBroadHtml(q, ticker, side, ctx) ??
     congressSideFor(ticker, side, q ? (quarterLabel(q.period) ?? q.period) : null, ticker && q ? quarterMembers(q, ticker, side).length : 0)
   );
 }
@@ -359,7 +377,7 @@ export interface BankBlock {
   lines: TxnRow[];
   more: number;
   href: string;
-  broad: string | null;
+  broad: BroadAccount[] | null;
 }
 function bankBlockOf(q: CongressQuarter, ticker: string, side: QuarterSide, ctx: RenderCtx): BankBlock | null {
   const members = quarterMembers(q, ticker, side);
@@ -377,7 +395,7 @@ function bankBlockOf(q: CongressQuarter, ticker: string, side: QuarterSide, ctx:
     lines: shown,
     more: rows.length - shown.length,
     href: tickerHrefFor(shown[0]!.ticker ?? ticker, ctx),
-    broad: broad.length > 0 ? broadAccountsText(broad) : null,
+    broad: broad.length > 0 ? broadAccountsOf(broad, ctx) : null,
   };
 }
 /** The ONE bank block renderer (the server's bank and the client's island blocks). */
@@ -387,7 +405,7 @@ export function congressBankBlockFrom(b: BankBlock, ctx: RenderCtx): string {
     congressHeadHtml(b.n, b.ticker, b.side, b.quarter) +
     `<ul class="cl-list">${b.lines.map((t) => congressLineHtml(t, ctx)).join("")}</ul>` +
     (b.more > 0 ? `<p class="mv-cong-more"><a href="${esc(b.href)}">${plural(b.more, "more line", "more lines")} on the ticker page ↗</a></p>` : "") +
-    (b.broad !== null ? `<p class="mv-cong-none">Not counted, broad accounts: ${esc(b.broad)}.</p>` : "") +
+    (b.broad !== null ? `<p class="mv-cong-none">Not counted, broad accounts: ${broadAccountsHtml(b.broad)}.</p>` : "") +
     `</section>`
   );
 }
@@ -535,8 +553,9 @@ export function moveRowHtml(
   hidden = false,
   tvDefault: string | null = null,
   overlapIds: ReadonlySet<string> | null = null,
+  ctx: RenderCtx = {},
 ): string {
-  return moveRowFrom(moveRowData(m, id, model, overlapIds), moveSection(model), hidden, tvDefault);
+  return moveRowFrom(moveRowData(m, id, model, overlapIds, ctx), moveSection(model), hidden, tvDefault);
 }
 
 /** What every move row of one section shares: the quarter's label (the
@@ -580,6 +599,7 @@ export function moveRowData(
   id: string,
   model: Pick<SignalsInstitutional, "period" | "quarter" | "filerHref">,
   overlapIds: ReadonlySet<string> | null = null,
+  ctx: RenderCtx = {},
 ): MoveRowData {
   const side = moveSide(m.kind);
   const q = model.quarter;
@@ -601,7 +621,7 @@ export function moveRowData(
     fp: `${model.filerHref(m.cik)}#${positionAnchor(m.key)}`,
     counted: m.ticker && q ? quarterMembers(q, m.ticker, side).length : 0,
     cell: congressCellOf(q, m.ticker, side),
-    broad: broadSideOf(q, m.ticker, side),
+    broad: broadSideOf(q, m.ticker, side, ctx),
     /* R21 / D8: carried in either variant — never gated on the side's Congress count */
     ov: overlapIds ? overlapLinkFor(m.ticker, (x) => overlapIds.has(x)) : null,
   };
@@ -641,6 +661,9 @@ export function moveRowFrom(r: MoveRowData, sec: MoveSection, hidden = false, tv
   return (
     `<article class="mv-item" id="${esc(r.id)}" data-kind="${r.kind}" data-type="${esc(r.type)}" data-ikey="${esc(r.ikey)}"${held}${hidden ? " hidden" : ""}>` +
     `<details class="mv-row" name="mv-rows">${summary}${detail}</details>` +
+    /* premarketing C: the manager's name opens its filer page — a sibling of
+       the summary (which stays control-free), laid over the name */
+    (r.fp ? `<a class="mv-mgr-a" href="${esc(r.fp)}"><span class="visually-hidden">${esc(r.manager)}, filer page</span></a>` : "") +
     (r.doc ? `<a class="mv-src" href="${esc(r.doc)}" rel="noopener" target="_blank">13F ↗</a>` : `<span class="mv-src c-muted">13F —</span>`) +
     `</article>`
   );
@@ -712,13 +735,13 @@ export function namedMovesBoundText(n: number): string {
     detail"): both sides' Congress lines for that name. One per listed
     Consensus row and lead-card name with a ticker; `hidden` until the client
     applies that name. */
-function nameDetailHtml(key: string, ticker: string | null, label: string, model: SignalsInstitutional): string {
+function nameDetailHtml(key: string, ticker: string | null, label: string, model: SignalsInstitutional, ctx: RenderCtx): string {
   return (
     `<div class="mv-name-detail" data-mv-detail-for="${esc(key)}" hidden>` +
     `<p class="mv-cong-h">${esc(label)} — Congress in ${esc(quarterLabel(model.period) ?? model.period ?? "the quarter")}, both sides</p>` +
     `<div class="mv-name-sides">` +
-    congressSideHtml(model.quarter, ticker, "buy") +
-    congressSideHtml(model.quarter, ticker, "sell") +
+    congressSideHtml(model.quarter, ticker, "buy", ctx) +
+    congressSideHtml(model.quarter, ticker, "sell", ctx) +
     `</div></div>`
   );
 }
@@ -759,8 +782,8 @@ function namedMovesHtml(model: SignalsInstitutional, ctx: RenderCtx, overlapIds:
      every row past them ships in the island and renders on demand through
      the same row function (`moveRowFrom`), so the first load carries 15
      rows, not the 770 a production build holds */
-  const rows = model.domSet.slice(0, shown).map((m, i) => moveRowHtml(m, ids[i]!, model, false, tvDefault, overlapIds)).join("\n");
-  const heldRows = model.domSet.slice(shown).map((m, i) => moveRowData(m, ids[shown + i]!, model, overlapIds));
+  const rows = model.domSet.slice(0, shown).map((m, i) => moveRowHtml(m, ids[i]!, model, false, tvDefault, overlapIds, ctx)).join("\n");
+  const heldRows = model.domSet.slice(shown).map((m, i) => moveRowData(m, ids[shown + i]!, model, overlapIds, ctx));
   const chip = (attr: string, value: string, label: string): string =>
     `<button type="button" ${attr}="${esc(value)}" aria-pressed="false">${esc(label)}</button>`;
   /* the name filter's Congress detail, one per name a control can apply */
@@ -770,7 +793,7 @@ function namedMovesHtml(model: SignalsInstitutional, ctx: RenderCtx, overlapIds:
     if (m && !named.has(moveNameKey(m))) named.set(moveNameKey(m), { ticker: m.ticker, label: m.ticker ? `${m.ticker} ${m.issuer}` : m.issuer });
   }
   const withTicker = [...named].filter(([, v]) => v.ticker !== null);
-  const details = withTicker.map(([k, v]) => nameDetailHtml(k, v.ticker, v.label, model)).join("");
+  const details = withTicker.map(([k, v]) => nameDetailHtml(k, v.ticker, v.label, model, ctx)).join("");
   /* the bank: every (ticker, side) a row or a name shows, once */
   const bankKeys: { ticker: string; side: QuarterSide }[] = [];
   for (const m of model.domSet) if (m.ticker) bankKeys.push({ ticker: m.ticker, side: moveSide(m.kind) });
@@ -835,7 +858,7 @@ function namedMovesHtml(model: SignalsInstitutional, ctx: RenderCtx, overlapIds:
     one "Show all" away; each row a control that filters the Named moves to
     its issuer key; the Congress column on its second line. The count stays
     visible; the count note, the exclusions and "#n" are its tip. */
-export function consensusPanelHtml(board: ConsensusBoard | null, q: CongressQuarter | null, strip = false): string {
+export function consensusPanelHtml(board: ConsensusBoard | null, q: CongressQuarter | null, strip = false, filerHref: ((cik: string) => string) | null = null): string {
   const tipBody = board
     ? `<span class="si-tip-p">Issuers at least ${fmtInt(board.minFilers)} notable managers changed in the quarter ended ${esc(board.period)}, ranked by new stakes, then by net $. ` +
       `Counts are distinct notable managers · ≈ = a contributing change disclosed no value, so the sum is partial.` +
@@ -878,7 +901,7 @@ export function consensusPanelHtml(board: ConsensusBoard | null, q: CongressQuar
         `<span class="cs-iss" id="${id}-l"><span class="filed-name">${esc(r.issuer)}</span>${r.disambiguator ? ` <span class="c-muted">${esc(r.disambiguator)}</span>` : ""}</span>` +
         `<span class="cs-n cs-strong">${fmtInt(r.newStakes)}</span><span class="cs-a">${fmtInt(r.adds)}</span><span class="cs-t">${fmtInt(r.trims)}</span><span class="cs-x">${fmtInt(r.exits)}</span>` +
         `<span class="cs-net ${r.netDeltaUsd == null ? "c-muted" : r.netDeltaUsd < 0 ? "c-sell" : "c-buy"}">${net}</span>` +
-        `<span class="cs-top">${r.topMover ? `${esc(r.topMover.manager)} ${kindWordHtml(r.topMover.kind)}` : "—"}</span>` +
+        `<span class="cs-top">${r.topMover ? `${filerHref ? `<a href="${esc(filerHref(r.topMover.cik))}">${esc(r.topMover.manager)}</a>` : esc(r.topMover.manager)} ${kindWordHtml(r.topMover.kind)}` : "—"}</span>` +
         `<span class="cs-cg">${cg}</span>` +
         `<span class="visually-hidden" id="${id}-h">: ${plural(r.newStakes, "new stake", "new stakes")}. Filter the moves to it.</span>` +
         `</div>`
@@ -967,7 +990,7 @@ function cardOpenHtml(key: string, label: string): string {
   return `<a class="si-card-open" href="#named-moves" data-mv-name="${esc(key)}"><span class="visually-hidden">Filter the moves to ${esc(label)}</span></a>`;
 }
 
-function consensusCardHtml(r: ConsensusRow | null, model: SignalsInstitutional): string {
+function consensusCardHtml(r: ConsensusRow | null, model: SignalsInstitutional, ctx: RenderCtx): string {
   const period = model.period ?? "—";
   if (!r) return `<p class="section-note" data-empty-state>— no issuer was moved by 3 or more notable managers in the quarter ended ${esc(period)}.</p>`;
   const b = quarterMembers(model.quarter, r.ticker, "buy").length;
@@ -982,7 +1005,7 @@ function consensusCardHtml(r: ConsensusRow | null, model: SignalsInstitutional):
     (absent === null || absent.kind === "none" || absent.kind === "broad-only"
       ? `<span aria-hidden="true">▲${fmtInt(b)} ▼${fmtInt(s)}</span><span class="visually-hidden">${plural(b, "member", "members")} with a purchase, ${plural(s, "member", "members")} with a sale</span>` +
         /* ▲0 ▼0 never reads as "none" when broad accounts traded it: they are named, not counted */
-        (absent?.kind === "broad-only" ? ` · only broad accounts traded it, not counted: ${esc(broadAccountsText(absent.broad))}` : "")
+        (absent?.kind === "broad-only" ? ` · only broad accounts traded it, not counted: ${broadAccountsHtml(broadAccountsOf(absent.broad, ctx))}` : "")
       : congressAbsenceCellHtml(absent, "name")) +
     `</p>` +
     `<p class="si-card-src">${plural(r.filers, "filing", "filings")} — see the moves</p>`
@@ -1003,7 +1026,7 @@ function moveCardHtml(m: NotableMove | null, kind: "new" | "exit", model: Signal
   );
 }
 
-function instCardsHtml(model: SignalsInstitutional): string {
+function instCardsHtml(model: SignalsInstitutional, ctx: RenderCtx): string {
   const tip = note(
     `Notable managers only (${fmtInt(model.notableManagers)}, a curated registry), quarter ended ${model.period ?? "—"}. ` +
       `The Consensus card is an aggregate of many filings, so it carries no single receipt; the new-stake and exit cards carry their 13F receipt. ` +
@@ -1016,7 +1039,7 @@ function instCardsHtml(model: SignalsInstitutional): string {
     `<section class="si-lead" id="inst-lead-cards" aria-labelledby="inst-lead-cards-h">` +
     `<div class="panel-head si-lead-head"><h2 class="section-h" id="inst-lead-cards-h">Lead cards</h2>${tip}</div>` +
     `<div class="si-cards" data-scroll-region="Institutional lead cards · swipe for more">` +
-    `<article class="si-card" data-card="consensus" data-tone="amber"><div class="si-card-tag">Consensus · most new stakes</div>${consensusCardHtml(model.cards.consensus, model)}</article>` +
+    `<article class="si-card" data-card="consensus" data-tone="amber"><div class="si-card-tag">Consensus · most new stakes</div>${consensusCardHtml(model.cards.consensus, model, ctx)}</article>` +
     `<article class="si-card" data-card="new" data-tone="green"><div class="si-card-tag">Largest new stake</div>${moveCardHtml(model.cards.newStake, "new", model)}</article>` +
     `<article class="si-card" data-card="exit" data-tone="red"><div class="si-card-tag">Largest exit</div>${moveCardHtml(model.cards.exit, "exit", model)}</article>` +
     `</div>` +
@@ -1098,12 +1121,12 @@ export function signalsInstitutionalHtml(model: SignalsInstitutional | null, ctx
   }
   const side =
     `<div class="sig-inst-side" id="inst-side">` +
-    consensusPanelHtml(model.board, model.quarter, opts.playbooks === true) +
+    consensusPanelHtml(model.board, model.quarter, opts.playbooks === true, model.filerHref) +
     convictionLeadersHtml(model.leaders, model.filerTier, model.period, opts.playbooks === true) +
     `</div>`;
   return (
     provenanceHtml(model) +
-    instCardsHtml(model) +
+    instCardsHtml(model, ctx) +
     /* LD7: where the band stacks (≤1080px) the client shows ONE pane at a time */
     paneSwitchHtml([
       { id: "named-moves", label: "Moves", count: fmtInt(model.moves.length) },

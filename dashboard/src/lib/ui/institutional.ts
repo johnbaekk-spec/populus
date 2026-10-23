@@ -144,7 +144,7 @@ export function holdersBody(
         label: `Top-${fmtInt(active.length)} value`,
         value: `${fmtUsd(totalValue)}${partialValue ? " · partial" : ""}`,
         detail: "",
-        noteHtml: esc(`summed reported value of the ranked holders for ${period}; NULL-value positions are excluded from sums by the producer and surfaced beside them`),
+        noteHtml: esc(`summed reported value of the ranked holders for ${period}; positions with no disclosed value are left out of the sum and counted beside it`),
       },
       { label: "Ranked holders", value: fmtInt(active.length), detail: "" },
     ],
@@ -305,12 +305,12 @@ export function filerTiles(conc: ConcentrationRow | null, deltaCount: number): S
     {
       value: fmtUsd(conc.total_value_usd),
       label: "reported value",
-      title: `sum of disclosed values for ${conc.period_of_report}; ${conc.null_value_positions} positions carry a NULL value and are excluded from the sum, surfaced here rather than folded away`,
+      title: `sum of disclosed values for ${conc.period_of_report}; ${conc.null_value_positions} ${conc.null_value_positions === 1 ? "position has" : "positions have"} no disclosed value and ${conc.null_value_positions === 1 ? "is" : "are"} left out of the sum, counted here rather than dropped`,
     },
     {
       value: fmtInt(conc.position_count),
       label: "positions",
-      title: "ALL retained default holdings for this (filer, period), including NULL-value ones",
+      title: "every reported holding for this filer and quarter, including ones with no disclosed value",
     },
     {
       value:
@@ -319,7 +319,7 @@ export function filerTiles(conc: ConcentrationRow | null, deltaCount: number): S
           : fmtInt(conc.null_value_positions),
       label: "null-value positions",
       muted: conc.null_value_positions === 0,
-      title: "holdings whose <value> did not parse — retained and counted, never zero-filled",
+      title: "holdings with no disclosed value (undisclosed, or unreadable on the filing) — kept and counted, never shown as zero",
     },
     {
       value: conc.topn_share_bps == null ? "n/a ·§" : `${(conc.topn_share_bps / 100).toFixed(1)}%`,
@@ -328,8 +328,8 @@ export function filerTiles(conc: ConcentrationRow | null, deltaCount: number): S
       title:
         conc.topn_share_bps == null
           ? conc.null_value_positions > 0
-            ? "concentration_unavailable: at least one position value is undisclosed, so the denominator is incomplete"
-            : "concentration_unavailable: the period's disclosed total is 0 — the producer stores NULL, never a fabricated 0"
+            ? "Concentration not computed: at least one position's value is undisclosed, so the total it divides by is incomplete"
+            : "Concentration not computed: the quarter's disclosed total is zero, so there is nothing to divide by — shown as n/a, never as 0"
           : "share of the period's disclosed value held in the top-N positions; denominator is reported 13F value, not total assets",
     },
     {
@@ -339,8 +339,8 @@ export function filerTiles(conc: ConcentrationRow | null, deltaCount: number): S
       title:
         conc.hhi == null
           ? conc.null_value_positions > 0
-            ? "concentration_unavailable: at least one position value is undisclosed, so the denominator is incomplete"
-            : "concentration_unavailable: no disclosed denominator for this period"
+            ? "Concentration not computed: at least one position's value is undisclosed, so the total it divides by is incomplete"
+            : "Concentration not computed: no disclosed total for this quarter"
           : "integer Herfindahl–Hirschman index in basis points over disclosed position values",
     },
     { value: fmtInt(deltaCount), label: "QoQ moves" },
@@ -382,7 +382,7 @@ export const QOQ_FOOTNOTES: FootnoteEntry[] = [
   },
   {
     mark: "§",
-    html: `derived by Public Filings from the published aggregate; NULL means the source did not disclose a usable value — never zero`,
+    html: `derived by Public Filings from the published data; “no value” means the source did not disclose a usable value — never zero`,
   },
   {
     mark: "held",
@@ -417,9 +417,12 @@ const QOQ_COL_NOTES: Record<string, string | undefined> = {
   ),
   "delta-value": QOQ_FN.get("§"),
   "delta-shares": QOQ_FN.get("‡u"),
+  /* the Reported positions table's Ticker column, in the same words */
+  ticker: "The reviewed ticker for the filed issuer name and share class, the same mapping the Reported positions table uses. Symbols are never inferred from names; — means no reviewed mapping.",
 };
 /** The ledger role of each change column (DESIGN-POLISH M1, R2). */
 const QOQ_COL_CLASS: Record<string, string> = {
+  ticker: "c-ticker",
   "position-grain": "c-pos c-flex",
   change: "c-chip c-kind",
   "delta-value": "c-num",
@@ -430,8 +433,13 @@ const QOQ_COL_CLASS: Record<string, string> = {
   "curr-shares": "c-num",
   flags: "c-flags",
 };
+/* Premarketing (owner): the changes table leads with the SAME identity columns
+   as Reported positions below it — Ticker, then Issuer — so the two tables on
+   one filer page read alike. The issuer column keeps its `position-grain` key
+   (its note ids and ‡r footnote are unchanged); only its label matches. */
 const QOQ_COLS: readonly (readonly [string, string])[] = [
-  ["position-grain", "Position"],
+  ["ticker", "Ticker"],
+  ["position-grain", "Issuer"],
   ["change", "Change"],
   ["delta-value", "Δ value"],
   ["delta-shares", "Δ shares"],
@@ -483,7 +491,15 @@ export function changesTableHtml(
   /* kept in the signature its callers share: the quarter stamp and its
      newest-filing ⓘ moved to the band head (launch copy audit filer-06) */
   _latestFiled: string | null,
-  opts: { total?: number; page?: number; compact?: number; kind?: ChangesKindFilter | null; chips?: boolean } = {},
+  opts: {
+    total?: number;
+    page?: number;
+    compact?: number;
+    kind?: ChangesKindFilter | null;
+    chips?: boolean;
+    /** position_key → the reviewed ticker (`changesTickerMap`); absent → no Ticker column */
+    tickers?: Readonly<Record<string, string>> | null;
+  } = {},
 ): string {
   /* `deltas` arrives already ordered and bounded by `holdings.boundQoqDeltas`;
      re-ordering here is idempotent and keeps this function correct for a caller
@@ -519,14 +535,53 @@ export function changesTableHtml(
   /* R12: each of the three tables decides its own columns over its own
      collection (the same rows its hoisting runs over): the Flags column renders
      only when some row still shows a flag after hoisting. */
+  const tickers = opts.tickers ?? null;
+  const tickerOf = (d: QoqDeltaRow): string | null => {
+    const t = tickers ? tickers[d.position_key] : undefined;
+    return typeof t === "string" && t !== "" ? t : null;
+  };
   const colsFor = (rows: readonly QoqDeltaRow[], stated: readonly string[]): PresentColumns =>
     presentColumns(rows, [
-      ...QOQ_COLS.filter(([key]) => key !== "flags").map(([key]) => ({ key, always: true })),
+      /* the Reported positions rule: the Ticker column renders only when some
+         row of THIS table maps to a reviewed ticker */
+      /* the removal is stated only where a ticker map was supplied — a caller
+         with no mapping at all (an older payload) has nothing to explain */
+      { key: "ticker", hasValue: (d: QoqDeltaRow) => tickerOf(d) !== null, ...(tickers ? { emptyReason: "Ticker: no position here maps to a reviewed ticker." } : {}) },
+      ...QOQ_COLS.filter(([key]) => key !== "flags" && key !== "ticker").map(([key]) => ({ key, always: true })),
       flagsColumnSpec<QoqDeltaRow>((d) => d.flags, stated),
     ]);
+  /* The 13F class title ("COM", "COM CL A", "SHS") left the visible row: it
+     rides in the issuer's ⓘ. Where it is the ONLY thing telling two rows of
+     one issuer apart (two share classes with no distinct reviewed ticker), the
+     issuer trigger shows its ⓘ glyph so the distinction is one tap away, never
+     lost. Decided over each table's FULL set, so a page never flickers. */
+  const ambiguousIn = (rows: readonly QoqDeltaRow[]): Set<QoqDeltaRow> => {
+    const byIssuer = new Map<string, QoqDeltaRow[]>();
+    for (const d of rows) {
+      if (!d.issuer_name) continue;
+      const k = `${d.issuer_name}|${d.put_call}`;
+      const list = byIssuer.get(k) ?? [];
+      list.push(d);
+      byIssuer.set(k, list);
+    }
+    const out = new Set<QoqDeltaRow>();
+    for (const list of byIssuer.values()) {
+      if (list.length < 2) continue;
+      for (const d of list) {
+        const t = tickerOf(d);
+        if (t === null || list.filter((o) => tickerOf(o) === t).length > 1) out.add(d);
+      }
+    }
+    return out;
+  };
+  const ambiguous = new Set<QoqDeltaRow>([...ambiguousIn(ordered), ...ambiguousIn(held), ...ambiguousIn(noPrior)]);
   const colsDeltas = colsFor(ordered, statedDeltas);
   const colsHeld = colsFor(held, statedHeld);
   const colsNoPrior = colsFor(noPrior, statedNoPrior);
+  /* With a Ticker column first, the ISSUER is the sticky identity column — the
+     Reported positions table's `data-sticky-issuer` rule; without one, the
+     issuer is the first column and `data-sticky-first` holds it. */
+  const stickyAttr = (cols: PresentColumns): string => (cols.columns.includes("ticker") ? "data-sticky-issuer" : "data-sticky-first");
   let rowSeq = 0;
   const rowHtml = (d: QoqDeltaRow, stated: readonly string[] = statedDeltas, cols: PresentColumns = colsDeltas): string => {
     /* R1: the issuer NAME leads the row; the class is secondary ink; the raw
@@ -536,18 +591,33 @@ export function changesTableHtml(
     const noteId = `${page}-${rowSeq++}`;
     const keyNote = (labelHtml: string, name: string): string =>
       noteFromHtml(
-        `position key <code>${esc(d.position_key)}</code>${d.issuer_key ? ` · issuer key <code>${esc(d.issuer_key)}</code>` : ""}`,
+        /* The class is FILED text (a fund can be named "BULLISH FD"): it rides
+           inside the filed-name marker the banned-wording scan exempts. */
+        (d.title_of_class ? `share class as filed: <span class="filed-name">${esc(d.title_of_class)}</span> · ` : "") +
+          `position key <code>${esc(d.position_key)}</code>${d.issuer_key ? ` · issuer key <code>${esc(d.issuer_key)}</code>` : ""}`,
         { scope: "filer-change-key" },
         noteId,
         { trigger: "label", textHtml: labelHtml, name },
       );
-    /* The issuer NAME is the key note's LABEL trigger (no glyph beside it). */
+    /* The issuer NAME is the key note's LABEL trigger — the Reported positions
+       table's issuer cell (`design-holding-name`). An ambiguous row shows the
+       ⓘ glyph inside the trigger: its class is what tells it apart. */
     const identity = d.issuer_name
-      ? keyNote(`<span class="filed-name">${esc(d.issuer_name)}</span>`, d.issuer_name) +
-        // The class is FILED text (a fund can be named "BULLISH FD"): it rides
-        // inside the filed-name marker the banned-wording scan exempts.
-        (d.title_of_class ? ` <span class="mono-note c-secondary"><span class="filed-name">${esc(d.title_of_class)}</span></span>` : "")
+      ? keyNote(
+          `<span class="design-holding-name"><span class="filed-name">${esc(d.issuer_name)}</span></span>` +
+            (ambiguous.has(d) && d.title_of_class ? ` <span class="mono-note" aria-hidden="true">ⓘ</span>` : ""),
+          d.issuer_name,
+        )
       : `<span class="mono-note">${esc(d.position_key)}</span>`;
+    const ticker = tickerOf(d);
+    const tickerCell = ticker
+      ? noteFromHtml(
+          "a reviewed mapping row for this filed issuer name and share class (never inferred from the name)",
+          { scope: "filer-change-ticker" },
+          noteId,
+          { trigger: "label", textHtml: `<span class="mono-ticker">${esc(ticker)}</span>`, name: ticker },
+        )
+      : "—";
       const p = qoqPresentation(d);
       const grain = p.grainNote ? ` <span class="mono-note">${esc(p.grainNote)}</span>` : "";
       const posMarkers = p.positionMarkers.map((m) => fnMark(m)).join("");
@@ -569,7 +639,9 @@ export function changesTableHtml(
            and follow. Nothing is removed — the order changed. */
         /* R14: the landing's notable-moves rows link here, anchored at the
            position (`#pos-<slug(position_key)>`). */
-        `<tr id="${esc(positionAnchor(d.position_key))}"${changeEdgeAttr(d.change_kind)}><td class="c-pos c-flex${posMarkers ? " reconciled" : ""}">${identity}${posMarkers}${grain}</td>` +
+        `<tr id="${esc(positionAnchor(d.position_key))}"${changeEdgeAttr(d.change_kind)}>` +
+        (cols.columns.includes("ticker") ? `<td class="c-ticker">${tickerCell}</td>` : "") +
+        `<td class="c-pos c-flex${posMarkers ? " reconciled" : ""}">${identity}${posMarkers}${grain}</td>` +
         `<td class="c-chip c-kind">${qoqChipHtml(d)}</td>` +
         `<td class="c-num">${valueDelta}</td>` +
         `<td class="c-num">${esc(p.sharesDeltaText)}</td>` +
@@ -604,7 +676,7 @@ export function changesTableHtml(
       : `<details class="qoq-held-group" data-qoq-held><summary>Mark-to-market only (no share change) · ${fmtInt(held.length)}</summary>` +
         `<p class="section-note">Positions whose share count is identical in both quarters; the value changed with price, not with a decision.</p>` +
         universalFlagNote(statedHeld) +
-        `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedHeld.join(","))}"${dataColumnsAttr(colsHeld)}>` +
+        `<div class="table-scroll"><table class="etable" ${stickyAttr(colsHeld)} data-stated-flags="${esc(statedHeld.join(","))}"${dataColumnsAttr(colsHeld)}>` +
         `<caption class="visually-hidden">Positions held with no share change into quarter ${esc(period)}</caption>` +
         headFor(colsHeld).replace(/ popovertarget="n-filer-changes-/g, ' popovertarget="n-filer-held-').replace(/ aria-describedby="n-filer-changes-/g, ' aria-describedby="n-filer-held-').replace(/ id="n-filer-changes-/g, ' id="n-filer-held-') +
         `<tbody>${held.map((d) => rowHtml(d, statedHeld, colsHeld)).join("\n")}</tbody></table></div>` +
@@ -616,7 +688,7 @@ export function changesTableHtml(
       : `<details class="qoq-held-group" data-qoq-no-prior><summary>No prior quarter to compare · ${fmtInt(noPrior.length)}</summary>` +
         `<p class="section-note">This filer has no comparable holdings list for the previous quarter on record — a first filing under this registration, or a quarter reported inside an affiliated manager's filing. These positions are not new stakes; there is nothing to compare them against.</p>` +
         universalFlagNote(statedNoPrior) +
-        `<div class="table-scroll"><table class="etable" data-sticky-first data-stated-flags="${esc(statedNoPrior.join(","))}"${dataColumnsAttr(colsNoPrior)}>` +
+        `<div class="table-scroll"><table class="etable" ${stickyAttr(colsNoPrior)} data-stated-flags="${esc(statedNoPrior.join(","))}"${dataColumnsAttr(colsNoPrior)}>` +
         `<caption class="visually-hidden">Positions with no prior quarter to compare into quarter ${esc(period)}</caption>` +
         headFor(colsNoPrior).replace(/ popovertarget="n-filer-changes-/g, ' popovertarget="n-filer-noprior-').replace(/ aria-describedby="n-filer-changes-/g, ' aria-describedby="n-filer-noprior-').replace(/ id="n-filer-changes-/g, ' id="n-filer-noprior-') +
         `<tbody>${noPrior.map((d) => rowHtml(d, statedNoPrior, colsNoPrior)).join("\n")}</tbody></table></div>` +
@@ -630,7 +702,7 @@ export function changesTableHtml(
       ? `<p class="section-note" data-changes-kind-empty>No ${esc(kindLabel.toLowerCase())} among this page's embedded changes for ${esc(period)}.</p>`
       : "") +
     universalFlagNote(statedDeltas) +
-    `<div class="table-scroll"><table class="etable" data-sticky-first${
+    `<div class="table-scroll"><table class="etable" ${stickyAttr(colsDeltas)}${
       pageCount > 1 ? ' data-paged="1"' : ""
     } data-stated-flags="${esc(statedDeltas.join(","))}"${dataColumnsAttr(colsDeltas)}>` +
     `<caption class="visually-hidden">Position changes into quarter ${esc(period)}</caption>` +
@@ -799,7 +871,7 @@ export function filerPeriodSectionHtml(
       ? `<p class="section-note">No quarter-over-quarter rows land in ${esc(
           period,
         )} — either this filer's first period on record, or neither quarter has a position with a security identifier.</p>`
-      : changesTableHtml(deltas, period, latestFiled, { total, page: opts.page, kind: opts.kind ?? null, chips: false });
+      : changesTableHtml(deltas, period, latestFiled, { total, page: opts.page, kind: opts.kind ?? null, chips: false, tickers: opts.tickers ?? null });
   /* DESIGN-POLISH M2 (F.3): the period and kind segments sit on this band's
      head. The period chips re-render with the section (their clicks are
      delegated), so the head always names the quarter it shows. */
@@ -916,11 +988,13 @@ export function filerHeadHtml(
         })
       : "";
   return (
-    breadcrumb([
-      { text: "/institutional", href: "/institutional/" },
-      { text: "filers" },
-      { text: `CIK ${fmtCik(filer.cik)}` },
-    ]) +
+    /* Premarketing: the crumb names the fund — its curated name, else the name
+       as filed (inside the filed-name marker the wording gate exempts) — and
+       keeps the CIK as small secondary mono text. The markup is `breadcrumb`'s
+       own (nav.crumb, " / " separators); only the last part carries markup. */
+    `<nav class="crumb" aria-label="Breadcrumb"><a href="/institutional/">/institutional</a> / <span>filers</span> / ` +
+    `<span>${typing ? esc(typing.display_name) : `<span class="filed-name">${esc(filer.name)}</span>`} ` +
+    `<span class="crumb-cik">CIK ${esc(fmtCik(filer.cik))}</span></span></nav>` +
     `<header class="entity-head">` +
     `<div class="entity-head-copy">` +
     `<h1 class="entity-title">${esc(typing?.display_name ?? filer.name)}${filedAs}</h1>` +
@@ -991,6 +1065,41 @@ export interface FilerPeriodOpts {
   kinds?: { new: number; exit: number } | null;
   /** D5: the Position changes kind filter (null = all kinds) */
   kind?: ChangesKindFilter | null;
+  /** position_key → reviewed ticker, for the changes table's Ticker column */
+  tickers?: Readonly<Record<string, string>> | null;
+}
+
+/** A ticker as the changes table will print it: the reviewed mapping's own
+    spelling (letters, digits, `.`, `-`, `/`), never free text from an embed. */
+const TICKER_SHAPE = /^[A-Z0-9][A-Z0-9.\-/]{0,11}$/;
+
+/** The changes table's position_key → ticker map, from the reported holdings
+    rows of a filer surface payload (each row carries the REVIEWED ticker its
+    issuer name and class map to). The /e/ route has no aggregate ticker map,
+    but its payload's holdings rows carry the same reviewed tickers, keyed by
+    the same `position_key` the change rows reference. */
+export function changesTickersFromHoldings(
+  rowsByPeriod: Readonly<Record<string, readonly { position_key: string | null; ticker?: string }[]>>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const rows of Object.values(rowsByPeriod)) {
+    for (const r of rows) {
+      if (r.position_key && r.ticker && TICKER_SHAPE.test(r.ticker) && !(r.position_key in out)) out[r.position_key] = r.ticker;
+    }
+  }
+  return out;
+}
+
+/** An embedded ticker map, kept only where every entry is a string pair of
+    ticker shape (CodeQL js/xss-through-dom: no other embed text reaches the
+    renderer). Anything else → null, and the table renders without tickers. */
+export function sanitizeChangesTickers(raw: unknown): Record<string, string> | null {
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v === "string" && TICKER_SHAPE.test(v)) out[k] = v;
+  }
+  return out;
 }
 
 export function filerEdgarBlock(cik: string, filerName: string): string {
@@ -1553,7 +1662,7 @@ export function tickerHoldersBody(i: TickerHoldersPageInputs): string {
   const ledger = disclosureLedger(
     [
       { label: "Holders", value: fmtInt(t.holder_count), detail: "", noteHtml: esc(`13F filers reporting this class for the quarter ended ${t.period_of_report}${i.holders.length < t.holder_count ? `; ${rangeOfTotal(1, i.holders.length, t.holder_count, "holders")} are listed, largest first` : ""}`) },
-      { label: "Combined value", value: fmtUsd(t.value_usd), detail: "", noteHtml: esc("sum of the reported values across every holder; NULL values are excluded, never zero-filled") },
+      { label: "Combined value", value: fmtUsd(t.value_usd), detail: "", noteHtml: esc("sum of the reported values across every holder; undisclosed values are left out, never counted as zero") },
       { label: "Adds", value: fmtInt(t.adds), detail: "", noteHtml: esc("holders whose share count rose or who opened the position (new + add), by shares") },
       { label: "Exits", value: fmtInt(t.exits), detail: "", noteHtml: esc("holders absent this quarter after holding last quarter — inferred from absence, not a sale record") },
     ],

@@ -45,6 +45,7 @@ import {
   netDirection,
   netIntervalText,
   legacyTrailingMonthsBounds,
+  congressRangeBounds,
   windowMembership,
   excludeDateAnomalies,
   affTextOf,
@@ -388,7 +389,9 @@ export function tickerUnifiedBody(
               : `top-${fmtInt(inst.topn ?? 25)} slice · ${inst.period ?? ""}`
             : inst.state === "module-absent"
               ? "13F module not in build"
-              : "ticker not resolved to an issuer",
+              : inst.state === "resolved-no-data"
+                ? "issuer resolved · no holder rows"
+                : "ticker not resolved to an issuer",
         subKind: inst.state === "data" ? "qualifier" : "absence",
       },
     ],
@@ -542,7 +545,7 @@ function timelineHtml(t: TickerEntity, stamps: BuildStamps, pinned: ReadonlySet<
       : `<div class="tl-plot" aria-hidden="true">${grid}${marks}</div>` +
         `<div class="tl-axis" aria-hidden="true">${ticks.map((x) => `<span>${esc(x)}</span>`).join("")}</div>` +
         `<p class="visually-hidden">${fmtInt(rows.length)} dated ${rows.length === 1 ? "disclosure" : "disclosures"} in the window, placed by trade date; magnitudes are the disclosed lower bounds, against gridlines at ${TIMELINE_GRIDLINES.map(([, l]) => l).join(", ")}` +
-        `${ringed > 0 ? `; ${fmtInt(ringed)} ringed ${ringed === 1 ? "mark is a row" : "marks are rows"} on Signals, pinned in the table below` : ""}` +
+        `${ringed > 0 ? `; ${fmtInt(ringed)} ringed ${ringed === 1 ? "mark is a line" : "marks are lines"} of the Signals row above, pinned in the table below` : ""}` +
         `${undated > 0 ? `; ${fmtInt(undated)} ${undated === 1 ? "row discloses" : "rows disclose"} no trade date and cannot be placed` : ""}.</p>`) +
     `</section>`
   );
@@ -552,10 +555,11 @@ function timelineHtml(t: TickerEntity, stamps: BuildStamps, pinned: ReadonlySet<
     memberNetByTicker every member page uses), and committee membership as of
     the member's latest trade date when the build carries the roster. */
 function membersActiveHtml(t: TickerEntity, stamps: BuildStamps, ctx: RenderCtx, deps: TickerPageDeps | null): string {
-  const bounds = legacyTrailingMonthsBounds(stamps.generatedAtDate, 12);
+  /* the same window and basis as membersDisclosing and the /congress/ boards */
+  const bounds = congressRangeBounds("12m", stamps.generatedAtDate);
   const byMember = new Map<string, TxnRow[]>();
   for (const r of excludeDateAnomalies(t.txns).rows) {
-    if (windowMembership(r, bounds, "traded_or_filed") !== "in") continue;
+    if (windowMembership(r, bounds, "traded") !== "in") continue;
     const key = r.bioguide ?? `raw:${r.name}`;
     byMember.set(key, [...(byMember.get(key) ?? []), r]);
   }

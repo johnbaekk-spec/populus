@@ -104,9 +104,9 @@ export function buildInstIndexRow(
 export function hhiNoteFor(positions: number | null, nullValuePositions: number | null, hhi: number | null): string {
   if (positions === null) return "no concentration row for this filer's latest period";
   if (nullValuePositions !== null && nullValuePositions > 0) {
-    return `${nullValuePositions} of ${positions} positions carry a NULL value — HHI over a partial denominator is not comparable and is withheld`;
+    return `${nullValuePositions} of ${positions} positions have no disclosed value — a concentration index over a partial total is not comparable, so it is withheld`;
   }
-  if (hhi === null) return "concentration_unavailable: the producer stores NULL, never a fabricated 0";
+  if (hhi === null) return "Concentration not computed: no disclosed total for this quarter — shown as n/a, never as 0";
   return "";
 }
 

@@ -259,11 +259,12 @@ test("incomplete concentration keeps its disclosed subtotal and states why ratio
     topn_share_bps: null, hhi: null, flags: ["concentration_unavailable"],
   }, 2);
   assert.equal(tiles[0]!.value, "$1.3K");
-  assert.match(tiles[0]!.title!, /sum of disclosed values.*1 positions carry a NULL value/);
+  assert.match(tiles[0]!.title!, /sum of disclosed values.*1 position has no disclosed value/);
   assert.equal(tiles[2]!.value, "1");
   for (const tile of tiles.slice(3, 5)) {
     assert.equal(tile.value, "n/a ·§");
-    assert.match(tile.title!, /denominator is incomplete/);
+    assert.match(tile.title!, /^Concentration not computed: .*incomplete/);
+    assert.doesNotMatch(tile.title!, /concentration_unavailable|NULL/, "plain words, not the identifier");
   }
 });
 

@@ -1070,9 +1070,12 @@ export function membersDisclosing(
   limit = 7,
 ): MemberDisclosing[] {
   const byMember = new Map<string, TxnRow[]>();
-  const bounds = legacyTrailingMonthsBounds(now, months);
+  /* pre-marketing: the twelve months are the Congress boards' own window
+     (congressRangeBounds: ends today, never counts the anniversary day twice)
+     by trade date, so a ticker page and /congress/ count the same rows */
+  const bounds = months === 12 ? congressRangeBounds("12m", now) : legacyTrailingMonthsBounds(now, months);
   for (const t of excludeDateAnomalies(txns).rows) {
-    if (windowMembership(t, bounds, "traded_or_filed") !== "in") continue;
+    if (windowMembership(t, bounds, "traded") !== "in") continue;
     const key = t.bioguide ?? `raw:${t.name}`;
     let list = byMember.get(key);
     if (!list) {

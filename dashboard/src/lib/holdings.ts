@@ -242,9 +242,10 @@ export interface IssuerShard {
     `test/activity.test.ts`, so the two cannot drift.
 
     Launch copy item signals-14 shortened only what no pinned qualifier needs
-    (the field name, the repeated staleness sentence); the internal document
-    references and `unit_basis` stay because activity.test.ts lists them as
-    substance, and the Python constant is published data (not edited).
+    (the field name, the repeated staleness sentence). Premarketing: the
+    internal document citation left the reader's copy and the `unit_basis`
+    field name became plain words ("each record notes its original unit") —
+    the SAME change made to the Python constant, so the pin still holds.
 
     QA M2-8 M6: three divergent texts shipped, two of them on the SAME page. This
     list had silently dropped three substantive qualifiers present in the Python
@@ -277,7 +278,7 @@ export const INSTITUTIONAL_DATA_NOTE_CLAUSES: readonly { id: string; text: strin
     text:
       "Values are the manager's stated market value at quarter-end in era-dependent units (whole" +
       " dollars for form versions effective 2023-01-03 onward, thousands before), normalized here" +
-      " to whole dollars with unit_basis carried on every record.",
+      " to whole dollars; each record notes its original unit.",
   },
   {
     id: "affiliates",
@@ -294,8 +295,7 @@ export const INSTITUTIONAL_DATA_NOTE_CLAUSES: readonly { id: string; text: strin
   {
     id: "not-advice",
     text:
-      "These are disclosures, not investment advice (ARCHITECTURE.md \u00a75.2 /" +
-      " M2-CONTRACT \u00a75).",
+      "These are disclosures, not investment advice.",
   },
 ];
 

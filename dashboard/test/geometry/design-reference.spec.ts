@@ -277,7 +277,9 @@ for (const [file, route] of references) {
         /* T2.10 (:112), R12: the reported-positions head follows the table's
            column set (Kind, Position change and Congress are gone; Ticker,
            Weight and Wt by presence), not a fixed nine. */
-        await expectHeadFollowsColumns(page, '[data-sticky-issuer]', 'the reported positions table');
+        /* scoped to the holdings surface: the changes table above it is also
+           `data-sticky-issuer` once it carries a Ticker column (premarketing) */
+        await expectHeadFollowsColumns(page, '[data-holdings-surface="filer"] [data-sticky-issuer]', 'the reported positions table');
         /* T2.5 (F, band F1): the holdings and the book shape start in the SAME
            band, side by side — their two cells' tops ±2, holdings on the left. */
         const f1 = await page.evaluate(() => {
@@ -294,10 +296,10 @@ for (const [file, route] of references) {
         /* the record note still opens. Reported positions is compact (R36):
            a position's record may sit among the held rows, which the table's
            own Show all reveals — the reader's one interaction to reach it. */
-        let record = page.locator('[data-sticky-issuer] tbody .note-btn:visible').first();
+        let record = page.locator('[data-holdings-surface="filer"] [data-sticky-issuer] tbody .note-btn:visible').first();
         if (!(await record.count())) {
           await page.locator('[data-holdings-surface="filer"] .compact-toggle').click();
-          record = page.locator('[data-sticky-issuer] tbody .note-btn:visible').first();
+          record = page.locator('[data-holdings-surface="filer"] [data-sticky-issuer] tbody .note-btn:visible').first();
         }
         await record.click();
         const recordPanel = page.locator(`#${await record.getAttribute('popovertarget')}`);

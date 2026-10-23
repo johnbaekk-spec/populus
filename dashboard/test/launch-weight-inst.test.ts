@@ -64,9 +64,9 @@ function withNote(r: InstIndexRow): InstIndexRow {
     r.positions === null
       ? "no concentration row for this filer's latest period"
       : (r.nullValuePositions ?? 0) > 0
-        ? `${r.nullValuePositions} of ${r.positions} positions carry a NULL value — HHI over a partial denominator is not comparable and is withheld`
+        ? `${r.nullValuePositions} of ${r.positions} positions have no disclosed value — a concentration index over a partial total is not comparable, so it is withheld`
         : r.hhi === null
-          ? "concentration_unavailable: the producer stores NULL, never a fabricated 0"
+          ? "Concentration not computed: no disclosed total for this quarter — shown as n/a, never as 0"
           : "";
   return { ...r, hhiNote: note };
 }

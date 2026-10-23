@@ -49,6 +49,7 @@ import {
   type BuildStamps,
   type ChangesKindFilter,
 } from "../lib/ui/index.ts";
+import { changesTickersFromHoldings, sanitizeChangesTickers } from "../lib/ui/institutional.ts";
 import {
   priorPeriodOf,
   projectionAbsentHtml,
@@ -390,6 +391,8 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
           // R6/R15: the same stat, banner and identity inputs as the pre-rendered page.
           discontinuity: p.discontinuityPeriods.includes(aggPeriod),
           kinds: p.kindsByPeriod[aggPeriod] ?? null,
+          // the changes table's Ticker column, from the payload's reviewed holdings tickers
+          tickers: changesTickersFromHoldings(p.rowsByPeriod),
           typing: p.typing,
           /* DESIGN-POLISH M2 (F): the holdings surface is band F1's left cell,
              in the same place the pre-rendered page's <HoldingsTable> sits; the
@@ -908,6 +911,8 @@ export function initFilerPeriods(): void {
     latestFiled: string | null;
     topn: number;
     benchmarks?: Record<string, import("../lib/inst-analytics.ts").ConcentrationBenchmark | null>;
+    /** position_key → reviewed ticker (the changes table's Ticker column) */
+    tickers?: unknown;
     periods: Record<
       string,
       { conc: ConcentrationRow | null; deltas: QoqDeltaRow[]; total?: number; discontinuity?: boolean; kinds?: { new: number; exit: number } | null }
@@ -923,6 +928,7 @@ export function initFilerPeriods(): void {
      js/xss-through-dom). */
   if (!Number.isSafeInteger(data.topn) || data.topn < 0) return;
   const topn = Number(data.topn);
+  const tickers = sanitizeChangesTickers(data.tickers);
   /* A total that is absent, non-integral, negative, or SMALLER than the
      rows it ships alongside is a contradictory embed. Rendering from it would hide
      real rows behind "no changes" or suppress the truncation terminus, so the whole
@@ -967,7 +973,7 @@ export function initFilerPeriods(): void {
       period,
       data.latestFiled,
       topn,
-      { periods, total: slice.total!, page, benchmark: data.benchmarks?.[period] ?? null, discontinuity: slice.discontinuity === true, kinds: slice.kinds ?? null, kind },
+      { periods, total: slice.total!, page, benchmark: data.benchmarks?.[period] ?? null, discontinuity: slice.discontinuity === true, kinds: slice.kinds ?? null, kind, tickers },
     ));
     if (repaintPeriodParts) {
       if (ledgerRoot) ledgerRoot.innerHTML = filerLedgerHtml(slice.conc, period, slice.total!, slice.kinds ?? null);

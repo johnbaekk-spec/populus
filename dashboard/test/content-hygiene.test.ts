@@ -493,7 +493,9 @@ test("T3.8 (H-18, H-3, G-11): the filer terminus, the empty-changes sentence and
   });
   /* CD-3: the reviewed-mapping holders path carries the §5 data note box */
   assert.equal((holders.match(/data-inst-data-note/g) ?? []).length, 1, "the §5 box ships with the body");
-  assert.match(holders, /\(ARCHITECTURE\.md §5\.2 \/ M2-CONTRACT §5\)/, "…with its contract qualifier unchanged (L18)");
+  /* premarketing: the qualifier is reader copy now — the internal citation left it */
+  assert.match(holders, /These are disclosures, not investment advice\./, "…with its advice qualifier (L18)");
+  assert.doesNotMatch(holders, /ARCHITECTURE\.md|M2-CONTRACT/, "no internal document citation in reader copy");
 });
 
 /* =============================================== T3.9 presented flags */

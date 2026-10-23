@@ -303,7 +303,7 @@ test("launch M6 (ticker-01…08): the shipped copy, the replaced copy gone, ever
   // ticker-07: the window and the order; the two method lines are its tip
   assert.equal(visibleText(one(".design-members-active .panel-note")), "12 months · most active first ⓘ");
   assert.match(visibleText(one("#n-ticker-members-method")), /^Rows = number of disclosures, not dollars\. Net = lower bound of the net range\. Committees as of each member's latest trade in the window \(roster snapshot 2026-07-20\)\.$/);
-  assert.equal(visibleText(dom.querySelectorAll(".design-members-active p.section-note").at(-1)!), "3 members");
+  assert.equal(visibleText(dom.querySelectorAll(".design-members-active p.section-note").at(-1)!), "2 members", "pre-marketing: 12 months by trade date, as /congress/ counts; the undated row is stated in the ledger instead");
   // ticker-08: the order in a few words, one link to every row, no card foot
   const disclosures = one('[aria-label="Congressional disclosures"]');
   assert.equal(visibleText(disclosures.querySelector(".panel-note")!), "Newest filed first");

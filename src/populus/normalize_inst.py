@@ -50,11 +50,11 @@ INST_DATA_NOTE = (
     " older still by however long ago that quarter ended. Values are the"
     " manager's stated market value at quarter-end in ERA-DEPENDENT units"
     " (whole dollars for form versions effective 2023-01-03 onward, thousands"
-    " before), normalized here to whole dollars with unit_basis carried on"
-    " every record. Affiliated managers may report the same position"
+    " before), normalized here to whole dollars; each record notes its"
+    " original unit. Affiliated managers may report the same position"
     " (otherManager), and positions under confidential treatment may be omitted"
     " until a later amendment discloses them. These are disclosures, not"
-    " investment advice (ARCHITECTURE.md §5.2 / M2-CONTRACT §5)."
+    " investment advice."
 )
 
 # A parse defect means extraction/normalization could not fully interpret a

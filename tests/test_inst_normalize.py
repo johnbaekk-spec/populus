@@ -163,7 +163,10 @@ def test_reconciliation_flags_entry_total_mismatch():
 
 def test_data_note_carries_the_structural_caveat():
     assert "snapshot" in INST_DATA_NOTE
-    assert "§5.2" in INST_DATA_NOTE or "5.2" in INST_DATA_NOTE
+    assert "not investment advice" in INST_DATA_NOTE
+    # Reader copy: no internal document citation, no field name (premarketing).
+    for gone in ("ARCHITECTURE.md", "M2-CONTRACT", "unit_basis"):
+        assert gone not in INST_DATA_NOTE, gone
 
 
 # --- QA-round-1 regressions ---------------------------------------------------
