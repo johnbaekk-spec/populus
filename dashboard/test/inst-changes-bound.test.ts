@@ -136,10 +136,15 @@ test("M2-12: the changes table paginates at the shared page size", () => {
   /* DOM parse (DESIGN-POLISH M1, T1.9): a changes row is a body row whose
      first cell is the position cell — counted by structure, so a row attribute
      the ledger adds (`data-edge`) cannot make the count read zero. */
+  /* filer headroom (R35): rows past the compact twenty are HELD — island
+     data the "Show all" draws — so a page's rows are the tbody's plus the
+     island's */
   const rowCount = (html: string): number => {
     const root = new MiniElement("body");
     root.innerHTML = html;
-    return root.querySelectorAll("tbody tr").filter((tr) => tr.children[0]?.classList.contains("c-pos")).length;
+    const island = /<script type="application\/json" data-held-for="filer-changes-tbody" data-held-render="filer-changes">([\s\S]*?)<\/script>/.exec(html);
+    const held = island ? (JSON.parse(island[1]!) as { rows: unknown[] }).rows.length : 0;
+    return root.querySelectorAll("tbody tr").filter((tr) => tr.children[0]?.classList.contains("c-pos")).length + held;
   };
   assert.equal(rowCount(page0), HOLDINGS_PAGE_SIZE, "page 0 holds exactly one page of rows");
   assert.ok(page0.includes("data-changes-pager"), "a multi-page table renders its pager");

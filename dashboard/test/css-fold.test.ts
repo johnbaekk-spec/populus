@@ -1581,6 +1581,11 @@ const DECLARED_DROPPABLE_CHROME = new Set<string>([
   // each row's cells stack with their own words (the counts carry theirs for
   // assistive technology), so the head has nothing left to label
   "ov-head",
+  // filer headroom: the Signals rows' summary name links (premarketing C). At
+  // the fold the row tap opens the row, whose body links the same page
+  // ("Name ↗", "Filer page ↗", the Overlap member and manager lines), so the
+  // overlay is not rendered there — it would only be a duplicate tab stop
+  "si-row-ml", "mv-mgr-a", "ov-who-a", "ov-mw-a",
 ]);
 
 /* ---------- the three institutional surfaces ---------- */

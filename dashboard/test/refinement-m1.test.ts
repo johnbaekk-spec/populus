@@ -60,7 +60,7 @@ test("R8: held rows leave the paged changes table and render once in the collaps
      ", explain" — "APPLE INC, explain", as before. */
   assert.match(
     mainTable!,
-    /<button type="button" class="note-btn note-label" [^>]*><span class="design-holding-name"><span class="filed-name">APPLE INC<\/span><\/span><span class="visually-hidden">, explain<\/span><\/button><span class="note-pop"[^>]*>share class as filed: <span class="filed-name">COM<\/span> · position key <code>sid:sec:a<\/code>/,
+    /<button type="button" class="note-btn note-label" [^>]*><span class="design-holding-name filed-name">APPLE INC<\/span><span class="visually-hidden">, explain<\/span><\/button><span class="note-pop"[^>]*>share class as filed: <span class="filed-name">COM<\/span> · position key <code>sid:sec:a<\/code>/,
   );
   /* Premarketing (owner): the 13F class title left the visible row — it rides
      in the issuer's ⓘ, never as secondary cell text. */
