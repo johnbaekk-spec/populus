@@ -9,6 +9,7 @@ import Base from "../../../layouts/Base.astro";
 import { getBuildData, getSignalArtifact, sectorResolver, chamberBenchmarkFor } from "../../../lib/data";
 import { memberBody, memberSignalsPanel, signalKindShort, type BuildStamps, type MemberV2Deps } from "../../../lib/ui/index.ts";
 import type { RenderCtx } from "../../../lib/format";
+import { senateStalenessSentence } from "../../../lib/senate-freshness.ts";
 
 export function getStaticPaths() {
   const build = getBuildData();
@@ -25,6 +26,8 @@ const stamps: BuildStamps = {
   buildId: build.buildId,
   generatedAt: build.generatedAt,
   generatedAtDate: build.generatedAtDate,
+  /* Senate DEGRADED mode: memberBody prints this on senators' pages only */
+  senateNotice: senateStalenessSentence(build.stats),
 };
 const ssrCtx: RenderCtx = {
   cutMembers: build.cutMembers,

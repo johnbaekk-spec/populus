@@ -73,6 +73,7 @@ import { buildTriage } from "./signal-triage.ts";
 import { sicCode } from "./committee-direct.ts";
 import { planFeedParts, type FeedPartsPlan } from "./feed-parts.ts";
 import { pathSafeTicker } from "./format.ts";
+import { senateNoticeMeta } from "./senate-freshness.ts";
 import { notableMoves, offeredMovePeriods } from "./notable-moves-derive.ts";
 import { NAMED_MOVES_SLICE_ROWS, type NotableMove } from "./notable-moves.ts";
 import { rankedTickerHolders, tickerFor, tickerTotalsFor, typingFor } from "./inst.ts";
@@ -1601,6 +1602,8 @@ export function memberPayloadJson(build: BuildData, bioguide: string): string | 
       buildId: build.buildId,
       generatedAt: build.generatedAt,
       generatedAtDate: build.generatedAtDate,
+      // Only in a degraded build, so a current build's payload is unchanged.
+      ...senateNoticeMeta(build.stats),
     },
   });
 }

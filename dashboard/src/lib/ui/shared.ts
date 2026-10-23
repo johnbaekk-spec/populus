@@ -17,6 +17,9 @@ export interface BuildStamps {
   buildId: string;
   generatedAt: string; // "YYYY-MM-DD HH:MM UTC"
   generatedAtDate: string; // "YYYY-MM-DD"
+  /** The degraded-Senate statement (`senateStalenessSentence`), present only
+      when the build carried its Senate data forward; senator pages print it. */
+  senateNotice?: string | null;
 }
 
 /* ---------- small shared pieces ---------- */

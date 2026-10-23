@@ -89,7 +89,7 @@ export function congressFixtureRows(): { txns: TxnRow[]; papers: PaperRow[] } {
 
 /** The page's own frontmatter steps (pages/congress/index.astro), over the
     fixture: the same functions, the same arguments. */
-function congressPageValues(txns: TxnRow[], papers: PaperRow[]): Record<string, string> {
+function congressPageValues(txns: TxnRow[], papers: PaperRow[]): Record<string, string | boolean> {
   const merged = mergeFeed(txns, papers);
   const stamps: BuildStamps = { buildId: "fixture.1", generatedAt: `${BUILD_DATE} 12:00 UTC`, generatedAtDate: BUILD_DATE };
   const coverage = { housePct: "98.1", houseParsed: 5_210, houseEfile: 5_311, senatePct: "99.2", senateParsed: 2_100, senateEfile: 2_117, needsOcr: 1_204 };
@@ -144,14 +144,19 @@ function congressPageValues(txns: TxnRow[], papers: PaperRow[]): Record<string, 
     monthlyFlowHtml: monthlyFlowPanel(txns, BUILD_DATE),
     partsIndexJson: serializeInlineJson(partsIndex),
     tickerOffsetsJson: serializeInlineJson(tickerOffsets),
+    /* Senate DEGRADED mode: a current build (the measured page) has no
+       statement; senate-degraded.test.ts measures the degraded page. */
+    senateNotice: false as string | boolean,
   };
 }
 
 /** The served /congress/ document on the fixture: the page body through
     `withTableRoles` (as Base.astro renders it), inside the Base layout. */
-export function congressPageFixture(): { html: string; body: string } {
+export function congressPageFixture(opts: { senateNotice?: string } = {}): { html: string; body: string } {
   const { txns, papers } = congressFixtureRows();
-  const body = withTableRoles(serveAstroTemplate(read("pages/congress/index.astro"), congressPageValues(txns, papers)));
+  const values = congressPageValues(txns, papers);
+  if (opts.senateNotice) values.senateNotice = opts.senateNotice;
+  const body = withTableRoles(serveAstroTemplate(read("pages/congress/index.astro"), values));
   const members = new Set(txns.map((r) => r.bioguide).filter(Boolean)).size;
   const tickers = new Set(txns.map((r) => r.ticker).filter(Boolean)).size;
   const base = serveAstroTemplate(

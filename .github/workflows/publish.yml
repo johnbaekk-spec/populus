@@ -275,10 +275,39 @@ jobs:
           --backend gh-release
           --repo johnbaekk-spec/populus-data
 
+      # Senate DEGRADED mode. Since 2026-10-23 the Senate eFD edge (Akamai Bot
+      # Manager) answers the agreement POST with 403. Getting past it is off
+      # the table, so `--degrade-on-block` turns an HTTP refusal or transport
+      # failure in the eFD handshake/index into exit 0: the Senate rows seeded
+      # from the previous release above are carried forward untouched, the run
+      # is audited as `blocked`, stats.json gains `freshness.senate_degraded`,
+      # and the site states how stale the Senate data is. House, 13F and site
+      # changes keep publishing. A parse failure, a tripped breaker or a
+      # malformed index still exits 1, and so does a block more than 14 days
+      # after the last ok Senate ingest. The era backfill below never degrades.
       - name: Ingest (live, raw-archived)
         run: |
           uv run populus ingest congress-house --db populus.db --raw-root raw
-          uv run populus ingest congress-senate --db populus.db --raw-root raw
+          set +e
+          uv run populus ingest congress-senate --db populus.db --raw-root raw \
+            --degrade-on-block | tee senate.out
+          status=${PIPESTATUS[0]}
+          set -e
+          if grep -q '^SENATE DEGRADE' senate.out; then
+            if grep -q '^SENATE DEGRADED:' senate.out; then
+              echo "::warning title=Senate degraded::Senate eFD refused automated access; prior Senate data carried forward (see the job summary)."
+              heading="### Senate DEGRADED — prior Senate data carried forward"
+            else
+              echo "::error title=Senate degrade refused::Senate eFD refused automated access and degraded mode was refused (see the job summary); publish stopped."
+              heading="### Senate DEGRADE REFUSED — publish stopped"
+            fi
+            {
+              echo "$heading"
+              echo
+              grep '^SENATE DEGRADE' senate.out | sed 's/^/    /'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
 
       # R43 — the one-time era fill, bounded on BOTH ends. The upper bound is
       # what makes it an era request rather than "start -> forever"; the

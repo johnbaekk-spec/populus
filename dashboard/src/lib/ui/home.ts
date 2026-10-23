@@ -46,6 +46,7 @@ import type { InstData } from "../inst.ts";
 import { signedUsd, type NotableMove } from "../notable-moves.ts";
 import type { TriageResult } from "../signal-triage.ts";
 import { quarterLabel } from "../congress-quarter.ts";
+import { senateStalenessSentence } from "../senate-freshness.ts";
 import { disclosureLedger, type LedgerItem } from "./shared.ts";
 import { COMMITTEE_CAVEAT, leadCardBodyHtml, leadCardTag, type LeadCard } from "./signals.ts";
 
@@ -224,8 +225,10 @@ export interface HomeFigures {
   inst: HomeFigureInputs["inst"];
   signals: HomeFigureInputs["signals"];
   triage: HomeFigureInputs["triage"];
-  /** the build date and each chamber's newest filed date (stats.json `freshness`) */
-  updated: { date: string; house: string | null; senate: string | null };
+  /** the build date and each chamber's newest filed date (stats.json
+      `freshness`), and the degraded-Senate statement when the build carried
+      the Senate data forward (null otherwise) */
+  updated: { date: string; house: string | null; senate: string | null; senateNotice?: string | null };
 }
 
 /** Distinct filer names on rows that join no member record — counted, never
@@ -262,6 +265,7 @@ export function homeFigures(i: HomeFigureInputs): HomeFigures {
       date: i.generatedAtDate,
       house: dateOrNull(freshness.house_db_max_filed_date),
       senate: dateOrNull(freshness.senate_db_max_filed_date),
+      senateNotice: senateStalenessSentence(i.stats),
     },
   };
 }
@@ -321,10 +325,11 @@ export function homeLedgerHtml(f: HomeFigures): string {
   const updatedItem: LedgerItem = {
     label: "Updated",
     value: up.date || "—",
-    detail: `House to ${up.house ?? "—"} · Senate to ${up.senate ?? "—"}`,
+    detail: `House to ${up.house ?? "—"} · Senate to ${up.senate ?? "—"}` + (up.senateNotice ? ", paused" : ""),
     subKind: "date",
     noteHtml: esc(
-      `The date this build was made. Its newest House filing was filed ${up.house ?? "on a date not stated"}, and its newest Senate filing ${up.senate ?? "on a date not stated"}.`,
+      `The date this build was made. Its newest House filing was filed ${up.house ?? "on a date not stated"}, and its newest Senate filing ${up.senate ?? "on a date not stated"}.` +
+        (up.senateNotice ? ` ${up.senateNotice}` : ""),
     ),
   };
   return (

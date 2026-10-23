@@ -10,6 +10,7 @@
 // dropped or reworded, and cadence claims are replaced by the build stamp.
 import Base from "../../layouts/Base.astro";
 import { getBuildData, methodologyM1Tiles } from "../../lib/data";
+import { senateStalenessSentence } from "../../lib/senate-freshness.ts";
 import { fmtInt } from "../../lib/format";
 import { filingWindow, lagCdf, lagCdfPointsText, LAG_SAMPLE_MONTHS, COMPLETENESS_SHADE_BELOW, FILING_WINDOW_DAYS } from "../../lib/derive";
 import { ACTIVITY_SHARDS_MAX, PAGE_BYTE_LIMIT, PAGE_RECORD_LIMIT } from "../../lib/activity";
@@ -18,6 +19,8 @@ import { committeeDirectHtml, lagBandHtml, ruleBookHtml, signalsCongressColumnHt
 
 const build = getBuildData();
 const m1 = methodologyM1Tiles(build.stats, build.filedFrom);
+/* Senate DEGRADED mode: a known gap while it lasts, null otherwise */
+const senateNotice = senateStalenessSentence(build.stats);
 const inst = build.inst;
 const window = inst.present ? filingWindow(build.generatedAtDate) : null;
 /* SIGNALS-CLARITY M3 (R17): the same measured lag distribution the /congress
@@ -124,6 +127,7 @@ const description =
               of the page. This is the section it always meant. */}
           <h3 class="section-h" id="coverage">Known gaps — published, not hidden</h3>
           <div class="gaps-block" id="defaults">
+            {senateNotice && <div data-senate-stale>· {senateNotice} Senate figures on this site describe the filings through that date.</div>}
             {/* meth-02: the stats field name is not reader copy */}
             <div>· {fmtInt(build.stats.totals.needs_ocr_filing_count_including_excluded)} paper filings <span class="flag dashed">needs OCR</span> — counted in totals</div>
             <div>· {fmtInt(Array.isArray(build.stats.unresolved_names) ? build.stats.unresolved_names.length : 0)} filer names not joined to a member — the join is name × chamber × term, only on a unique candidate; the alias file is version-controlled and public</div>

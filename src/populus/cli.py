@@ -149,6 +149,29 @@ def _one_selector(ctx: click.Context, param: click.Parameter, value: object) -> 
         " historical era rather than 'start → forever'."
     ),
 )
+@click.option(
+    "--degrade-on-block",
+    "degrade_on_block",
+    is_flag=True,
+    default=False,
+    help=(
+        "congress-senate only: when eFD refuses or fails to answer the handshake"
+        " or index fetch (HTTP refusal or transport failure), exit 0 with a"
+        " SENATE DEGRADED marker and leave the stored Senate rows as they are —"
+        " provided the last ok Senate ingest is within --max-staleness-days."
+        " Every other failure still exits 1."
+    ),
+)
+@click.option(
+    "--max-staleness-days",
+    "max_staleness_days",
+    type=click.IntRange(min=0),
+    default=None,
+    help=(
+        "congress-senate --degrade-on-block only: days since the last ok Senate"
+        " ingest after which a blocked run fails again (default 14)."
+    ),
+)
 @click.pass_context
 def ingest(
     ctx: click.Context,
@@ -163,6 +186,8 @@ def ingest(
     ciks: tuple[str, ...],
     submitted_start: str | None,
     submitted_end: str | None,
+    degrade_on_block: bool,
+    max_staleness_days: int | None,
 ) -> None:
     """Run an ingest JOB: discover → fetch → parse → normalize → load."""
     if job != "members" and (house_index or kadoa_trades or aliases_path):
@@ -177,6 +202,10 @@ def ingest(
             " congress-senate (the eFD index is one continuous submitted-date"
             " window; the House is addressed by --year)"
         )
+    if job != "congress-senate" and degrade_on_block:
+        raise click.UsageError("--degrade-on-block applies only to ingest congress-senate")
+    if max_staleness_days is not None and not degrade_on_block:
+        raise click.UsageError("--max-staleness-days requires --degrade-on-block")
     for option, value in (
         ("--submitted-start", submitted_start),
         ("--submitted-end", submitted_end),
@@ -261,10 +290,36 @@ def ingest(
                 submitted_end_date=submitted_end,
             )
             summary = senate.format_summary(report, gate=compute_parse_gate(conn))
+            # The degraded-publish policy (PLAN: Senate eFD degraded publish).
+            # Read from the same store before it closes: the last ok Senate
+            # run and the filed-through date both come from the seeded release.
+            degrade_lines: list[str] = []
+            degraded = False
+            if degrade_on_block and not report.ok:
+                bound = (
+                    max_staleness_days
+                    if max_staleness_days is not None
+                    else senate.DEFAULT_MAX_STALENESS_DAYS
+                )
+                decision = senate.decide_degrade(
+                    report,
+                    last_good_finished_at=senate.last_good_senate_ingest(conn),
+                    now=datetime.now(timezone.utc),
+                    max_staleness_days=bound,
+                )
+                degraded = decision.degraded
+                degrade_lines = senate.format_degrade_lines(
+                    report,
+                    decision,
+                    filed_through=senate.senate_max_filed_date(conn),
+                    max_staleness_days=bound,
+                )
         finally:
             conn.close()
         click.echo(summary)
-        if not report.ok:
+        for line in degrade_lines:
+            click.echo(line)
+        if not report.ok and not degraded:
             ctx.exit(1)
     elif job == "congress-backfill":
         from populus import backfill

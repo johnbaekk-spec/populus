@@ -294,6 +294,7 @@ def compute_stats(
         "house_db_max_filed_date": house_max_filed,
         "senate_db_max_filed_date": senate_max_filed,
         "last_ingest_runs": last_runs,
+        "senate_degraded": senate_degraded_state(conn),
     }
 
     # --- unresolved names (never dropped — G3) -------------------------------
@@ -327,6 +328,39 @@ def compute_stats(
         # "nobody wrote a count" distinguishable from "this build predates the
         # field" — an absent key would be silently tolerated by every consumer.
         "site_file_count": None,
+    }
+
+
+def senate_degraded_state(conn: sqlite3.Connection) -> dict | None:
+    """``null`` unless the newest Senate ingest run was ``blocked``.
+
+    A blocked run is eFD refusing (or failing to answer) the handshake or
+    index fetch; under ``--degrade-on-block`` the publish then carries the
+    seeded Senate rows forward. Derived from ``ingest_runs`` alone, in the same
+    ``started_at, run_id`` order as ``last_ingest_runs``, so it is deterministic
+    for a given database and clears itself on the first ``ok`` run.
+
+    ``blocked_since`` is the date of the FIRST blocked run after the last ``ok``
+    one — the store carries every published run forward, so consecutive
+    degraded builds keep the date the block was first seen.
+    ``last_good_ingest_at`` is that ``ok`` run's ``finished_at`` (``null`` when
+    the store holds none; the CLI refuses to degrade in that case).
+    """
+    runs = conn.execute(
+        "SELECT started_at, finished_at, status FROM ingest_runs"
+        " WHERE job = 'congress-senate' ORDER BY started_at, run_id"
+    ).fetchall()
+    if not runs or runs[-1][2] != "blocked":
+        return None
+    last_ok = max(
+        (index for index, run in enumerate(runs) if run[2] == "ok"), default=-1
+    )
+    first_blocked = next(
+        run for run in runs[last_ok + 1 :] if run[2] == "blocked"
+    )
+    return {
+        "blocked_since": (first_blocked[0] or "")[:10] or None,
+        "last_good_ingest_at": runs[last_ok][1] if last_ok >= 0 else None,
     }
 
 

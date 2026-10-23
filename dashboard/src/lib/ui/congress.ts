@@ -1270,7 +1270,13 @@ export function memberBody(
       "statutory-ranges",
       { trigger: "label", textHtml: "statutory ranges" },
     ) +
-    ` · as of ${esc(stamps.generatedAtDate)}</div>`;
+    ` · as of ${esc(stamps.generatedAtDate)}` +
+    /* Senate DEGRADED mode: a senator's record stops at the carried-forward
+       Senate data, so the page says so beside its as-of date. */
+    (m.chamber === "senate" && stamps.senateNotice
+      ? `<div class="stamp-line" data-senate-stale>${esc(stamps.senateNotice)}</div>`
+      : "") +
+    `</div>`;
   if (!active) return head + memberCompactHtml(m, ctx, deps) + memberPaperBlock(m);
 
   const flow = quarterlyFlow(m.txns, stamps.generatedAtDate, 8);

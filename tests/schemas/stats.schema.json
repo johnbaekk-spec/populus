@@ -354,7 +354,8 @@
         "house_index_last_modified_by_year",
         "house_db_max_filed_date",
         "senate_db_max_filed_date",
-        "last_ingest_runs"
+        "last_ingest_runs",
+        "senate_degraded"
       ],
       "properties": {
         "house_index_last_modified": {
@@ -383,6 +384,32 @@
             "string",
             "null"
           ]
+        },
+        "senate_degraded": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "blocked_since",
+            "last_good_ingest_at"
+          ],
+          "properties": {
+            "blocked_since": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            "last_good_ingest_at": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
         },
         "last_ingest_runs": {
           "type": "object",

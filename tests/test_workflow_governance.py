@@ -719,6 +719,37 @@ def test_the_senate_era_backfill_is_bounded_on_both_ends():
     assert step["if"], "the era backfill must be gated on its dispatch input"
 
 
+def test_nightly_senate_ingest_degrades_and_reports():
+    # Senate DEGRADED mode: ONLY the nightly ingest may degrade on a blocked
+    # eFD, and it must say so loudly — an annotation and a job-summary
+    # section — while still failing the step on any nonzero Senate exit.
+    run = _publish_steps()[_step_index("Ingest (live")]["run"]
+    senate_lines = [
+        line for line in run.splitlines() if "ingest congress-senate" in line
+    ]
+    assert len(senate_lines) == 1
+    assert "--degrade-on-block" in run
+    assert "status=${PIPESTATUS[0]}" in run
+    assert run.rstrip().endswith('exit "$status"')
+    assert "::warning title=Senate degraded::" in run
+    assert "GITHUB_STEP_SUMMARY" in run
+    assert "SENATE DEGRADED:" in run
+    # The House leg is untouched: still a plain line under `bash -e`.
+    assert "uv run populus ingest congress-house --db populus.db --raw-root raw\n" in run
+    # Control: the one-time era backfill is a bootstrap and never degrades.
+    backfill = _publish_steps()[_step_index("Senate era backfill")]["run"]
+    assert "--degrade-on-block" not in backfill
+
+
+def test_the_degraded_marker_the_workflow_greps_is_the_one_the_cli_prints():
+    from populus.ingest import senate
+
+    run = _publish_steps()[_step_index("Ingest (live")]["run"]
+    assert f"'^{senate.DEGRADED_MARKER}'" in run
+    assert senate.DEGRADE_REFUSED_MARKER.startswith("SENATE DEGRADE")
+    assert "'^SENATE DEGRADE'" in run
+
+
 def test_no_fresh_database_fallback_survives_in_the_workflow():
     # The regression this whole milestone exists to prevent: any step that
     # initializes populus.db from nothing puts B25 straight back.

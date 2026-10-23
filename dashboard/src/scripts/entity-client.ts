@@ -289,6 +289,8 @@ export function runEntityDriver(deps: DriverDeps): DriverHandle {
           buildId: String(meta.buildId ?? ""),
           generatedAt: String(meta.generatedAt ?? ""),
           generatedAtDate: String(meta.generatedAtDate ?? ""),
+          // Present only in a degraded build (`senateNoticeMeta`).
+          senateNotice: typeof meta.senateNotice === "string" ? meta.senateNotice : null,
         };
         if (payload.kind === "m") {
           loaded = {
