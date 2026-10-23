@@ -470,7 +470,7 @@ test("SL-R26 F5: instIndexRowHtml — a RENDERED duplicate-variant pair keeps ev
     positions: 12,
     nullValuePositions: 3,     // → the `nullvalue` note
     hhi: null,                 // → the `hhi` note
-    hhiNote: "concentration_unavailable: the producer stores NULL, never a fabricated 0",
+    hhiNote: "Concentration not computed: no disclosed total for this quarter — shown as n/a, never as 0",
     tier: "top",
     typing: null,              // → the `untyped` note
     changeHtml: "",
@@ -491,7 +491,7 @@ test("SL-R26 F5: instIndexRowHtml — a RENDERED duplicate-variant pair keeps ev
     panelText(single, byChip.nullvalue!),
     /^positions whose value did not parse — excluded from the sum, surfaced beside it$/,
   );
-  assert.equal(panelText(single, byChip.hhi!), "concentration_unavailable: the producer stores NULL, never a fabricated 0");
+  assert.equal(panelText(single, byChip.hhi!), "Concentration not computed: no disclosed total for this quarter — shown as n/a, never as 0");
   assert.match(
     panelText(single, byChip.untyped!),
     /^not in the curated registry — this build types a curated subset, not the population$/,

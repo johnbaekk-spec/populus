@@ -113,7 +113,9 @@ test("signals-14 (adapted): six clauses still render; the field name and the rep
   const all = [...byId.values()].join(" ");
   assert.doesNotMatch(all, /\(otherManager\)|older still|before you ever see it/);
   // the qualifiers activity.test.ts pins against the producer survive here too (spot check; the full list is there)
-  for (const q of ["so managers below that threshold are absent entirely", "unit_basis carried on every record", "ARCHITECTURE.md §5.2 / M2-CONTRACT §5"]) assert.ok(all.includes(q), q);
+  for (const q of ["so managers below that threshold are absent entirely", "each record notes its original unit", "not investment advice"]) assert.ok(all.includes(q), q);
+  // premarketing: no internal document citation, no field name in reader copy
+  assert.doesNotMatch(all, /ARCHITECTURE\.md|M2-CONTRACT|unit_basis/);
 });
 
 /* ---------------------------------------------------------------- ticker-12, ticker-13 */

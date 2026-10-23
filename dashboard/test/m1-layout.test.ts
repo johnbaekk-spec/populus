@@ -245,8 +245,9 @@ test("R6: the decisive column is asserted, and it comes before the raw levels", 
       headers,
       [
         // R1 (refinement 20260910): the issuer name leads the cell; the grain
-        // note stays on the row, so the header is simply "Position".
-        "Position",
+        // note stays on the row. Premarketing: the header reads "Issuer", as
+        // Reported positions' does (no Ticker column: no ticker map here).
+        "Issuer",
         "Change",
         "Δ value",
         "Δ shares",

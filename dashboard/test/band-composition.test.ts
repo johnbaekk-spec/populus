@@ -434,7 +434,8 @@ test("CD-5 → signals-v4 LD12: Consensus shows a FIXED 10 whatever the leaders 
   const src = read("lib/ui/signals-institutional.ts");
   const call = /consensusPanelHtml\(([^)]*)\) \+/.exec(src)?.[1];
   /* signals-v4 M3: the third argument is the playbook strip's switch, never a count */
-  assert.equal(call, "model.board, model.quarter, opts.playbooks === true", "the tab passes the board no row count");
+  /* premarketing B: the fourth is the top mover's filer link, never a count */
+  assert.equal(call, "model.board, model.quarter, opts.playbooks === true, model.filerHref", "the tab passes the board no row count");
   /* and no band source derives a row count from a height (the sweep). The
      Named moves' column fit (LD6) reads LAYOUT, in the client, through
      `scripts/column-fit.ts` — never a pixel constant in a renderer. */

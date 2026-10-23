@@ -456,8 +456,8 @@ test("R12 golden render: Armstrong's row tags LATE 701/703 (\"701 of 703 lines l
   const a = domOf(triageRowHtml(arm, CTX));
   const tag = a.querySelector(".si-late-tag")!;
   assert.equal(ownText(tag), "LATE 701/703", "on screen");
-  assert.equal(tag.querySelector(".visually-hidden")!.textContent, "701 of 703 lines late", "in words");
-  assert.match(a.querySelector(".si-row-facts")!.textContent, /701 of 703 lines filed past the STOCK Act's 45-day window\./, "the opened row states it in full");
+  assert.equal(tag.querySelector(".visually-hidden")!.textContent, "701 of 703 lines in this filing late", "in words");
+  assert.match(a.querySelector(".si-row-facts")!.textContent, /701 of 703 lines in this filing filed past the STOCK Act's 45-day window\./, "the opened row states it in full");
   assert.ok(a.querySelector('.si-row-links a[href="/tickers/WMB/#on-signals"]'), "the ticker page, from the opened row");
   assert.match(ownText(a.querySelector(".si-row-tk")!), /^WMB$/);
   assert.match(ownText(a.querySelector(".si-row-member")!), /^Alan Armstrong$/);

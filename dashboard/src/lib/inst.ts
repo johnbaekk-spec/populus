@@ -463,6 +463,20 @@ export function tickerFor(inst: InstData, issuerName: string, titleOfClass: stri
   return inst.tickerByKey.get(tierCKey(issuerName, titleOfClass)) ?? null;
 }
 
+/** The filer changes table's Ticker column: `position_key` → the reviewed
+    ticker of each change row's displayed (issuer name, class) — `tickerFor`,
+    the Reported positions table's own lookup, so the two tables cannot name a
+    position differently. Rows with no name or no reviewed mapping are absent. */
+export function changesTickerMap(inst: InstData, deltas: Iterable<QoqDeltaRow>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const d of deltas) {
+    if (!d.issuer_name || d.position_key in out) continue;
+    const ref = tickerFor(inst, d.issuer_name, d.title_of_class ?? null);
+    if (ref) out[d.position_key] = ref.ticker;
+  }
+  return out;
+}
+
 /** R3: SEC spelling first (`BRK-B`), then the Congress spelling (`BRK.B`). */
 export function tickerHoldersFor(inst: InstData, ticker: string): TickerHolderRow[] {
   if (!inst.present) return [];
@@ -685,6 +699,18 @@ export function typingFor(inst: InstData, cik: string): ManagerTyping | null {
 export function addsFor(inst: InstData, period: string, mode: AddsMode): AddsRow[] {
   if (!inst.present) return [];
   return [...(inst.addsByPeriodMode.get(`${period}|${mode}`) ?? [])].sort(compareAddsRows);
+}
+
+/** The leaderboard rows with each top adder's filer-page budget state, so the
+    adder's name links to a page that exists (`addsRowHtml`). `tops` is the
+    build's pre-rendered CIK set (`data.topFilerCiks`), zero-padded. */
+export function withAdderTiers(
+  rows: readonly AddsRow[],
+  tops: ReadonlySet<string>,
+): (AddsRow & { top_adder_tier?: "top" | "tail" })[] {
+  return rows.map((r) =>
+    r.top_adder_cik == null ? r : { ...r, top_adder_tier: tops.has(String(r.top_adder_cik).padStart(10, "0")) ? "top" : "tail" },
+  );
 }
 
 /** The ambiguous-identity exclusion count for one period and mode.

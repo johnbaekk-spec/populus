@@ -670,12 +670,17 @@ test("the §5 data_note is ONE text: every substantive qualifier in the Python c
     "not current holdings",
     "era-dependent units",
     "2023-01-03",
-    "unit_basis carried on every record",
+    "normalized here to whole dollars; each record notes its original unit",
     "affiliated managers may report the same position",
     "confidential treatment",
     "disclosures, not investment advice",
-    "architecture.md \u00a75.2 / m2-contract \u00a75",
   ];
+  /* Premarketing: reader copy carries no internal document citation and no
+     field name — in EITHER runtime. */
+  for (const gone of ["architecture.md", "m2-contract", "unit_basis"]) {
+    assert.ok(!tsN.includes(gone), `the dashboard §5 note still shows "${gone}"`);
+    assert.ok(!pyN.includes(gone), `the producer's §5 note still shows "${gone}"`);
+  }
   const missingFromDashboard = qualifiers.filter((q) => !tsN.includes(q));
   const missingFromPython = qualifiers.filter((q) => !pyN.includes(q));
   assert.deepEqual(

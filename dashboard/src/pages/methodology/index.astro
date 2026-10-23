@@ -126,7 +126,7 @@ const description =
           <div class="gaps-block" id="defaults">
             {/* meth-02: the stats field name is not reader copy */}
             <div>· {fmtInt(build.stats.totals.needs_ocr_filing_count_including_excluded)} paper filings <span class="flag dashed">needs OCR</span> — counted in totals</div>
-            <div>· {fmtInt(build.stats.totals.unresolved_pair_count)} filer name-pairs not yet joined to members — the join is name × chamber × term, only on a unique candidate; the alias file is version-controlled and public</div>
+            <div>· {fmtInt(Array.isArray(build.stats.unresolved_names) ? build.stats.unresolved_names.length : 0)} filer names not joined to a member — the join is name × chamber × term, only on a unique candidate; the alias file is version-controlled and public</div>
             <div>· amendments carry <span class="flag amber">amendment pending</span> until amendment semantics are settled — the default view excludes the superseded original, and both readings are queryable</div>
             <div>· rows with defect flags are visible and flagged, never dropped</div>
           </div>

@@ -936,12 +936,25 @@ function onSignalsHref(ticker: string | null, ctx: RenderCtx): string | null {
     "LATE 701/703" on screen and "701 of 703 lines late" in words for
     assistive technology (signals-v4: the row's first line holds it at
     1440px). The opened row states it in full. */
+/** pre-marketing: a filing's late count names its late lines, so a row whose
+    own line was on time does not read as late (NOKBF beside a late BAC). */
+function lateLinesDetail(row: TriageRow, ticker: string | null): string {
+  const late = row.filings.flatMap((f) => f.rows).filter((r) => r.late === 1);
+  const names = [...new Set(late.map((r) => r.ticker ?? "a line with no ticker"))];
+  const own = ticker !== null && !late.some((r) => r.ticker === ticker);
+  return (
+    `${fmtInt(row.lateLines)} of ${fmtInt(row.totalLines)} lines in this filing filed past the STOCK Act's 45-day window` +
+    (names.length > 0 && names.length <= 5 ? `: ${names.map(esc).join(", ")}` : "") +
+    "." +
+    (own ? ` This ${esc(ticker)} line was on time.` : "")
+  );
+}
 function lateTagHtml(late: number, total: number): string {
   if (late === 0) return "";
   if (total === 1) return ` <span class="si-late si-late-tag">LATE</span>`;
   return (
     ` <span class="si-late si-late-tag"><span aria-hidden="true">LATE ${fmtInt(late)}/${fmtInt(total)}</span>` +
-    `<span class="visually-hidden">${fmtInt(late)} of ${fmtInt(total)} lines late</span></span>`
+    `<span class="visually-hidden">${fmtInt(late)} of ${fmtInt(total)} lines in this filing late</span></span>`
   );
 }
 
@@ -1071,14 +1084,14 @@ export function triageRowHtml(row: TriageRow, ctx: RenderCtx, opts: { link?: boo
           ? `${fmtInt(n)} ${n === 1 ? "filing" : "filings"} by one member on one ticker, one row`
           : "One filing";
   const members = cluster
-    ? filers.map((r) => `${esc(r.name)} <span class="aff ${partyClass(r.party)}">${esc(affTextOf(r))}</span>`).join(", ")
+    ? filers.map((r) => `${r.bioguide ? `<a href="${memberHrefFor(r.bioguide, ctx)}">${esc(r.name)}</a>` : esc(r.name)} <span class="aff ${partyClass(r.party)}">${esc(affTextOf(r))}</span>`).join(", ")
     : "";
   const lateDetail =
     row.lateLines === 0
       ? ""
       : row.totalLines === 1
         ? "Filed past the STOCK Act's 45-day window."
-        : `${fmtInt(row.lateLines)} of ${fmtInt(row.totalLines)} lines filed past the STOCK Act's 45-day window.`;
+        : lateLinesDetail(row, t.ticker);
   const tickerHref = opts.link === false ? null : onSignalsHref(t.ticker, ctx);
   const receipt = row.lead.doc;
   const links = [
@@ -1110,6 +1123,9 @@ export function triageRowHtml(row: TriageRow, ctx: RenderCtx, opts: { link?: boo
     summary +
     detail +
     `</details>` +
+    /* premarketing C: the filer's name opens the member page — a sibling of
+       the summary (which stays control-free), laid over the name */
+    (!cluster && t.bioguide ? `<a class="si-row-ml" href="${memberHrefFor(t.bioguide, ctx)}"><span class="visually-hidden">${esc(t.name)}, member page</span></a>` : "") +
     `<span class="si-row-src">${signalReceiptHtml(receipt, t.chamber)}` +
     (n > 1 ? `<span class="mono-note visually-hidden"> +${fmtInt(n - 1)} ${n === 2 ? "filing" : "filings"} · ${latestHtml}</span>` : "") +
     `</span>` +
@@ -1636,7 +1652,7 @@ export function signalsBody(artifact: SignalArtifact, ctx: RenderCtx, deps?: Sig
     `</section>` +
     `<section class="tk-panel sig-panel" role="tabpanel" id="overlap" aria-labelledby="tab-overlap">` +
     /* launch M7a: the names the visible move rows link stay in the page */
-    signalsOverlapHtml(overlap, ctx, { playbooks: pb !== null, keep: visibleMoveOverlapIds(inst, overlap) }) +
+    signalsOverlapHtml(overlap, ctx, { playbooks: pb !== null, keep: visibleMoveOverlapIds(inst, overlap), ...(inst ? { filerHref: inst.filerHref } : {}) }) +
     `</section>` +
     `<section class="tk-panel sig-panel" role="tabpanel" id="playbooks" aria-labelledby="tab-playbooks">` +
     /* R9 / LD8: the tab links only to what this page renders */

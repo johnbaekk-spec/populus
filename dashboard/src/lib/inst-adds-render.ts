@@ -3,12 +3,21 @@
    the island imports it dynamically and `ui.ts` pulls in the whole rendering
    surface. */
 
-import { esc, fmtCik, fmtInt, fmtUsd, identityChipHtml, note } from "./format.ts";
+import { esc, fmtCik, fmtInt, fmtUsd, identityChipHtml, note, rowLink } from "./format.ts";
+import { filerLinkHtml, type FilerBudgetState } from "./holdings.ts";
 import type { AddsRow } from "./inst-adds.ts";
+
+/** A leaderboard row as rendered: the payload row plus its top adder's filer
+    page budget state (`withAdderTiers`), so the adder's name links to a page
+    that exists — the canonical filer page (top) or the `/e/` driver (tail).
+    Absent (an older payload) → the name stays plain text: a tier is never
+    guessed, because a guessed "tail" would send a top filer to an /e/ page
+    that has no data for it. */
+export type AddsRenderRow = AddsRow & { top_adder_tier?: FilerBudgetState };
 
 /** One leaderboard row. Every metric is that row's OWN mode — the payload is
     per-mode by construction, so nothing here re-derives across modes. */
-export function addsRowHtml(r: AddsRow, pos: number): string {
+export function addsRowHtml(r: AddsRenderRow, pos: number): string {
   const name =
     r.issuer_name && r.issuer_name.trim() !== ""
       ? `<span class="filed-name">${esc(r.issuer_name)}</span>`
@@ -48,7 +57,11 @@ export function addsRowHtml(r: AddsRow, pos: number): string {
           textHtml: `<span class="none">—</span>`,
           name: "no top adder",
         })
-      : esc(r.top_adder_name ?? `CIK ${fmtCik(r.top_adder_cik)}`);
+      : r.top_adder_tier === "top" || r.top_adder_tier === "tail"
+        ? /* the row's main link (the issuer carries none): ONE filer-link rule,
+             the activity feed's `filerLinkHtml` */
+          rowLink(filerLinkHtml(String(r.top_adder_cik), r.top_adder_name ?? `CIK ${fmtCik(r.top_adder_cik)}`, r.top_adder_tier))
+        : esc(r.top_adder_name ?? `CIK ${fmtCik(r.top_adder_cik)}`);
   return (
     `<tr><td class="c-num c-muted">${fmtInt(pos)}</td>` +
     /* The raw issuer key (`cusip6:464287`) stops being visible text.
@@ -68,7 +81,7 @@ export function addsRowHtml(r: AddsRow, pos: number): string {
 
 /** Every row at its rendered position, optionally bounded by the compact
     slice. ONE renderer for SSR, for a sort, and for a period change. */
-export function addsRowsHtml(rows: readonly AddsRow[], compact?: number): string {
+export function addsRowsHtml(rows: readonly AddsRenderRow[], compact?: number): string {
   const shown = compact == null ? rows : rows.slice(0, compact);
   return shown.map((r, i) => addsRowHtml(r, i + 1)).join("\n");
 }

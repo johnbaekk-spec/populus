@@ -1652,21 +1652,24 @@ export interface MethodologyTile extends StatTile {
 export function methodologyM1Tiles(stats: Record<string, any>, filedFrom: string): MethodologyTile[] {
   const cov = coverageSummary(stats);
   const rowCount: number = stats.default.row_count;
-  const unresolved: number = stats.totals.unresolved_pair_count;
+  /* pre-marketing: `totals.unresolved_pair_count` counts amendment→original
+     pairs (stats.py), not the member join; the unjoined filer names are
+     `unresolved_names`, one entry per name × chamber × source */
+  const unresolved: number = Array.isArray(stats.unresolved_names) ? stats.unresolved_names.length : 0;
   const late = stats.default.late_filing.overall;
   return [
     {
       value: cov.housePct,
       unit: "%",
       label: "House e-file parse",
-      sub: `${cov.houseParsed} / ${cov.houseEfile} e-filed`,
+      sub: `${cov.houseParsed.toLocaleString("en-US")} / ${cov.houseEfile.toLocaleString("en-US")} e-filed`,
       statsKeys: ["totals.parse_coverage_primary_by_chamber_year_including_excluded"],
     },
     {
       value: cov.senatePct,
       unit: "%",
       label: "Senate e-file parse",
-      sub: `${cov.senateParsed} / ${cov.senateEfile} e-filed`,
+      sub: `${cov.senateParsed.toLocaleString("en-US")} / ${cov.senateEfile.toLocaleString("en-US")} e-filed`,
       statsKeys: ["totals.parse_coverage_primary_by_chamber_year_including_excluded"],
     },
     {
@@ -1676,18 +1679,18 @@ export function methodologyM1Tiles(stats: Record<string, any>, filedFrom: string
       statsKeys: ["default.row_count"],
     },
     {
-      value: String(cov.needsOcr),
+      value: cov.needsOcr.toLocaleString("en-US"),
       label: "paper filings need OCR",
       sub: "retained, zero rows",
       muted: true,
       statsKeys: ["totals.needs_ocr_filing_count_including_excluded"],
     },
     {
-      value: String(unresolved),
-      label: "filer name-pairs unjoined",
-      sub: "no member match yet",
+      value: unresolved.toLocaleString("en-US"),
+      label: "filer names unjoined",
+      sub: "no unique member match",
       muted: true,
-      statsKeys: ["totals.unresolved_pair_count"],
+      statsKeys: ["unresolved_names"],
     },
     {
       value: late.median_days_to_file == null ? "—" : `+${Math.round(late.median_days_to_file)}d`,

@@ -29,7 +29,7 @@
    true totals and the bound is stated where a view runs out first (LD11's
    grammar). Pure; build memory only (R23). */
 
-import { type RenderCtx, esc, fmtInt, kindWordHtml, note, noteFromHtml, normalizeTicker13f, partyClass, rangeOfTotal, slug, tickerHrefFor } from "../format.ts";
+import { type RenderCtx, esc, fmtInt, kindWordHtml, memberHrefFor, note, noteFromHtml, normalizeTicker13f, partyClass, rangeOfTotal, slug, tickerHrefFor } from "../format.ts";
 import { affTextOf } from "../derive.ts";
 import { BROAD_ACCOUNT_NAMES, CONGRESS_DETAIL_LINES, quarterLabel, quarterMembers, type BroadMember, type CongressQuarter, type MemberLines } from "../congress-quarter.ts";
 import type { NotableMove } from "../notable-moves.ts";
@@ -37,6 +37,7 @@ import { signedUsd } from "../notable-moves.ts";
 import { congressLineHtml, ctxOfCut, memberLastName, type HeldCut } from "./signals.ts";
 import { heldIslandHtml, type HeldIsland } from "../held-rows.ts";
 import { playbookStripHtml } from "./signals-playbooks.ts";
+import { broadAccountsHtml, broadAccountsOf } from "./signals-institutional.ts";
 import type { LedgerItem } from "./shared.ts";
 import { disclosureLedger } from "./shared.ts";
 
@@ -222,23 +223,41 @@ function plural(n: number, one: string, many: string): string {
   return `${fmtInt(n)} ${n === 1 ? one : many}`;
 }
 
-/** One variant's summary cells: the relation, the members, the counts. */
-function variantCells(r: OverlapRow): { rel: string; who: string; cg: string } {
+/** A summary name's page (premarketing C): the link laid over the name. */
+interface LeadName {
+  href: string;
+  name: string;
+}
+
+/** One variant's summary cells: the relation, the members, the counts, and
+    the first-named member's page (premarketing C) — that name alone wears the
+    `.ov-w1` span the link is laid over; a member with no page has neither. */
+function variantCells(r: OverlapRow, ctx: RenderCtx): { rel: string; who: string; cg: string; lead: LeadName | null } {
   const rl = REL_LABEL(r);
   const seen = new Set<string>();
   const members = [...r.buy, ...r.sell].filter((m) => (seen.has(m.key) ? false : (seen.add(m.key), true)));
+  const first = members[0];
+  const lead = first?.bioguide ? { href: memberHrefFor(first.bioguide, ctx), name: first.name } : null;
   const who =
     members
       .slice(0, SUMMARY_NAMES)
-      .map((m) => `${esc(memberLastName(m.name))} <span class="aff ${partyClass(m.party)}">${esc(affTextOf(m))}</span>`)
+      .map((m, i) => `${i === 0 && lead ? `<span class="ov-w1">${esc(memberLastName(m.name))}</span>` : esc(memberLastName(m.name))} <span class="aff ${partyClass(m.party)}">${esc(affTextOf(m))}</span>`)
       .join(", ") + (members.length > SUMMARY_NAMES ? ` +${fmtInt(members.length - SUMMARY_NAMES)}` : "");
   return {
     rel: `<span class="ov-rel ${rl.cls}">${esc(rl.text)}</span>`,
     who,
+    lead,
     cg:
       `<span aria-hidden="true"><span class="c-buy">▲${fmtInt(r.cb)}</span> · <span class="c-sell">▼${fmtInt(r.cs)}</span></span>` +
       `<span class="visually-hidden">Congress: ${plural(r.cb, "member", "members")} with a purchase, ${fmtInt(r.cs)} with a sale</span>`,
   };
+}
+
+/** A summary name's link (premarketing C): `v` marks a variant's own, the
+    broad-inclusive one `hidden` as its cells are. */
+function nameLink(cls: string, lead: LeadName | null, what: string, v?: "core" | "all"): string {
+  if (lead === null) return "";
+  return `<a class="${cls}" href="${esc(lead.href)}"${v ? ` data-v="${v}"${v === "all" ? " hidden" : ""}` : ""}><span class="visually-hidden">${esc(lead.name)}, ${what}</span></a>`;
 }
 
 /** A cell that differs between the variants renders both, the broad-inclusive
@@ -251,12 +270,18 @@ function both(cls: string, core: string | null, all: string): string {
   );
 }
 
-/** A manager's change on the name: manager, kind, Δ $, filed date, 13F receipt. */
-function managerLineHtml(m: NotableMove): string {
+/** A manager's filer page by CIK (premarketing B): the server's tier-aware
+    `filerHref`, or — for a held name — the island's own map of it. null
+    leaves the name plain text. */
+export type OverlapFilerHref = (cik: string) => string | null;
+
+/** A manager's change on the name: manager (linked to its filer page), kind, Δ $, filed date, 13F receipt. */
+function managerLineHtml(m: NotableMove, filerHref: OverlapFilerHref | null): string {
   const dir = m.delta_value == null ? "c-muted" : m.delta_value < 0 ? "c-sell" : "c-buy";
+  const fp = filerHref ? filerHref(m.cik) : null;
   return (
     `<li class="ov-mline">` +
-    `<span class="ov-m">${esc(m.manager)}</span>` +
+    `<span class="ov-m">${fp ? `<a href="${esc(fp)}">${esc(m.manager)}</a>` : esc(m.manager)}</span>` +
     `${kindWordHtml(m.kind)}` +
     `<span class="mv-dv ${dir}">${esc(signedUsd(m.delta_value))}</span>` +
     `<span class="mv-fil">filed ${m.filed ? `<time datetime="${esc(m.filed)}">${esc(m.filed)}</time>` : "date not stated"}</span>` +
@@ -270,7 +295,7 @@ function managerLineHtml(m: NotableMove): string {
     with Broad accounts on) — at most `CONGRESS_DETAIL_LINES` a side, every
     further line on the ticker page; then each manager's largest change on
     the name with its receipt, at most `OVERLAP_DETAIL_MANAGERS` a side. */
-function overlapDetailHtml(core: OverlapRow | null, all: OverlapRow, q: Pick<Overlap, "period" | "start" | "end">, ctx: RenderCtx): string {
+function overlapDetailHtml(core: OverlapRow | null, all: OverlapRow, q: Pick<Overlap, "period" | "start" | "end">, ctx: RenderCtx, filerHref: OverlapFilerHref | null): string {
   const counted = new Set([...(core?.buy ?? []), ...(core?.sell ?? [])].map((m) => `${m.key}`));
   const href = tickerHrefFor(all.ticker, ctx);
   const side = (members: MemberLines[], label: string): string => {
@@ -288,7 +313,7 @@ function overlapDetailHtml(core: OverlapRow | null, all: OverlapRow, q: Pick<Ove
       (keptShown.length ? `<ul class="cl-list">${keptShown.map((t) => congressLineHtml(t, ctx)).join("")}</ul>` : "") +
       (broad.length
         ? `<p class="mv-cong-none">Broad accounts — more than ${fmtInt(BROAD_ACCOUNT_NAMES)} names in the quarter, counted only with Broad accounts on: ` +
-          `${esc(broad.map((m) => `${m.name} (${fmtInt(m.breadth)} names)`).join(", "))}.</p>` +
+          `${broadAccountsHtml(broadAccountsOf(broad, ctx))}.</p>` +
           (broadShown.length ? `<ul class="cl-list">${broadShown.map((t) => congressLineHtml(t, ctx)).join("")}</ul>` : "")
         : "") +
       (more > 0 ? `<p class="mv-cong-more"><a href="${esc(href)}">${plural(more, "more line", "more lines")} on the ticker page ↗</a></p>` : "")
@@ -302,7 +327,7 @@ function overlapDetailHtml(core: OverlapRow | null, all: OverlapRow, q: Pick<Ove
     const more = moves.length - shown.length;
     return (
       `<p class="ov-det-k">${esc(label)}</p>` +
-      `<ul class="ov-mlist">${shown.map(managerLineHtml).join("")}</ul>` +
+      `<ul class="ov-mlist">${shown.map((m) => managerLineHtml(m, filerHref)).join("")}</ul>` +
       (more > 0 ? `<p class="mv-cong-more">${plural(more, "more change", "more changes")} on this name; each manager's filer page lists its own.</p>` : "")
     );
   };
@@ -346,28 +371,35 @@ export interface HeldOverlapItem {
 export interface HeldOverlapShared {
   q: Pick<Overlap, "period" | "start" | "end">;
   cut: HeldCut;
+  /** premarketing B: each held manager's filer page, by CIK (the server's
+      tier decision, which the client cannot make) */
+  fp?: Record<string, string>;
 }
 export type HeldOverlap = HeldIsland<HeldOverlapItem, HeldOverlapShared>;
 /** The name the Overlap names' function is registered under. */
 export const OVERLAP_NAME_ROWS = "overlap-names";
 /** A held name, rendered hidden as the server renders a carried one. */
 export function heldOverlapItemHtml(it: HeldOverlapItem, _index: number, s: HeldOverlapShared): string {
-  return overlapItemHtml(it.core, it.all, it.ord, s.q, ctxOfCut(s.cut), false);
+  const fp = s.fp;
+  return overlapItemHtml(it.core, it.all, it.ord, s.q, ctxOfCut(s.cut), false, fp ? (cik) => fp[cik] ?? null : null);
 }
 
 /** One name (both variants): an `article.ov-item` holding a `<details>`. */
-export function overlapItemHtml(core: OverlapRow | null, all: OverlapRow, ord: { core: number | null; all: number }, q: Pick<Overlap, "period" | "start" | "end">, ctx: RenderCtx, shown: boolean): string {
-  const c = core ? variantCells(core) : null;
-  const a = variantCells(all);
+export function overlapItemHtml(core: OverlapRow | null, all: OverlapRow, ord: { core: number | null; all: number }, q: Pick<Overlap, "period" | "start" | "end">, ctx: RenderCtx, shown: boolean, filerHref: OverlapFilerHref | null = null): string {
+  const c = core ? variantCells(core, ctx) : null;
+  const a = variantCells(all, ctx);
   /* the managers by their largest change, the buy side's first; a manager on
      both sides is named once, on its buy side */
   const buyers = largestPerManager(all.mBuy);
   const seenCik = new Set(buyers.map((m) => m.cik));
   const named = [...buyers, ...largestPerManager(all.mSell).filter((m) => !seenCik.has(m.cik))];
+  /* premarketing C: the first-named manager's filer page, when it has one */
+  const m0 = named[0];
+  const mLead = m0 && filerHref ? filerHref(m0.cik) : null;
   const managers =
     named
       .slice(0, SUMMARY_NAMES)
-      .map((m) => `${esc(m.manager)} ${kindWordHtml(m.kind)}`)
+      .map((m, i) => `${i === 0 && mLead ? `<span class="ov-m1">${esc(m.manager)}</span>` : esc(m.manager)} ${kindWordHtml(m.kind)}`)
       .join(" · ") + (named.length > SUMMARY_NAMES ? ` +${fmtInt(named.length - SUMMARY_NAMES)}` : "");
   const mg =
     `<span aria-hidden="true"><span class="c-buy">▲${fmtInt(all.gb)}</span> · <span class="c-sell">▼${fmtInt(all.gs)}</span></span>` +
@@ -385,7 +417,14 @@ export function overlapItemHtml(core: OverlapRow | null, all: OverlapRow, ord: {
     `</summary>`;
   return (
     `<article class="ov-item" id="${esc(overlapRowId(all.ticker))}" data-core="${core?.rel ?? ""}" data-all="${all.rel}" data-oc="${ord.core ?? ""}" data-oa="${ord.all}"${shown ? "" : " hidden"}>` +
-    `<details class="ov-row" name="ov-rows">${summary}${overlapDetailHtml(core, all, q, ctx)}</details>` +
+    `<details class="ov-row" name="ov-rows">${summary}${overlapDetailHtml(core, all, q, ctx, filerHref)}</details>` +
+    /* premarketing C: the first-named member's and manager's pages, siblings
+       of the summary (which stays control-free), laid over those names; a
+       first member the variants disagree on gets one link a variant */
+    (c === null || c.lead?.href === a.lead?.href
+      ? nameLink("ov-who-a", a.lead, "member page")
+      : nameLink("ov-who-a", c.lead, "member page", "core") + nameLink("ov-who-a", a.lead, "member page", "all")) +
+    (m0 && mLead ? nameLink("ov-mw-a", { href: mLead, name: m0.manager }, "filer page") : "") +
     `</article>`
   );
 }
@@ -436,7 +475,7 @@ export function overlapLedgerHtml(o: Overlap | null): string {
 /** `keep`: the names another tab's visible rows link (a move's "See {TICKER}
     in Overlap →"); they stay in the page, held, so the link works without
     script (launch M7a). */
-export function signalsOverlapHtml(o: Overlap | null, ctx: RenderCtx, opts: { playbooks?: boolean; keep?: ReadonlySet<string> } = {}): string {
+export function signalsOverlapHtml(o: Overlap | null, ctx: RenderCtx, opts: { playbooks?: boolean; keep?: ReadonlySet<string>; filerHref?: (cik: string) => string } = {}): string {
   const tip = noteFromHtml(
     `<span class="si-tip-p">${esc(overlapTipText(o ?? { start: null, end: null }))}</span>` +
       `<span class="si-tip-p">The managers' side is 13F: quarter-end, long-only snapshots filed up to 45 days after the quarter — never current holdings; an exit is inferred from absence in the next filing.</span>` +
@@ -490,7 +529,7 @@ export function signalsOverlapHtml(o: Overlap | null, ctx: RenderCtx, opts: { pl
     .filter(inPage)
     .map((r) => {
       const c = coreBy.get(r.ticker) ?? null;
-      return overlapItemHtml(c?.r ?? null, r, { core: c?.i ?? null, all: allIdx.get(r.ticker)! }, o, ctx, firstView(r));
+      return overlapItemHtml(c?.r ?? null, r, { core: c?.i ?? null, all: allIdx.get(r.ticker)! }, o, ctx, firstView(r), opts.filerHref ?? null);
     })
     .join("\n");
   const heldItems: HeldOverlapItem[] = items
@@ -501,6 +540,10 @@ export function signalsOverlapHtml(o: Overlap | null, ctx: RenderCtx, opts: { pl
     });
   const cutMembers = new Set<string>();
   const cutTickers = new Set<string>();
+  /* the held names' managers' filer pages: the client renders a held name's
+     manager links from this map, never from a tier guess */
+  const fp: Record<string, string> = {};
+  if (opts.filerHref) for (const it of heldItems) for (const m of [...it.all.mBuy, ...it.all.mSell]) fp[m.cik] ??= opts.filerHref(m.cik);
   for (const it of heldItems) {
     if (ctx.cutTickers?.has(it.all.ticker)) cutTickers.add(it.all.ticker);
     for (const m of [...it.all.buy, ...it.all.sell]) for (const t of m.rows) if (t.bioguide && ctx.cutMembers?.has(t.bioguide)) cutMembers.add(t.bioguide);
@@ -511,7 +554,7 @@ export function signalsOverlapHtml(o: Overlap | null, ctx: RenderCtx, opts: { pl
           rootId: "ov-list",
           render: OVERLAP_NAME_ROWS,
           offset: items.length - heldItems.length,
-          shared: { q: { period: o.period, start: o.start, end: o.end }, cut: { members: [...cutMembers].sort(), tickers: [...cutTickers].sort() } },
+          shared: { q: { period: o.period, start: o.start, end: o.end }, cut: { members: [...cutMembers].sort(), tickers: [...cutTickers].sort() }, ...(opts.filerHref ? { fp } : {}) },
           rows: heldItems,
         })
       : "";

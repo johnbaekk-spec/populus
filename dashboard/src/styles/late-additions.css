@@ -1578,3 +1578,66 @@ details.si-tier > summary > .si-tier-h { display: inline; }
   .sig-tab { padding: 10px 14px; }
   .sig-tab-hint { display: none; }
 }
+
+/* premarketing B: name links — begin */
+/* A Consensus row's top mover links its filer page above the row's
+   stretched filter button (.cs-pick, z-index 1), as a card's own links sit
+   above its stretched open link. */
+.cs-top a { position: relative; z-index: 2; }
+/* premarketing B — end */
+
+/* premarketing A: institutional tables — begin */
+/* The filer crumb names the fund; its CIK rides beside the name as quiet
+   secondary mono text in the crumb's own size, never a second accent. */
+.crumb .crumb-cik { color: var(--ink3); font-size: var(--fs-meta); letter-spacing: .06em; margin-left: 2px; }
+/* premarketing A — end */
+
+/* premarketing C: summary name links — begin */
+/* A row's filer, member or manager name opens its page in place. The link is
+   a SIBLING of the row's <summary> (no control nests in a disclosure button),
+   laid over the name the summary keeps for layout — as the receipt is laid
+   over its reserved cell. The link names itself in visually hidden text.
+   Default — an engine without anchor positioning, and the ≤720px fold, where
+   the summary stays the whole-row tap: the link is screen-reader-only, and
+   while keyboard focus is on it, it shows its name at the row's corner. */
+:is(.si-row-ml, .mv-mgr-a, .ov-who-a, .ov-mw-a) { position: absolute; top: 0; left: 0; z-index: 2; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; font: 500 var(--fs-control)/1.5 var(--sans); }
+:is(.si-row-ml, .mv-mgr-a, .ov-who-a, .ov-mw-a):focus-visible { width: auto; height: auto; overflow: visible; clip-path: none; padding: 2px 6px; background: var(--raised); outline: 2px solid var(--accent); outline-offset: -2px; }
+:is(.si-row-ml, .mv-mgr-a, .ov-who-a, .ov-mw-a):focus-visible > .visually-hidden { position: static; width: auto; height: auto; margin: 0; overflow: visible; clip: auto; }
+.ov-item { position: relative; }
+/* Above the fold: the link's box IS the name's box (CSS anchor positioning),
+   wherever the grid puts the name, ellipsised or (row opened) wrapped. Its hit
+   area is that box: no hit square (layout.css) reaches past the name over the
+   row, so a tap or click elsewhere on the summary still opens the row. Each
+   row scopes its anchors, so a link finds its own row's name. */
+@supports (anchor-name: --a) {
+  @media (min-width: 721px) {
+    .si-row-member { anchor-name: --pm-ml; }
+    .mv-mgr { anchor-name: --pm-mg; justify-self: start; max-width: 100%; }
+    .ov-w1 { anchor-name: --pm-w1; }
+    .ov-m1 { anchor-name: --pm-m1; }
+    .si-row, .mv-item, .ov-item { anchor-scope: --pm-ml, --pm-mg, --pm-w1, --pm-m1; }
+    .si-row-ml { position-anchor: --pm-ml; }
+    .mv-mgr-a { position-anchor: --pm-mg; }
+    .ov-who-a { position-anchor: --pm-w1; }
+    .ov-mw-a { position-anchor: --pm-m1; }
+    :is(.si-row-ml, .mv-mgr-a, .ov-who-a, .ov-mw-a) { top: anchor(top); left: anchor(left); width: anchor-size(width); height: anchor-size(height); clip-path: none; }
+    :is(.si-row-ml, .mv-mgr-a, .ov-who-a, .ov-mw-a)::before { content: none; }
+    :is(.si-row-ml, .mv-mgr-a, .ov-who-a, .ov-mw-a):focus-visible { padding: 0; background: none; outline-offset: 1px; }
+    :is(.si-row-ml, .mv-mgr-a, .ov-who-a, .ov-mw-a):focus-visible > .visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); }
+    .si-row:has(> .si-row-ml:hover) .si-row-member,
+    .mv-item:has(> .mv-mgr-a:hover) .mv-mgr,
+    .ov-item:has(> .ov-who-a:hover) .ov-w1,
+    .ov-item:has(> .ov-mw-a:hover) .ov-m1 { text-decoration: underline; }
+  }
+}
+/* the name reads as a link where it is one (as every other name link on the
+   site): underlined, and it takes the link hover colour under the pointer */
+@supports (anchor-name: --a) {
+  @media (min-width: 721px) {
+    .si-row:has(.si-row-ml) .si-row-member, .mv-item:has(.mv-mgr-a) .mv-mgr, .ov-item:has(.ov-who-a) .ov-w1, .ov-item:has(.ov-mw-a) .ov-m1 {
+      text-decoration: underline; text-decoration-color: color-mix(in oklab, var(--accent) 40%, transparent); text-underline-offset: 2px;
+    }
+    .si-row:has(.si-row-ml:hover) .si-row-member, .mv-item:has(.mv-mgr-a:hover) .mv-mgr, .ov-item:has(.ov-who-a:hover) .ov-w1, .ov-item:has(.ov-mw-a:hover) .ov-m1 { color: var(--accent-h); }
+  }
+}
+/* premarketing C — end */

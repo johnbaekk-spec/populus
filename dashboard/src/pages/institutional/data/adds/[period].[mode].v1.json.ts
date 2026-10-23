@@ -13,8 +13,8 @@
    rather than published with a caveat. */
 
 import type { APIRoute } from "astro";
-import { getBuildData } from "../../../../lib/data";
-import { addsFor, addsExclusionCount } from "../../../../lib/inst";
+import { getBuildData, topFilerCiks } from "../../../../lib/data";
+import { addsFor, addsExclusionCount, withAdderTiers } from "../../../../lib/inst";
 import { corpusAsOf,
   ADDS_BYTE_LIMIT,
   ADDS_MODES,
@@ -50,7 +50,10 @@ export const GET: APIRoute = ({ params }) => {
     truncation_boundary: [Number.MIN_SAFE_INTEGER, 0, ""] as [number, number, string],
     ambiguous_identity_exclusion_count: addsExclusionCount(build.inst, period, mode),
   };
-  const bounded = boundAdds(addsFor(build.inst, period, mode), { envelope });
+  /* Each top adder carries its filer page's budget state (`top_adder_tier`),
+     so the client links the name to a page that exists. Added BEFORE the
+     bound, so the byte cap measures the field. */
+  const bounded = boundAdds(withAdderTiers(addsFor(build.inst, period, mode), topFilerCiks(build)), { envelope });
   const payload: AddsPayload = {
     period,
     generated_at: build.generatedAtDate,

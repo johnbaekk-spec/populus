@@ -11,7 +11,7 @@
 import Base from "../../../layouts/Base.astro";
 import HoldingsTable from "../../../components/HoldingsTable.astro";
 import { filerAggregateInputs, filerDefaultPeriod, getBuildData, servedPeriods, topFilerCiks } from "../../../lib/data";
-import { filerPeriods } from "../../../lib/inst";
+import { changesTickerMap, filerPeriods } from "../../../lib/inst";
 import {
   filerHeadHtml,
   filerLedgerHtml,
@@ -84,7 +84,11 @@ const typing = agg.typing;
    through the same functions the /e/ driver's `filerBody` composes and the
    period switch repaints: head + period ledger, provenance, Position changes,
    band F1 (Reported positions │ Book shape + Filing history), the foot. */
-const opts = { total: deltaTotal, benchmark: benchmarks[period] ?? null, discontinuity: discontinuityFor(period), kinds: kindsFor(period) };
+/* The changes table's Ticker column (premarketing): position_key → reviewed
+   ticker over every embedded period's changes, through the same `tickerFor`
+   lookup Reported positions uses. Embedded once for the period switch. */
+const tickers = changesTickerMap(inst, periods.flatMap((p) => agg.deltasByPeriod[p] ?? []));
+const opts = { tickers, total: deltaTotal, benchmark: benchmarks[period] ?? null, discontinuity: discontinuityFor(period), kinds: kindsFor(period) };
 const headHtml = filerHeadHtml(
   { cik: cik10, name: filer.filer_name, latestPeriod: filer.latest_period },
   conc,
@@ -105,6 +109,7 @@ const periodData = serializeInlineJson({
   latestFiled,
   topn: inst.topn,
   benchmarks,
+  tickers,
   periods: Object.fromEntries(
     periods.map((p) => [
       p,

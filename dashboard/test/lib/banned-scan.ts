@@ -149,8 +149,9 @@ export const RULE3_PATTERNS: { name: string; re: RegExp; exemptFiles?: readonly 
   { name: "classified by value", re: /\bclassified\s+by\s+value\b/i },
   /* DESIGN-POLISH M3 (R24, Architecture H "New gate terms"): the engineering
      prose the copy pass rewrote. "M2-CONTRACT" is deliberately NOT a term: the
-     §5 data note keeps "(ARCHITECTURE.md §5.2 / M2-CONTRACT §5)" in both
-     runtimes, pinned to the Python INST_DATA_NOTE (G-1, L18). */
+     §5 data note carried "(ARCHITECTURE.md §5.2 / M2-CONTRACT §5)" in both
+     runtimes (G-1, L18); premarketing dropped that citation from the note,
+     and activity.test.ts now pins its absence there. */
   { name: "same-origin", re: /\bsame-origin\b/i },
   { name: "serialized", re: /\bseriali[sz]ed\b/i },
   { name: "ordered set", re: /\bordered sets?\b/i },

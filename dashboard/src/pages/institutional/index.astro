@@ -8,13 +8,13 @@
 // figures), the provenance line, a one-line pointer, the Filer directory,
 // Recent activity and the collapsed "Recently added issuers".
 import Base from "../../layouts/Base.astro";
-import { getBuildData, filerTier, instDirectoryRows, instDirectoryFamily } from "../../lib/data";
+import { getBuildData, filerTier, instDirectoryRows, instDirectoryFamily, topFilerCiks } from "../../lib/data";
 import { disclosureLedger, s1ModuleAbsent, s7CopyHtml, addsSectionHtml } from "../../lib/ui/index.ts";
 import { concentrationPeriods, trackedValueFor } from "../../lib/inst-analytics";
 import { quarterLabel } from "../../lib/congress-quarter";
 import { filingWindow } from "../../lib/derive";
 import { serializeInlineJson } from "../../lib/inline-json";
-import { addsFor, addsExclusionCount } from "../../lib/inst";
+import { addsFor, addsExclusionCount, withAdderTiers } from "../../lib/inst";
 import { corpusAsOf, boundAdds, closedPeriods, instFreshnessText, type AddsMode } from "../../lib/inst-adds";
 import { MANAGER_TYPE_LABELS, type ManagerType } from "../../lib/manager-directory";
 import {
@@ -158,7 +158,7 @@ if (!inst.present) {
           {
             period: addsPeriod,
             generated_at: build.generatedAtDate,
-            ...boundAdds(addsFor(inst, addsPeriod, addsMode)),
+            ...boundAdds(withAdderTiers(addsFor(inst, addsPeriod, addsMode), topFilerCiks(build))),
             ambiguous_identity_exclusion_count: addsExclusionCount(inst, addsPeriod, addsMode),
           },
           { period: addsPeriod, mode: addsMode, periods: addsPeriods, buildId: build.buildId },
