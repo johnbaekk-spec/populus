@@ -204,6 +204,11 @@ def ingest(
         )
     if job != "congress-senate" and degrade_on_block:
         raise click.UsageError("--degrade-on-block applies only to ingest congress-senate")
+    if degrade_on_block and (submitted_start or submitted_end):
+        raise click.UsageError(
+            "--degrade-on-block applies only to the nightly (unwindowed) Senate"
+            " ingest; a --submitted-start/--submitted-end era run never degrades"
+        )
     if max_staleness_days is not None and not degrade_on_block:
         raise click.UsageError("--max-staleness-days requires --degrade-on-block")
     for option, value in (

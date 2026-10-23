@@ -79,7 +79,10 @@ def seeded(tmp_path):
 
 
 def _set_last_ok_age(db: Path, days: float) -> None:
-    finished = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    _set_last_ok_finished(db, (datetime.now(timezone.utc) - timedelta(days=days)).isoformat())
+
+
+def _set_last_ok_finished(db: Path, finished: str) -> None:
     conn = connect(str(db))
     try:
         conn.execute(
@@ -161,13 +164,24 @@ def _index(status, body=b""):
 @pytest.mark.parametrize(
     ("setup", "blocked"),
     [
+        # refused (403, 429) or no answer (5xx, incl. the synthetic 599)
         (_home(403), True),
+        (_home(429), True),
         (_home(500), True),
         (_home(senate.TRANSPORT_FAILURE_STATUS), True),
         (_agreement(403), True),
-        (_agreement(200), True),
+        (_agreement(429), True),
+        (_agreement(senate.TRANSPORT_FAILURE_STATUS), True),
         (_index(403), True),
         (_index(503), True),
+        # controls: our handshake failing, a moved site, a wrong request
+        (_agreement(200), False),
+        (_agreement(404), False),
+        (_agreement(400), False),
+        (_home(301), False),
+        (_home(404), False),
+        (_index(400), False),
+        (_index(404), False),
         # malformed answers: protocol changes, never degraded
         (lambda t: t.route("GET", HOME_URL, _resp(200, b"<html>no form</html>")), False),
         (_index(200, b"not json"), False),
@@ -236,7 +250,7 @@ def test_cli_degrade_refused_past_bound(seeded, tmp_path, monkeypatch, age_days,
     assert result.exit_code == exit_code, result.output
     if exit_code:
         assert senate.DEGRADE_REFUSED_MARKER in result.output
-        assert "past the 14-day bound" in result.output
+        assert "15 UTC days ago, past the 14-day bound" in result.output
         assert senate.DEGRADED_MARKER not in result.output
     else:
         assert senate.DEGRADED_MARKER in result.output
@@ -251,6 +265,106 @@ def test_cli_max_staleness_days_overrides_the_default(seeded, tmp_path, monkeypa
     )
     assert result.exit_code == 1, result.output
     assert "past the 2-day bound" in result.output
+
+
+def _blocked_report():
+    report = senate.SenateIngestReport(run_id="r")
+    report.discovery_failed = report.discovery_blocked = True
+    return report
+
+
+@pytest.mark.parametrize(
+    ("last_good", "now", "degraded"),
+    [
+        # 14 UTC calendar days although 14.99 x 24 h have passed: a
+        # fractional bound would refuse this (the cron fires 43-100 min late)
+        ("2026-10-09T00:10:00+00:00", "2026-10-23T23:50:00+00:00", True),
+        # control: one calendar day more, even though under 14x24 h + 1 h
+        ("2026-10-09T23:50:00+00:00", "2026-10-24T00:10:00+00:00", False),
+    ],
+)
+def test_bound_is_in_utc_calendar_days(last_good, now, degraded):
+    decision = senate.decide_degrade(
+        _blocked_report(),
+        last_good_finished_at=last_good,
+        now=datetime.fromisoformat(now),
+    )
+    assert decision.degraded is degraded, decision
+
+
+def test_future_dated_anchor_is_refused():
+    decision = senate.decide_degrade(
+        _blocked_report(),
+        last_good_finished_at="2026-10-24T07:00:00+00:00",
+        now=datetime.fromisoformat("2026-10-23T08:00:00+00:00"),
+    )
+    assert decision.degraded is False
+    assert "in the future" in decision.refusal
+    # control: the same anchor an hour in the past degrades
+    assert senate.decide_degrade(
+        _blocked_report(),
+        last_good_finished_at="2026-10-23T07:00:00+00:00",
+        now=datetime.fromisoformat("2026-10-23T08:00:00+00:00"),
+    ).degraded
+
+
+def _ok_run(conn, run_id, finished, log_ref=None):
+    conn.execute(
+        "INSERT INTO ingest_runs (run_id, job, started_at, finished_at, status,"
+        " log_ref) VALUES (?, 'congress-senate', ?, ?, 'ok', ?)",
+        (run_id, finished, finished, log_ref),
+    )
+
+
+def test_last_good_is_chosen_by_parsed_utc_time_not_text(initialized_db):
+    conn = initialized_db
+    # Text order would pick the "+05:00" row (…T09…) — it is not UTC, so it
+    # is not trusted at all; of the UTC rows, "Z" vs "+00:00" spellings sort
+    # wrongly as text ("2026-10-22T07:00:00Z" > "2026-10-22T07:00:00.5+00:00").
+    _ok_run(conn, "a", "2026-10-22T07:00:00Z")
+    _ok_run(conn, "b", "2026-10-22T07:00:00.500000+00:00")
+    _ok_run(conn, "c", "2026-10-22T09:00:00+05:00")
+    _ok_run(conn, "d", "not a time")
+    _ok_run(conn, "e", "2026-10-22T08:00:00")  # naive: not trusted
+    assert senate.last_good_senate_ingest(conn) == "2026-10-22T07:00:00.500000+00:00"
+
+
+def test_an_era_backfill_ok_never_resets_the_clock(initialized_db):
+    conn = initialized_db
+    _ok_run(conn, "nightly", "2026-10-01T07:00:00+00:00")
+    _ok_run(conn, "era", "2026-10-22T07:00:00+00:00", senate.ERA_SCOPE_LOG_REF)
+    assert senate.last_good_senate_ingest(conn) == "2026-10-01T07:00:00+00:00"
+    # control: the same row without the era scope does reset it
+    conn.execute("UPDATE ingest_runs SET log_ref = NULL WHERE run_id = 'era'")
+    assert senate.last_good_senate_ingest(conn) == "2026-10-22T07:00:00+00:00"
+
+
+def test_a_windowed_cli_run_is_recorded_as_era_scope(seeded, tmp_path):
+    cache = _make_cache(tmp_path, [_index_row(U1)], {f"ptr_{U1}.html": EFILE_1ROW})
+    result = _cli(
+        ["ingest", "congress-senate", "--db", str(seeded), "--from-cache", str(cache),
+         "--submitted-start", "01/01/2012", "--submitted-end", "04/30/2026"]
+    )
+    assert result.exit_code == 0, result.output
+    conn = connect(str(seeded))
+    try:
+        scopes = [
+            row[0]
+            for row in conn.execute(
+                "SELECT log_ref FROM ingest_runs WHERE job = 'congress-senate'"
+                " AND status = 'ok' ORDER BY started_at, run_id"
+            )
+        ]
+    finally:
+        conn.close()
+    assert scopes == [None, senate.ERA_SCOPE_LOG_REF]
+
+
+@pytest.mark.parametrize("window", [["--submitted-start", "01/01/2012"], ["--submitted-end", "04/30/2026"]])
+def test_degrade_flag_is_refused_on_a_windowed_run(tmp_path, window):
+    result = _cli(_live(tmp_path / "x.db", tmp_path / "raw", "--degrade-on-block", *window))
+    assert result.exit_code == 2
+    assert "never degrades" in result.output
 
 
 def test_cli_degrade_refused_without_ok_run(tmp_path, monkeypatch):
@@ -349,22 +463,23 @@ def test_stats_senate_degraded_state(seeded, tmp_path, monkeypatch):
         assert result.exit_code == 0, result.output
     conn = connect(str(seeded))
     try:
-        # The second blocked run must not move the date the block was first seen.
+        # The second blocked run (a later DATE) must not move the date the block
+        # was first seen.
         conn.execute(
-            "UPDATE ingest_runs SET started_at = '2026-10-23T09:00:00+00:00'"
+            "UPDATE ingest_runs SET started_at = '2026-10-21T09:00:00+00:00'"
             " WHERE run_id = (SELECT run_id FROM ingest_runs"
             "  WHERE job = 'congress-senate' AND status = 'blocked'"
             "  ORDER BY started_at DESC, run_id DESC LIMIT 1)"
         )
         conn.execute(
-            "UPDATE ingest_runs SET started_at = '2026-10-23T08:00:00+00:00'"
+            "UPDATE ingest_runs SET started_at = '2026-10-20T08:00:00+00:00'"
             " WHERE run_id = (SELECT run_id FROM ingest_runs"
             "  WHERE job = 'congress-senate' AND status = 'blocked'"
             "  ORDER BY started_at, run_id LIMIT 1)"
         )
         conn.execute(
-            "UPDATE ingest_runs SET started_at = '2026-10-22T07:00:00+00:00',"
-            " finished_at = '2026-10-22T07:22:33+00:00'"
+            "UPDATE ingest_runs SET started_at = '2026-10-19T07:00:00+00:00',"
+            " finished_at = '2026-10-19T07:22:33+00:00'"
             " WHERE job = 'congress-senate' AND status = 'ok'"
         )
         conn.commit()
@@ -377,7 +492,7 @@ def test_stats_senate_degraded_state(seeded, tmp_path, monkeypatch):
     degraded = _stats(seeded)
     jsonschema.validate(degraded, SCHEMA)
     assert degraded["freshness"]["senate_degraded"] == {
-        "blocked_since": "2026-10-23",
+        "blocked_since": "2026-10-20",
         "last_good_ingest_at": last_ok,
     }
 

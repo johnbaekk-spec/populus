@@ -146,16 +146,16 @@ function congressPageValues(txns: TxnRow[], papers: PaperRow[]): Record<string, 
     tickerOffsetsJson: serializeInlineJson(tickerOffsets),
     /* Senate DEGRADED mode: a current build (the measured page) has no
        statement; senate-degraded.test.ts measures the degraded page. */
-    senateNotice: false as string | boolean,
+    senateStaleHtml: false as string | boolean,
   };
 }
 
 /** The served /congress/ document on the fixture: the page body through
     `withTableRoles` (as Base.astro renders it), inside the Base layout. */
-export function congressPageFixture(opts: { senateNotice?: string } = {}): { html: string; body: string } {
+export function congressPageFixture(opts: { senateStaleHtml?: string } = {}): { html: string; body: string } {
   const { txns, papers } = congressFixtureRows();
   const values = congressPageValues(txns, papers);
-  if (opts.senateNotice) values.senateNotice = opts.senateNotice;
+  if (opts.senateStaleHtml) values.senateStaleHtml = opts.senateStaleHtml;
   const body = withTableRoles(serveAstroTemplate(read("pages/congress/index.astro"), values));
   const members = new Set(txns.map((r) => r.bioguide).filter(Boolean)).size;
   const tickers = new Set(txns.map((r) => r.ticker).filter(Boolean)).size;
