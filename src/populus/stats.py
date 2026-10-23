@@ -332,35 +332,38 @@ def compute_stats(
 
 
 def senate_degraded_state(conn: sqlite3.Connection) -> dict | None:
-    """``null`` unless the newest Senate ingest run was ``blocked``.
+    """``null`` unless the newest nightly-scope Senate ingest run was ``blocked``.
 
-    A blocked run is eFD refusing (or failing to answer) the handshake or
-    index fetch; under ``--degrade-on-block`` the publish then carries the
-    seeded Senate rows forward. Derived from ``ingest_runs`` alone, in the same
-    ``started_at, run_id`` order as ``last_ingest_runs``, so it is deterministic
-    for a given database and clears itself on the first ``ok`` run.
+    A blocked run is eFD refusing (403/429) or not answering (5xx) the
+    handshake or index fetch; under ``--degrade-on-block`` the publish then
+    carries the seeded Senate rows forward. Derived from ``ingest_runs`` alone
+    (explicitly windowed era runs excluded, as in the staleness clock), in the
+    ``started_at, run_id`` order ``last_ingest_runs`` uses, so it is
+    deterministic for a given database and clears itself on the first ``ok``.
 
-    ``blocked_since`` is the date of the FIRST blocked run after the last ``ok``
-    one — the store carries every published run forward, so consecutive
-    degraded builds keep the date the block was first seen.
-    ``last_good_ingest_at`` is that ``ok`` run's ``finished_at`` (``null`` when
-    the store holds none; the CLI refuses to degrade in that case).
+    ``last_good_ingest_at`` is the staleness anchor the CLI enforced
+    (:func:`populus.ingest.senate.last_good_senate_ingest`); the site states
+    its date. ``blocked_since`` is the first PERSISTED blocked run after the
+    last ``ok`` one — an upper bound only, because a blocked run from a
+    publish that failed is never published, so the site does not print it.
     """
+    from populus.ingest.senate import ERA_SCOPE_LOG_REF, last_good_senate_ingest
+
     runs = conn.execute(
-        "SELECT started_at, finished_at, status FROM ingest_runs"
-        " WHERE job = 'congress-senate' ORDER BY started_at, run_id"
+        "SELECT started_at, status FROM ingest_runs"
+        " WHERE job = 'congress-senate' AND (log_ref IS NULL OR log_ref != ?)"
+        " ORDER BY started_at, run_id",
+        (ERA_SCOPE_LOG_REF,),
     ).fetchall()
-    if not runs or runs[-1][2] != "blocked":
+    if not runs or runs[-1][1] != "blocked":
         return None
     last_ok = max(
-        (index for index, run in enumerate(runs) if run[2] == "ok"), default=-1
+        (index for index, run in enumerate(runs) if run[1] == "ok"), default=-1
     )
-    first_blocked = next(
-        run for run in runs[last_ok + 1 :] if run[2] == "blocked"
-    )
+    first_blocked = next(run for run in runs[last_ok + 1 :] if run[1] == "blocked")
     return {
         "blocked_since": (first_blocked[0] or "")[:10] or None,
-        "last_good_ingest_at": runs[last_ok][1] if last_ok >= 0 else None,
+        "last_good_ingest_at": last_good_senate_ingest(conn),
     }
 
 

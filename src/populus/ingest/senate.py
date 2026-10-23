@@ -386,6 +386,12 @@ class SenateDiscoverResult:
     blocked: bool = False
 
 
+def _is_blocked_status(status: int) -> bool:
+    """eFD refused (403, 429) or did not answer (5xx, incl. the synthetic
+    599 transport failure). Nothing else is a block."""
+    return status in (403, 429) or status >= 500
+
+
 def _discovery_failure(reason: str, *, blocked: bool = False) -> SenateDiscoverResult:
     return SenateDiscoverResult(
         uuids=(),
@@ -542,12 +548,15 @@ def discover(
     unparseable cache index is a **failure**, not a skip: the Senate
     has exactly one index and nothing can reconcile without it.
 
-    A live failure is ``blocked`` when eFD answered with a refusing HTTP
-    status, or did not answer at all, at one of three points: the home GET
-    (non-200), the agreement POST (non-302/303) and an index POST (non-200).
-    Those are what an edge bot block or an outage look like. A missing CSRF
-    token, a non-JSON index, a missing ``recordsTotal`` or data array and the
-    paginator caps are protocol changes and are never ``blocked``.
+    A live failure is ``blocked`` only when eFD refused or did not answer
+    (:func:`_is_blocked_status`: 403, 429, any 5xx, or the synthetic 599
+    transport failure) at the home GET, the agreement POST or an index POST.
+    Those are what an edge bot block or an outage look like. Every other
+    status is ours or a protocol change and is never ``blocked``: an agreement
+    answered 200 is our own CSRF/cookie handshake failing (LD13), and a 301 or
+    404 home or a 400/404 index means the site moved or the request is wrong.
+    A missing CSRF token, a non-JSON index, a missing ``recordsTotal`` or data
+    array and the paginator caps are never ``blocked`` either.
     """
     if cache_dir is not None:
         index_path = Path(cache_dir) / "ptr-index.json"
@@ -570,7 +579,8 @@ def discover(
     home = session.get(HOME_URL)
     if home.status_code != 200:
         return _discovery_failure(
-            f"home fetch failed (HTTP {home.status_code})", blocked=True
+            f"home fetch failed (HTTP {home.status_code})",
+            blocked=_is_blocked_status(home.status_code),
         )
     token = _csrf_token(home.content)
     if token is None:
@@ -584,7 +594,7 @@ def discover(
         return _discovery_failure(
             f"agreement not accepted (HTTP {agreement.status_code};"
             " a 200 means the form re-rendered — LD13)",
-            blocked=True,
+            blocked=_is_blocked_status(agreement.status_code),
         )
 
     rows: list = []
@@ -611,7 +621,7 @@ def discover(
         if response.status_code != 200:
             return _discovery_failure(
                 f"index fetch failed (HTTP {response.status_code}) at start={start}",
-                blocked=True,
+                blocked=_is_blocked_status(response.status_code),
             )
         try:
             payload = json.loads(response.content)
@@ -1019,10 +1029,18 @@ def run_senate_ingest(
     ``MAX(filed_date) − 90 days``, inserting OLDER filings can never regress it
     — a historical window is safe to run against a current corpus.
     """
+    # An explicitly windowed run (the era backfill) is marked in log_ref so it
+    # can never stand in for the nightly ingest: only nightly-scope runs
+    # (log_ref NULL) reset the degraded-publish staleness clock.
+    scope = (
+        ERA_SCOPE_LOG_REF
+        if submitted_start_date is not None or submitted_end_date is not None
+        else None
+    )
     conn.execute(
-        "INSERT INTO ingest_runs (run_id, job, started_at, status, host)"
-        " VALUES (?, 'congress-senate', ?, 'running', ?)",
-        (run_id, now(), host),
+        "INSERT INTO ingest_runs (run_id, job, started_at, status, host, log_ref)"
+        " VALUES (?, 'congress-senate', ?, 'running', ?, ?)",
+        (run_id, now(), host, scope),
     )
     report = SenateIngestReport(run_id=run_id)
     session_box: list[_PoliteSession] = []
@@ -1546,6 +1564,9 @@ def format_reparse_summary(report: ReparseReport) -> str:
 DEFAULT_MAX_STALENESS_DAYS = 14
 
 DEGRADED_MARKER = "SENATE DEGRADED:"
+#: ``ingest_runs.log_ref`` of an explicitly windowed Senate run (the era
+#: backfill); such a run never resets the staleness clock.
+ERA_SCOPE_LOG_REF = "scope:windowed"
 DEGRADE_REFUSED_MARKER = "SENATE DEGRADE REFUSED:"
 
 
@@ -1560,31 +1581,45 @@ class DegradeDecision:
 
     degraded: bool
     last_good_finished_at: str | None = None
-    age_days: float | None = None
+    age_days: int | None = None
     refusal: str | None = None
 
 
+def _parse_utc(value: object) -> datetime | None:
+    """An ISO timestamp with an explicit UTC offset, or None. Naive or
+    non-UTC stamps are not trusted as a staleness anchor."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
+        return None
+    return parsed
+
+
 def last_good_senate_ingest(conn: sqlite3.Connection) -> str | None:
-    """``finished_at`` of the newest ``ok`` Senate ingest run in the store.
+    """``finished_at`` of the newest nightly-scope ``ok`` Senate ingest.
 
     The publish store is seeded from the previous release's ``congress.db``,
     which carries ``ingest_runs``, so this is the last good Senate ingest of
-    any published build, not just of this runner workspace.
+    any published build, not just of this runner workspace. Only rows whose
+    ``finished_at`` parses as ISO UTC count, the newest is chosen by parsed
+    time (never text order), and an explicitly windowed run (the era
+    backfill, ``log_ref = ERA_SCOPE_LOG_REF``) never counts.
     """
-    row = conn.execute(
+    best: tuple[datetime, str] | None = None
+    for (finished_at,) in conn.execute(
         "SELECT finished_at FROM ingest_runs"
         " WHERE job = 'congress-senate' AND status = 'ok'"
-        " AND finished_at IS NOT NULL"
-        " ORDER BY finished_at DESC, run_id DESC LIMIT 1"
-    ).fetchone()
-    return row[0] if row else None
-
-
-def _parse_utc(value: str) -> datetime:
-    parsed = datetime.fromisoformat(value)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed
+        " AND (log_ref IS NULL OR log_ref != ?)",
+        (ERA_SCOPE_LOG_REF,),
+    ):
+        parsed = _parse_utc(finished_at)
+        if parsed is not None and (best is None or parsed > best[0]):
+            best = (parsed, finished_at)
+    return best[1] if best else None
 
 
 def decide_degrade(
@@ -1599,6 +1634,10 @@ def decide_degrade(
     Only a blocked discovery qualifies. Everything else — a parse failure,
     rejected index rows, unaccounted UUIDs, a tripped breaker, a malformed
     index — is not a candidate and keeps failing the publish.
+
+    The bound is in whole UTC calendar days (the nightly cron fires 43–100
+    min late, so a fractional bound would wobble by a day): the run's UTC date
+    minus the last good ingest's UTC date. A future-dated anchor is refused.
     """
     if report.ok or not report.discovery_blocked:
         return DegradeDecision(degraded=False)
@@ -1607,16 +1646,27 @@ def decide_degrade(
             degraded=False,
             refusal="no successful Senate ingest is on record in this store",
         )
-    try:
-        last_good = _parse_utc(last_good_finished_at)
-    except ValueError:
+    last_good = _parse_utc(last_good_finished_at)
+    if last_good is None:
         return DegradeDecision(
             degraded=False,
             last_good_finished_at=last_good_finished_at,
             refusal=f"the last good Senate ingest time {last_good_finished_at!r}"
-            " is unreadable",
+            " is not an ISO UTC timestamp",
         )
-    age_days = (now - last_good).total_seconds() / 86400.0
+    age_days = (
+        now.astimezone(timezone.utc).date() - last_good.astimezone(timezone.utc).date()
+    ).days
+    if now < last_good:
+        return DegradeDecision(
+            degraded=False,
+            last_good_finished_at=last_good_finished_at,
+            age_days=age_days,
+            refusal=(
+                f"the last good Senate ingest time {last_good_finished_at} is"
+                " in the future"
+            ),
+        )
     if age_days > max_staleness_days:
         return DegradeDecision(
             degraded=False,
@@ -1624,7 +1674,7 @@ def decide_degrade(
             age_days=age_days,
             refusal=(
                 f"the last good Senate ingest finished {last_good_finished_at},"
-                f" {age_days:.1f} days ago, past the {max_staleness_days}-day bound"
+                f" {age_days} UTC days ago, past the {max_staleness_days}-day bound"
             ),
         )
     return DegradeDecision(
@@ -1648,7 +1698,7 @@ def format_degrade_lines(
             " from the previous release are carried forward.",
             f"{DEGRADED_MARKER} last good Senate ingest finished"
             f" {decision.last_good_finished_at}"
-            f" ({decision.age_days:.1f} days ago; the bound is"
+            f" ({decision.age_days} UTC days ago; the bound is"
             f" {max_staleness_days} days). Senate filings through"
             f" {filed_through or 'no date on record'}.",
         ]

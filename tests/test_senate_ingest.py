@@ -501,8 +501,22 @@ def test_agreement_non_redirect_is_discovery_failure(tmp_path, initialized_db, s
     assert report.reconciliation is None
     # The index endpoint was never touched with a dead session.
     assert DATA_URL not in transport.urls()
-    # An agreement eFD did not accept is a refusal: audited `blocked`, which
-    # the degraded-publish policy keys on (still not ok).
+    # A 200/400/404 agreement is OUR handshake failing (LD13), never an edge
+    # block: an ordinary failure the degraded-publish policy does not cover.
+    assert report.discovery_blocked is False
+    assert _audit_row(initialized_db)[0] == "partial"
+
+
+@pytest.mark.parametrize("status", [403, 429, 503])
+def test_agreement_refused_is_a_blocked_discovery_failure(
+    tmp_path, initialized_db, status
+):
+    # Control for the case above: a refusal (403/429) or no answer (5xx) at
+    # the agreement is `blocked`.
+    transport = FakeSenateTransport()
+    _route_handshake(transport, [_index_row(U1)], agreement_status=status)
+    report = _run_live(initialized_db, transport, FakeClock(), raw_root=tmp_path / "raw")
+    assert report.discovery_failed is True
     assert report.discovery_blocked is True
     assert _audit_row(initialized_db)[0] == "blocked"
     assert "FAILED" in senate.format_summary(report)
@@ -543,7 +557,7 @@ def _failure_case_no_data_array(transport):
     [
         (_failure_case_home_500, True),
         (_failure_case_no_token, False),
-        (_failure_case_index_404, True),
+        (_failure_case_index_404, False),
         (_failure_case_index_not_json, False),
         (_failure_case_no_records_total, False),
         (_failure_case_no_data_array, False),

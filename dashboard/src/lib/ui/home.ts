@@ -325,7 +325,7 @@ export function homeLedgerHtml(f: HomeFigures): string {
   const updatedItem: LedgerItem = {
     label: "Updated",
     value: up.date || "—",
-    detail: `House to ${up.house ?? "—"} · Senate to ${up.senate ?? "—"}` + (up.senateNotice ? ", paused" : ""),
+    detail: `House to ${up.house ?? "—"} · Senate to ${up.senate ?? "—"}` + (up.senateNotice ? ", not updated" : ""),
     subKind: "date",
     noteHtml: esc(
       `The date this build was made. Its newest House filing was filed ${up.house ?? "on a date not stated"}, and its newest Senate filing ${up.senate ?? "on a date not stated"}.` +
