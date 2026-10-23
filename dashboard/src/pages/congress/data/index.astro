@@ -15,10 +15,13 @@
 import Base from "../../../layouts/Base.astro";
 import { getBuildData, feedPartsPlan } from "../../../lib/data";
 import { fmtInt } from "../../../lib/format.ts";
+import { senateStalenessSentence } from "../../../lib/senate-freshness.ts";
 import { SHARD_RESPONSE_CEILING_BYTES } from "../../../lib/shards.ts";
 import { FEED_PARTS_INDEX_HREF, feedPartHref } from "../../../lib/feed-parts.ts";
 
 const build = getBuildData();
+/* Senate DEGRADED mode: the download states what its Senate rows cover */
+const senateNotice = senateStalenessSentence(build.stats);
 const index = feedPartsPlan(build).index;
 const parts = index.parts;
 const totalBytes = parts.reduce((n, p) => n + p.bytes, 0);
@@ -50,6 +53,11 @@ function mib(n: number): string {
         every part below gives you the complete corpus for build {build.buildId} —
         nothing is sampled, summarised or withheld from it.
       </p>
+      {senateNotice && (
+        <p class="s1-detail" id="data-senate-stale" data-senate-stale>
+          <strong>Senate rows stop early in this build.</strong> {senateNotice}
+        </p>
+      )}
       <p class="s1-detail">
         The parts are contiguous and already in the site's own feed order (newest
         filing date first, transactions before paper filings within a date), so

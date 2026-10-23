@@ -1070,7 +1070,7 @@ export const DEFECT_FLAG_NOTE = "rows with defect flags are visible and flagged,
    - owner_unparsed: normalize.py:108-115 (`normalize_owner`) — the owner cell
      is not blank and is none of SP, DC, JT, self (or the Senate's Spouse,
      Child, Joint); no owner is then shown.
-   - declared_total_mismatch: ingest/senate.py:694-700 (`evaluate_page`) —
+   - declared_total_mismatch: ingest/senate.py:710-716 (`evaluate_page`) —
      the printed transaction count differs from the extracted row count. */
 const DEFECT_FLAG_DEFINITIONS: Readonly<Record<string, string>> = {
   date_missing:
@@ -1108,7 +1108,7 @@ export const FEED_FLAG_DEFINITIONS: Readonly<Record<string, string>> = {
   amendment_unresolved: AMENDMENT_PENDING_NOTE,
   date_anomaly: DATE_ANOMALY_NOTE,
   // Source fact, not a claim that defective cells are clean:
-  // - declared_total_verified: ingest/senate.py:718-725 (`evaluate_page`)
+  // - declared_total_verified: ingest/senate.py:734-741 (`evaluate_page`)
   declared_total_verified:
     "The Senate filing's printed transaction total matches the number of extracted rows; cell defects remain flagged.",
   ...DEFECT_FLAG_DEFINITIONS,

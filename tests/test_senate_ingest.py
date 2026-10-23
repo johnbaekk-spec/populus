@@ -501,7 +501,10 @@ def test_agreement_non_redirect_is_discovery_failure(tmp_path, initialized_db, s
     assert report.reconciliation is None
     # The index endpoint was never touched with a dead session.
     assert DATA_URL not in transport.urls()
-    assert _audit_row(initialized_db)[0] == "partial"
+    # An agreement eFD did not accept is a refusal: audited `blocked`, which
+    # the degraded-publish policy keys on (still not ok).
+    assert report.discovery_blocked is True
+    assert _audit_row(initialized_db)[0] == "blocked"
     assert "FAILED" in senate.format_summary(report)
 
 
@@ -536,25 +539,28 @@ def _failure_case_no_data_array(transport):
 
 
 @pytest.mark.parametrize(
-    "setup",
+    ("setup", "blocked"),
     [
-        _failure_case_home_500,
-        _failure_case_no_token,
-        _failure_case_index_404,
-        _failure_case_index_not_json,
-        _failure_case_no_records_total,
-        _failure_case_no_data_array,
+        (_failure_case_home_500, True),
+        (_failure_case_no_token, False),
+        (_failure_case_index_404, True),
+        (_failure_case_index_not_json, False),
+        (_failure_case_no_records_total, False),
+        (_failure_case_no_data_array, False),
     ],
 )
-def test_live_discovery_failures_are_explicit(tmp_path, initialized_db, setup):
+def test_live_discovery_failures_are_explicit(tmp_path, initialized_db, setup, blocked):
+    # An HTTP refusal or no answer is `blocked`; a malformed answer is an
+    # ordinary failure (`partial`). Neither is ever ok.
     transport = FakeSenateTransport()
     clock = FakeClock()
     setup(transport)
     report = _run_live(initialized_db, transport, clock, raw_root=tmp_path / "raw")
     assert report.discovery_failed is True
+    assert report.discovery_blocked is blocked
     assert report.reconciliation is None
     assert not report.ok
-    assert _audit_row(initialized_db)[0] == "partial"
+    assert _audit_row(initialized_db)[0] == ("blocked" if blocked else "partial")
 
 
 def test_endless_index_pagination_is_a_bounded_failure(tmp_path, initialized_db):

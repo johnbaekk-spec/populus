@@ -15,12 +15,15 @@ import {
 import { congressTickersRollup, leadersRollup } from "../../lib/derive";
 import { congressRankingSection, disclosureLedger, markPairPrimary, monthlyFlowPanel, rankingAlternatives, CONGRESS_ROOTS, type BuildStamps } from "../../lib/ui/index.ts";
 import { congressLedgerFigures, congressLedgerItems } from "../../lib/ui/rankings.ts";
+import { senateStalenessSentence } from "../../lib/senate-freshness.ts";
 import { serializeInlineJson } from "../../lib/inline-json";
 import { COMPACT_ROWS } from "../../lib/format";
 import { feedItemHasTicker, planTickerOffsets, TICKER_VIEW_NOUN } from "../../lib/feed-parts";
 
 const build = getBuildData();
 const coverage = coverageSummary(build.stats);
+/* Senate DEGRADED mode: null unless this build carried its Senate data forward */
+const senateNotice = senateStalenessSentence(build.stats);
 /* R12 / LD7: the part index rides inline so paging costs only the part that
    holds the page — the same plan the /congress/data/feed/ routes emit. */
 const partsIndex = feedPartsPlan(build).index;
@@ -199,6 +202,7 @@ const description =
         <div class="stamp-line" id="congress-stamp">
           As of {build.generatedAt} · House Clerk + Senate eFD
         </div>
+        {senateNotice && <div class="stamp-line" id="congress-senate-stale" data-senate-stale>{senateNotice}</div>}
         <details class="method-links" id="congress-method-links"><summary>Method</summary><div>
           <a href="/methodology/#defaults">Amendments ↗</a>
           <a href="/methodology/#coverage">Coverage ↗</a>

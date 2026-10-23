@@ -26,7 +26,7 @@ import sqlite3
 from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -380,9 +380,13 @@ class SenateDiscoverResult:
     rejected_rows: tuple[str, ...]
     note: str | None = None
     failed: bool = False
+    # True only for an HTTP refusal or transport failure in the live handshake
+    # or index fetch (see `discover`). The degraded-publish policy keys on it;
+    # a malformed answer is never `blocked`.
+    blocked: bool = False
 
 
-def _discovery_failure(reason: str) -> SenateDiscoverResult:
+def _discovery_failure(reason: str, *, blocked: bool = False) -> SenateDiscoverResult:
     return SenateDiscoverResult(
         uuids=(),
         entries={},
@@ -390,6 +394,7 @@ def _discovery_failure(reason: str) -> SenateDiscoverResult:
         rejected_rows=(),
         note=f"FAILED: {reason}",
         failed=True,
+        blocked=blocked,
     )
 
 
@@ -536,6 +541,13 @@ def discover(
     From-cache mode reads ``<cache>/ptr-index.json``; a missing or
     unparseable cache index is a **failure**, not a skip: the Senate
     has exactly one index and nothing can reconcile without it.
+
+    A live failure is ``blocked`` when eFD answered with a refusing HTTP
+    status, or did not answer at all, at one of three points: the home GET
+    (non-200), the agreement POST (non-302/303) and an index POST (non-200).
+    Those are what an edge bot block or an outage look like. A missing CSRF
+    token, a non-JSON index, a missing ``recordsTotal`` or data array and the
+    paginator caps are protocol changes and are never ``blocked``.
     """
     if cache_dir is not None:
         index_path = Path(cache_dir) / "ptr-index.json"
@@ -557,7 +569,9 @@ def discover(
 
     home = session.get(HOME_URL)
     if home.status_code != 200:
-        return _discovery_failure(f"home fetch failed (HTTP {home.status_code})")
+        return _discovery_failure(
+            f"home fetch failed (HTTP {home.status_code})", blocked=True
+        )
     token = _csrf_token(home.content)
     if token is None:
         return _discovery_failure("home page carries no csrfmiddlewaretoken")
@@ -569,7 +583,8 @@ def discover(
     if agreement.status_code not in (302, 303):
         return _discovery_failure(
             f"agreement not accepted (HTTP {agreement.status_code};"
-            " a 200 means the form re-rendered — LD13)"
+            " a 200 means the form re-rendered — LD13)",
+            blocked=True,
         )
 
     rows: list = []
@@ -595,7 +610,8 @@ def discover(
         )
         if response.status_code != 200:
             return _discovery_failure(
-                f"index fetch failed (HTTP {response.status_code}) at start={start}"
+                f"index fetch failed (HTTP {response.status_code}) at start={start}",
+                blocked=True,
             )
         try:
             payload = json.loads(response.content)
@@ -893,6 +909,9 @@ class SenateIngestReport:
     run_id: str
     note: str | None = None
     discovery_failed: bool = False
+    # The discovery failure was an HTTP refusal or transport failure (see
+    # `discover`). Still not `ok`; the CLI's --degrade-on-block policy reads it.
+    discovery_blocked: bool = False
     index_uuids: tuple[str, ...] = ()
     dup_uuids: int = 0
     rejected_rows: tuple[str, ...] = ()
@@ -988,7 +1007,8 @@ def run_senate_ingest(
     link amendments → reconcile, under exactly one ``ingest_runs`` row.
 
     The audit row is finalized on every exit path: ``ok``/``partial`` on
-    completion, ``failed`` on a raised exception, and ``circuit_open`` when
+    completion (``blocked`` when discovery met an HTTP refusal or transport
+    failure), ``failed`` on a raised exception, and ``circuit_open`` when
     the consecutive-403 breaker trips (LD6 — persisted filings stand;
     unattempted UUIDs surface as unaccounted; exit 1).
 
@@ -1056,7 +1076,9 @@ def run_senate_ingest(
         " rows_loaded = ?, parse_failures = ? WHERE run_id = ?",
         (
             now(),
-            "ok" if report.ok else "partial",
+            "ok"
+            if report.ok
+            else ("blocked" if report.discovery_blocked else "partial"),
             report.new_filings,
             report.rows_loaded,
             report.parse_failures,
@@ -1113,6 +1135,7 @@ def _ingest(
     )
     report.note = discovered.note
     report.discovery_failed = discovered.failed
+    report.discovery_blocked = discovered.blocked
     report.index_uuids = discovered.uuids
     report.dup_uuids = discovered.dup_uuids
     report.rejected_rows = discovered.rejected_rows
@@ -1514,3 +1537,133 @@ def format_reparse_summary(report: ReparseReport) -> str:
     for filing_id in report.selection.not_found:
         lines.append(f"  not_found: {filing_id}")
     return "\n".join(lines)
+
+
+# --- degraded publish (Senate eFD blocks automated access) -------------------
+
+#: The owner's default bound: past this many days since the last ``ok`` Senate
+#: ingest, a blocked run fails the publish again instead of degrading.
+DEFAULT_MAX_STALENESS_DAYS = 14
+
+DEGRADED_MARKER = "SENATE DEGRADED:"
+DEGRADE_REFUSED_MARKER = "SENATE DEGRADE REFUSED:"
+
+
+@dataclass(frozen=True)
+class DegradeDecision:
+    """Whether a failed Senate run may publish on the carried-forward store.
+
+    ``degraded`` is True only for a ``discovery_blocked`` run whose last ``ok``
+    Senate ingest finished within the bound; ``refusal`` names why a blocked
+    run may NOT degrade. Both are falsy for a run that was not blocked at all.
+    """
+
+    degraded: bool
+    last_good_finished_at: str | None = None
+    age_days: float | None = None
+    refusal: str | None = None
+
+
+def last_good_senate_ingest(conn: sqlite3.Connection) -> str | None:
+    """``finished_at`` of the newest ``ok`` Senate ingest run in the store.
+
+    The publish store is seeded from the previous release's ``congress.db``,
+    which carries ``ingest_runs``, so this is the last good Senate ingest of
+    any published build, not just of this runner workspace.
+    """
+    row = conn.execute(
+        "SELECT finished_at FROM ingest_runs"
+        " WHERE job = 'congress-senate' AND status = 'ok'"
+        " AND finished_at IS NOT NULL"
+        " ORDER BY finished_at DESC, run_id DESC LIMIT 1"
+    ).fetchone()
+    return row[0] if row else None
+
+
+def _parse_utc(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def decide_degrade(
+    report: SenateIngestReport,
+    *,
+    last_good_finished_at: str | None,
+    now: datetime,
+    max_staleness_days: int = DEFAULT_MAX_STALENESS_DAYS,
+) -> DegradeDecision:
+    """Apply the degraded-publish policy to one finished run.
+
+    Only a blocked discovery qualifies. Everything else — a parse failure,
+    rejected index rows, unaccounted UUIDs, a tripped breaker, a malformed
+    index — is not a candidate and keeps failing the publish.
+    """
+    if report.ok or not report.discovery_blocked:
+        return DegradeDecision(degraded=False)
+    if last_good_finished_at is None:
+        return DegradeDecision(
+            degraded=False,
+            refusal="no successful Senate ingest is on record in this store",
+        )
+    try:
+        last_good = _parse_utc(last_good_finished_at)
+    except ValueError:
+        return DegradeDecision(
+            degraded=False,
+            last_good_finished_at=last_good_finished_at,
+            refusal=f"the last good Senate ingest time {last_good_finished_at!r}"
+            " is unreadable",
+        )
+    age_days = (now - last_good).total_seconds() / 86400.0
+    if age_days > max_staleness_days:
+        return DegradeDecision(
+            degraded=False,
+            last_good_finished_at=last_good_finished_at,
+            age_days=age_days,
+            refusal=(
+                f"the last good Senate ingest finished {last_good_finished_at},"
+                f" {age_days:.1f} days ago, past the {max_staleness_days}-day bound"
+            ),
+        )
+    return DegradeDecision(
+        degraded=True, last_good_finished_at=last_good_finished_at, age_days=age_days
+    )
+
+
+def format_degrade_lines(
+    report: SenateIngestReport,
+    decision: DegradeDecision,
+    *,
+    filed_through: str | None,
+    max_staleness_days: int,
+) -> list[str]:
+    """The loud lines the publish log and job summary key on."""
+    reason = (report.note or "").removeprefix("FAILED: ")
+    if decision.degraded:
+        return [
+            f"{DEGRADED_MARKER} Senate eFD discovery was refused ({reason})."
+            " No Senate filing was fetched or changed; the Senate rows seeded"
+            " from the previous release are carried forward.",
+            f"{DEGRADED_MARKER} last good Senate ingest finished"
+            f" {decision.last_good_finished_at}"
+            f" ({decision.age_days:.1f} days ago; the bound is"
+            f" {max_staleness_days} days). Senate filings through"
+            f" {filed_through or 'no date on record'}.",
+        ]
+    if decision.refusal is not None:
+        return [
+            f"{DEGRADE_REFUSED_MARKER} Senate eFD discovery was refused ({reason}),"
+            f" and {decision.refusal}. Failing the publish."
+        ]
+    return []
+
+
+def senate_max_filed_date(conn: sqlite3.Connection) -> str | None:
+    """The newest Senate eFD filed date in the store (stats.py's definition)."""
+    (value,) = conn.execute(
+        "SELECT MAX(filed_date) FROM filings"
+        " WHERE chamber = 'senate' AND source = 'senate-efd'"
+    ).fetchone()
+    return value
