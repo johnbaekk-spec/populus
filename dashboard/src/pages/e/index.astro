@@ -28,6 +28,7 @@ const description =
     import { runGenericRoute } from "../../scripts/entity-client";
     import { initDomDisclosures, registerHeldRows } from "../../scripts/inst-index-client";
     import { memberNetRowHtml, memberHistoryRowHtml, MEMBER_NET_ROWS, MEMBER_HISTORY_ROWS } from "../../lib/ui/index.ts";
+    import { FILER_CHANGES_ROWS, filerChangeRowHtml } from "../../lib/ui/institutional.ts";
     import { TICKER_HOLDER_HELD } from "../../lib/ui/ticker.ts";
     import { initNotes } from "../../scripts/notes";
     /* R15: a tail filer's Position changes "Show more" is a DOM-backed
@@ -39,6 +40,8 @@ const description =
     /* launch M7b (R33): a tail ticker's holders 26..N, in the same binder —
        its list is bound when the driver's render announces itself */
     registerHeldRows(TICKER_HOLDER_HELD.render, TICKER_HOLDER_HELD.row, { text: TICKER_HOLDER_HELD.text });
+    /* a tail filer's Position changes past the compact twenty (rule 8, R35) */
+    registerHeldRows(FILER_CHANGES_ROWS, filerChangeRowHtml);
     initDomDisclosures();
     runGenericRoute();
     // launch M1c (R12): tips open as bottom sheets at ≤720px here too

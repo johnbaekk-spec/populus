@@ -148,8 +148,12 @@ const description =
   </main>
   <script>
     import { initFilerPeriods } from "../../../scripts/entity-client";
-    import { initDomDisclosures } from "../../../scripts/inst-index-client";
+    import { initDomDisclosures, registerHeldRows } from "../../../scripts/inst-index-client";
     import { initNotes } from "../../../scripts/notes";
+    import { FILER_CHANGES_ROWS, filerChangeRowHtml } from "../../../lib/ui/institutional.ts";
+    /* Position changes past the compact twenty are HELD (rule 8, R35): the
+       "Show all" draws them from the island through the server's row function. */
+    registerHeldRows(FILER_CHANGES_ROWS, filerChangeRowHtml);
     initFilerPeriods();
     /* R15: the changes table's "Show more" is a DOM-backed disclosure; it is
        re-bound after every period re-render through the `populus:rerender`

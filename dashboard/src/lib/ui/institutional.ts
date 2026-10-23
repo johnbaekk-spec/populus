@@ -485,6 +485,99 @@ export function changesKindChipsHtml(active: ChangesKindFilter | null): string {
   );
 }
 
+/** The held-rows name the filer changes table's island carries; the filer
+    page and the /e/ route register `filerChangeRowHtml` under it. */
+export const FILER_CHANGES_ROWS = "filer-changes";
+
+/** One change row's inputs: the row, its reviewed ticker (`changesTickerMap`)
+    and whether its share class is the only thing telling it apart from
+    another row of the same issuer (decided over its table's FULL set). */
+export interface FilerChangeRowIn {
+  d: QoqDeltaRow;
+  t: string | null;
+  a: boolean;
+}
+/** The table-wide inputs: the page (note ids), the hoisted flags and the
+    columns the table renders. */
+export interface FilerChangeShared {
+  page: number;
+  stated: string[];
+  columns: string[];
+}
+
+/** One Position changes row — the server's first rows, the held group's and
+    the island's, all through this one function of its three arguments. */
+export function filerChangeRowHtml(r: FilerChangeRowIn, index: number, s: FilerChangeShared): string {
+  const { d, t: ticker, a: ambiguous } = r;
+  const { stated } = s;
+  const has = (key: string): boolean => s.columns.includes(key);
+  /* R1: the issuer NAME leads the row; the raw position key (sid:/cusip:) and
+     the class as filed ride inside the row's ⓘ. A row the serving artifact
+     could not name (an older artifact, an unkeyed position) still shows its
+     key — never an invented name. */
+  const noteId = `${s.page}-${index}`;
+  const keyNote = (labelHtml: string, name: string): string =>
+    noteFromHtml(
+      /* The class is FILED text (a fund can be named "BULLISH FD"): it rides
+         inside the filed-name marker the banned-wording scan exempts. */
+      (d.title_of_class ? `share class as filed: <span class="filed-name">${esc(d.title_of_class)}</span> · ` : "") +
+        `position key <code>${esc(d.position_key)}</code>${d.issuer_key ? ` · issuer key <code>${esc(d.issuer_key)}</code>` : ""}`,
+      { scope: "filer-change-key" },
+      noteId,
+      { trigger: "label", textHtml: labelHtml, name },
+    );
+  /* The issuer NAME is the key note's LABEL trigger — the Reported positions
+     table's issuer cell (`design-holding-name`), with the filed-name marker on
+     the SAME span (one element per row, not two: filer first-load budget). An
+     ambiguous row shows the ⓘ glyph inside the trigger: its class is what
+     tells it apart. */
+  const identity = d.issuer_name
+    ? keyNote(
+        `<span class="design-holding-name filed-name">${esc(d.issuer_name)}</span>` +
+          (ambiguous && d.title_of_class ? ` <span class="mono-note" aria-hidden="true">ⓘ</span>` : ""),
+        d.issuer_name,
+      )
+    : `<span class="mono-note">${esc(d.position_key)}</span>`;
+  const tickerCell = ticker
+    ? noteFromHtml(
+        "a reviewed mapping row for this filed issuer name and share class (never inferred from the name)",
+        { scope: "filer-change-ticker" },
+        noteId,
+        { trigger: "label", textHtml: `<span class="mono-ticker">${esc(ticker)}</span>`, name: ticker },
+      )
+    : "—";
+  const p = qoqPresentation(d);
+  const grain = p.grainNote ? ` <span class="mono-note">${esc(p.grainNote)}</span>` : "";
+  const posMarkers = p.positionMarkers.map((m) => fnMark(m)).join("");
+  const valueDelta =
+    p.valueDelta.kind === "num"
+      ? esc(p.valueDelta.text)
+      : p.valueDelta.kind === "nc"
+        ? `<span class="nc-chip">n/c</span>`
+        : "—";
+  const cell = (v: number | null): string => (v == null ? "—" : esc(fmtUsd(v)));
+  const shareCell = (v: number | null): string => (v == null ? "—" : fmtInt(v));
+  return (
+    /* Column order is the answer to "added or trimmed?" arriving before the
+       reader has to scroll for it: identity, then the verdict, then the two
+       deltas that justify it; the four raw prev/curr levels follow. */
+    /* R14: the landing's notable-moves rows link here, anchored at the
+       position (`#pos-<slug(position_key)>`). */
+    `<tr id="${esc(positionAnchor(d.position_key))}"${changeEdgeAttr(d.change_kind)}>` +
+    (has("ticker") ? `<td class="c-ticker">${tickerCell}</td>` : "") +
+    `<td class="c-pos c-flex${posMarkers ? " reconciled" : ""}">${identity}${posMarkers}${grain}</td>` +
+    `<td class="c-chip c-kind">${qoqChipHtml(d)}</td>` +
+    `<td class="c-num">${valueDelta}</td>` +
+    `<td class="c-num">${esc(p.sharesDeltaText)}</td>` +
+    `<td class="c-num">${cell(d.prev_value_usd)}</td>` +
+    `<td class="c-num">${cell(d.curr_value_usd)}</td>` +
+    `<td class="c-num">${shareCell(d.prev_shares)}</td>` +
+    `<td class="c-num">${shareCell(d.curr_shares)}</td>` +
+    (has("flags") ? `<td class="c-flags">${flagTags(d.flags, undefined, { stated })}</td>` : "") +
+    `</tr>`
+  );
+}
+
 export function changesTableHtml(
   deltas: QoqDeltaRow[],
   period: string,
@@ -582,87 +675,30 @@ export function changesTableHtml(
      Reported positions table's `data-sticky-issuer` rule; without one, the
      issuer is the first column and `data-sticky-first` holds it. */
   const stickyAttr = (cols: PresentColumns): string => (cols.columns.includes("ticker") ? "data-sticky-issuer" : "data-sticky-first");
-  let rowSeq = 0;
-  const rowHtml = (d: QoqDeltaRow, stated: readonly string[] = statedDeltas, cols: PresentColumns = colsDeltas): string => {
-    /* R1: the issuer NAME leads the row; the class is secondary ink; the raw
-       position key (sid:/cusip:) moves inside the row's ⓘ. A row the serving
-       artifact could not name (an older artifact, an unkeyed position) still
-       shows its key — never an invented name. */
-    const noteId = `${page}-${rowSeq++}`;
-    const keyNote = (labelHtml: string, name: string): string =>
-      noteFromHtml(
-        /* The class is FILED text (a fund can be named "BULLISH FD"): it rides
-           inside the filed-name marker the banned-wording scan exempts. */
-        (d.title_of_class ? `share class as filed: <span class="filed-name">${esc(d.title_of_class)}</span> · ` : "") +
-          `position key <code>${esc(d.position_key)}</code>${d.issuer_key ? ` · issuer key <code>${esc(d.issuer_key)}</code>` : ""}`,
-        { scope: "filer-change-key" },
-        noteId,
-        { trigger: "label", textHtml: labelHtml, name },
-      );
-    /* The issuer NAME is the key note's LABEL trigger — the Reported positions
-       table's issuer cell (`design-holding-name`). An ambiguous row shows the
-       ⓘ glyph inside the trigger: its class is what tells it apart. */
-    const identity = d.issuer_name
-      ? keyNote(
-          `<span class="design-holding-name"><span class="filed-name">${esc(d.issuer_name)}</span></span>` +
-            (ambiguous.has(d) && d.title_of_class ? ` <span class="mono-note" aria-hidden="true">ⓘ</span>` : ""),
-          d.issuer_name,
-        )
-      : `<span class="mono-note">${esc(d.position_key)}</span>`;
-    const ticker = tickerOf(d);
-    const tickerCell = ticker
-      ? noteFromHtml(
-          "a reviewed mapping row for this filed issuer name and share class (never inferred from the name)",
-          { scope: "filer-change-ticker" },
-          noteId,
-          { trigger: "label", textHtml: `<span class="mono-ticker">${esc(ticker)}</span>`, name: ticker },
-        )
-      : "—";
-      const p = qoqPresentation(d);
-      const grain = p.grainNote ? ` <span class="mono-note">${esc(p.grainNote)}</span>` : "";
-      const posMarkers = p.positionMarkers.map((m) => fnMark(m)).join("");
-      const valueDelta =
-        p.valueDelta.kind === "num"
-          ? esc(p.valueDelta.text)
-          : p.valueDelta.kind === "nc"
-            ? `<span class="nc-chip">n/c</span>`
-            : "—";
-      const cell = (v: number | null): string => (v == null ? "—" : esc(fmtUsd(v)));
-      const shareCell = (v: number | null): string => (v == null ? "—" : fmtInt(v));
-      return (
-        /* Column order is the answer to "added or trimmed?" arriving before
-           the reader has to scroll for it. The change chip used to be the
-           EIGHTH of nine columns, behind six numeric ones, so on any viewport
-           under ~1024px the one column the table exists to communicate was the
-           one off-screen. Identity, then the verdict, then the two deltas that
-           justify it; the four raw prev/curr levels are the supporting detail
-           and follow. Nothing is removed — the order changed. */
-        /* R14: the landing's notable-moves rows link here, anchored at the
-           position (`#pos-<slug(position_key)>`). */
-        `<tr id="${esc(positionAnchor(d.position_key))}"${changeEdgeAttr(d.change_kind)}>` +
-        (cols.columns.includes("ticker") ? `<td class="c-ticker">${tickerCell}</td>` : "") +
-        `<td class="c-pos c-flex${posMarkers ? " reconciled" : ""}">${identity}${posMarkers}${grain}</td>` +
-        `<td class="c-chip c-kind">${qoqChipHtml(d)}</td>` +
-        `<td class="c-num">${valueDelta}</td>` +
-        `<td class="c-num">${esc(p.sharesDeltaText)}</td>` +
-        `<td class="c-num">${cell(d.prev_value_usd)}</td>` +
-        `<td class="c-num">${cell(d.curr_value_usd)}</td>` +
-        `<td class="c-num">${shareCell(d.prev_shares)}</td>` +
-        `<td class="c-num">${shareCell(d.curr_shares)}</td>` +
-        (cols.columns.includes("flags") ? `<td class="c-flags">${flagTags(d.flags, undefined, { stated })}</td>` : "") +
-        `</tr>`
-      );
-  };
+  /* Launch weight (filer headroom): every row renders through ONE pure
+     function of its own inputs (`filerChangeRowHtml`), so the rows past the
+     compact twenty ride in the site's held-rows island and the client draws
+     them, byte for byte, when the reader asks — the rule-8 carrier the member
+     page's Filing history uses. A row's index is its place in render order
+     (page rows, then the held group, then the no-prior group): its note ids. */
+  const rowIn = (d: QoqDeltaRow): FilerChangeRowIn => ({ d, t: tickerOf(d), a: ambiguous.has(d) });
+  const sharedFor = (stated: readonly string[], cols: PresentColumns): FilerChangeShared => ({ page, stated: [...stated], columns: [...cols.columns] });
   /* R15: twenty rows lead; the rest of this page ride hidden behind a real
      "Show N more" (DOM-backed disclosure) — no download, no second render. */
   const compact = opts.compact ?? CHANGES_COMPACT_ROWS;
-  const rows = pageRows
-    .map((d, i) => {
-      const html = rowHtml(d);
-      return i >= compact ? html.replace(/^<tr\b/, "<tr data-compact-extra") : html;
-    })
-    .join("\n");
   const collapsed = pageRows.length > compact;
+  /* R15 + rule 8: twenty rows lead; the rest of this page are HELD — island
+     data, drawn by the "Show all" through the same row function — never
+     hidden rows in the DOM (filer first-load budget, R35). */
+  const parts = heldTableParts<FilerChangeRowIn, FilerChangeShared>({
+    rootId: "filer-changes-tbody",
+    render: FILER_CHANGES_ROWS,
+    rowFn: filerChangeRowHtml,
+    rows: pageRows.map(rowIn),
+    shown: collapsed ? compact : pageRows.length,
+    shared: sharedFor(statedDeltas, colsDeltas),
+  });
+  const rows = parts.bodyRows;
   const headFor = (cols: PresentColumns): string =>
     `<thead><tr>` +
     QOQ_COLS.filter(([key]) => cols.columns.includes(key)).map(([key, label]) =>
@@ -670,6 +706,8 @@ export function changesTableHtml(
     ).join("") +
     `</tr></thead>`;
   const headHtml = headFor(colsDeltas);
+  const sharedHeld = sharedFor(statedHeld, colsHeld);
+  const sharedNoPrior = sharedFor(statedNoPrior, colsNoPrior);
   const heldGroup =
     held.length === 0
       ? ""
@@ -679,7 +717,7 @@ export function changesTableHtml(
         `<div class="table-scroll"><table class="etable" ${stickyAttr(colsHeld)} data-stated-flags="${esc(statedHeld.join(","))}"${dataColumnsAttr(colsHeld)}>` +
         `<caption class="visually-hidden">Positions held with no share change into quarter ${esc(period)}</caption>` +
         headFor(colsHeld).replace(/ popovertarget="n-filer-changes-/g, ' popovertarget="n-filer-held-').replace(/ aria-describedby="n-filer-changes-/g, ' aria-describedby="n-filer-held-').replace(/ id="n-filer-changes-/g, ' id="n-filer-held-') +
-        `<tbody>${held.map((d) => rowHtml(d, statedHeld, colsHeld)).join("\n")}</tbody></table></div>` +
+        `<tbody>${held.map((d, j) => filerChangeRowHtml(rowIn(d), pageRows.length + j, sharedHeld)).join("\n")}</tbody></table></div>` +
         tableFootReasonHtml(colsHeld) +
         `</details>`;
   const noPriorGroup =
@@ -691,7 +729,7 @@ export function changesTableHtml(
         `<div class="table-scroll"><table class="etable" ${stickyAttr(colsNoPrior)} data-stated-flags="${esc(statedNoPrior.join(","))}"${dataColumnsAttr(colsNoPrior)}>` +
         `<caption class="visually-hidden">Positions with no prior quarter to compare into quarter ${esc(period)}</caption>` +
         headFor(colsNoPrior).replace(/ popovertarget="n-filer-changes-/g, ' popovertarget="n-filer-noprior-').replace(/ aria-describedby="n-filer-changes-/g, ' aria-describedby="n-filer-noprior-').replace(/ id="n-filer-changes-/g, ' id="n-filer-noprior-') +
-        `<tbody>${noPrior.map((d) => rowHtml(d, statedNoPrior, colsNoPrior)).join("\n")}</tbody></table></div>` +
+        `<tbody>${noPrior.map((d, j) => filerChangeRowHtml(rowIn(d), pageRows.length + held.length + j, sharedNoPrior)).join("\n")}</tbody></table></div>` +
         tableFootReasonHtml(colsNoPrior) +
         `</details>`;
   const kindLabel = CHANGES_KIND_CHIPS.find(([k]) => k === kindFilter)?.[1] ?? "";
@@ -707,7 +745,8 @@ export function changesTableHtml(
     } data-stated-flags="${esc(statedDeltas.join(","))}"${dataColumnsAttr(colsDeltas)}>` +
     `<caption class="visually-hidden">Position changes into quarter ${esc(period)}</caption>` +
     headHtml +
-    `<tbody id="filer-changes-tbody"${collapsed ? ' data-collapsed="true"' : ""}>${rows}</tbody></table></div>` +
+    `<tbody id="filer-changes-tbody"${collapsed ? ' data-collapsed="true" data-held="json"' : ""}>${rows}</tbody></table></div>` +
+    parts.island +
     tableFootReasonHtml(colsDeltas) +
     /* The compact bound counts THIS PAGE's rows, not the filer's changes: the
        pager beside it states the whole ("101–200 of 250 changes"), so the bound

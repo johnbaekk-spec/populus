@@ -660,7 +660,10 @@ test("R15 (M2): the filer page reads head + ledger → changes → band F1 [hold
   assert.doesNotMatch(html, /<details class="panel panel-wide design-supplement" aria-label="Position changes"/, "changes are open, not folded");
   const posRows = bodyRows(html).filter((tr) => (tr.getAttribute("id") ?? "").startsWith("pos-") && tr.children[0]?.classList.contains("c-pos"));
   assert.equal(posRows.filter((tr) => !tr.hasAttribute("data-compact-extra")).length, CHANGES_COMPACT_ROWS);
-  assert.equal(posRows.filter((tr) => tr.hasAttribute("data-compact-extra")).length, 15);
+  /* filer headroom (R35): the other 15 are held in the island, not hidden in the DOM */
+  assert.equal(posRows.filter((tr) => tr.hasAttribute("data-compact-extra")).length, 0);
+  const island = /<script type="application\/json" data-held-for="filer-changes-tbody" data-held-render="filer-changes">([\s\S]*?)<\/script>/.exec(html);
+  assert.equal((JSON.parse(island![1]!) as { offset: number; rows: unknown[] }).rows.length, 15);
   assert.match(html, /data-compact-for="filer-changes-tbody" data-compact-total="35" data-compact-shown="20"/);
   assert.doesNotMatch(html, /aria-label="Congress overlap"|aria-label="Signals for this filer"|aria-label="Sector rotation"/, "empty frames are gone");
   assert.equal((html.match(/class="planned-line"/g) ?? []).length, 0, "no roadmap line (filer-06)");

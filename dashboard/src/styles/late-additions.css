@@ -1597,9 +1597,10 @@ details.si-tier > summary > .si-tier-h { display: inline; }
    a SIBLING of the row's <summary> (no control nests in a disclosure button),
    laid over the name the summary keeps for layout — as the receipt is laid
    over its reserved cell. The link names itself in visually hidden text.
-   Default — an engine without anchor positioning, and the ≤720px fold, where
-   the summary stays the whole-row tap: the link is screen-reader-only, and
-   while keyboard focus is on it, it shows its name at the row's corner. */
+   Default — an engine without anchor positioning above the fold: the link is
+   screen-reader-only, and while keyboard focus is on it, it shows its name at
+   the row's corner. At the ≤720px fold (below) the summary stays the
+   whole-row tap and the link is not rendered at all. */
 :is(.si-row-ml, .mv-mgr-a, .ov-who-a, .ov-mw-a) { position: absolute; top: 0; left: 0; z-index: 2; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; font: 500 var(--fs-control)/1.5 var(--sans); }
 :is(.si-row-ml, .mv-mgr-a, .ov-who-a, .ov-mw-a):focus-visible { width: auto; height: auto; overflow: visible; clip-path: none; padding: 2px 6px; background: var(--raised); outline: 2px solid var(--accent); outline-offset: -2px; }
 :is(.si-row-ml, .mv-mgr-a, .ov-who-a, .ov-mw-a):focus-visible > .visually-hidden { position: static; width: auto; height: auto; margin: 0; overflow: visible; clip: auto; }
@@ -1639,5 +1640,13 @@ details.si-tier > summary > .si-tier-h { display: inline; }
     }
     .si-row:has(.si-row-ml:hover) .si-row-member, .mv-item:has(.mv-mgr-a:hover) .mv-mgr, .ov-item:has(.ov-who-a:hover) .ov-w1, .ov-item:has(.ov-mw-a:hover) .ov-m1 { color: var(--accent-h); }
   }
+}
+/* At the ≤720px fold the row tap opens the row, and every opened row links
+   the same page (a Congress row's "Name ↗", a named move's "Filer page ↗", an
+   Overlap row's member and manager lines), so the overlay link is not
+   rendered: out of the tab order and the accessibility tree, with no script.
+   Held island rows render through the same functions and match it too. */
+@media (max-width: 720px) {
+  :is(.si-row-ml, .mv-mgr-a, .ov-who-a, .ov-mw-a) { display: none; }
 }
 /* premarketing C — end */
