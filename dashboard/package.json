@@ -26,11 +26,11 @@
     "astro": "^7.1.6"
   },
   "devDependencies": {
-    "@astrojs/check": "^0.9.10",
-    "@playwright/test": "^1.62.1",
-    "@types/node": "^26.1.2",
+    "@astrojs/check": "^0.9.11",
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^26.6.5",
     "typescript": "^6.0.3",
-    "wrangler": "4.137.0"
+    "wrangler": "4.151.3"
   },
   "overrides": {
     "sharp": "0.35.5",
