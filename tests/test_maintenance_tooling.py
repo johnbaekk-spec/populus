@@ -3561,10 +3561,12 @@ def test_cross_run_ignore_still_hides_the_runtime_families():
     every reading, so the veto does not fire and the exemption still applies.
     """
     tracked, by_base, by_suffix = _tracked_indexes()
+    # "sqlite_schema.sql" is the exact-match IGNORE entry; the other three reach
+    # IGNORE_PATTERNS, so without it the dict branch of ignored() goes unpinned.
     for token in ("$RUNNER_TEMP/publication-authority.pre-mutation.json",
                   "<result>.approvals.json",
                   "populus-data/builds/20260826.1/manifest.json",
-                  "CLAUDE.md"):
+                  "sqlite_schema.sql"):
         assert cross_run.ignored(token, tracked, by_base, by_suffix), token
 
 
