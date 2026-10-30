@@ -513,3 +513,17 @@ a later change re-measures it.
     must happen before the site is promoted as launched.
   - The insider playbook stays "Needs Form 4" until Form 4 ingest exists.
   - The search-index overrun is B18.3.
+- **B68 — the Senate degraded statement is on five surfaces, not all of them.**
+  Since #174 (live 20261024.1) a publish that finds Senate eFD blocked carries
+  Senate forward from the last good archive and says so on the home Updated
+  figure, `/congress/`, senator pages, Methodology's Known gaps and
+  `/congress/data/`. Ticker pages, `/signals/`, the feed and the home lead
+  cards still show Senate rows without it. The statement is driven by
+  `stats.json` `freshness.senate_degraded`; reuse that, keep it dated. The
+  publish refuses after 14 UTC days from the last good nightly Senate run
+  (2026-10-23, so about 2026-11-06) unless access is restored.
+- **B69 — invisible keyboard stops on `/signals/` phones (from #166).** A Tab
+  pass at 390 reaches the 0×0 `si-card-open` links and the 1×1
+  `si-rank-input` controls. Take them out of the tab order where they are not
+  visible, or make the focused state visible. Found by the 20261024.1 live
+  check.
