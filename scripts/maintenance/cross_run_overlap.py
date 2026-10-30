@@ -271,8 +271,6 @@ IGNORE_PATTERNS = [
 IGNORE = {
     ".claude/settings.local.json":
         "harness-local settings file, gitignored by design",
-    "CLAUDE.md":
-        "harness instruction file; the I-2 plan states none exists on the base",
     "planned-files.json":
         "per-run planning artifact, gitignored (only planned-files-m2-11.json is tracked)",
     "sqlite_schema.sql":
